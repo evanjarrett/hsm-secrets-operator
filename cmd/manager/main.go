@@ -223,10 +223,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize USB discoverer
-	usbDiscoverer := discovery.NewUSBDiscoverer()
-
-	// Get node name for device discovery
+	// Get node name for HSMSecret controller
 	nodeName := os.Getenv("NODE_NAME")
 	if nodeName == "" {
 		if hostname, err := os.Hostname(); err == nil {
@@ -236,7 +233,8 @@ func main() {
 		}
 	}
 
-	// Initialize mirroring manager for cross-node HSM device synchronization
+	// Initialize mirroring manager for HSMSecret controller device failover
+	// Note: Device discovery is handled by separate discovery daemon
 	mirroringManager := discovery.NewMirroringManager(mgr.GetClient(), nodeName)
 
 	// Register the HSM client with the mirroring manager for this node
@@ -249,17 +247,6 @@ func main() {
 		MirroringManager: mirroringManager,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "HSMSecret")
-		os.Exit(1)
-	}
-
-	if err := (&controller.HSMDeviceReconciler{
-		Client:           mgr.GetClient(),
-		Scheme:           mgr.GetScheme(),
-		NodeName:         nodeName,
-		USBDiscoverer:    usbDiscoverer,
-		MirroringManager: mirroringManager,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "HSMDevice")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

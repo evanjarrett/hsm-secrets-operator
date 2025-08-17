@@ -33,8 +33,10 @@ import (
 )
 
 const (
-	// DefaultDiscoveryInterval is the default interval for device discovery
-	DefaultDiscoveryInterval = 30 * time.Second
+	// DefaultDiscoveryInterval is the default interval for device discovery when devices are found
+	DefaultDiscoveryInterval = 5 * time.Minute
+	// RetryDiscoveryInterval is the interval when no devices are found (slower to avoid spam)
+	RetryDiscoveryInterval = 30 * time.Second
 )
 
 // HSMDeviceReconciler reconciles a HSMDevice object
@@ -64,7 +66,7 @@ func (r *HSMDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Check if this device should be discovered on this node
 	if !r.shouldDiscoverOnNode(&hsmDevice) {
 		logger.V(1).Info("Device discovery not required on this node")
-		return ctrl.Result{}, nil
+		return ctrl.Result{RequeueAfter: DefaultDiscoveryInterval}, nil
 	}
 
 	// Set initial phase if not set
@@ -341,8 +343,14 @@ func (r *HSMDeviceReconciler) updateStatus(ctx context.Context, hsmDevice *hsmv1
 		return ctrl.Result{}, err
 	}
 
-	// Requeue for periodic discovery
-	return ctrl.Result{RequeueAfter: DefaultDiscoveryInterval}, nil
+	// Requeue based on discovery result
+	requeueInterval := DefaultDiscoveryInterval
+	if phase == hsmv1alpha1.HSMDevicePhasePending || phase == hsmv1alpha1.HSMDevicePhaseError {
+		// Use shorter retry interval when no devices found or error occurred
+		requeueInterval = RetryDiscoveryInterval
+	}
+
+	return ctrl.Result{RequeueAfter: requeueInterval}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
