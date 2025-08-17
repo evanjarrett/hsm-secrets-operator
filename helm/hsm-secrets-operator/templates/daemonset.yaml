@@ -33,7 +33,11 @@ spec:
       {{- end }}
       serviceAccountName: {{ include "hsm-secrets-operator.serviceAccountName" . }}
       securityContext:
+        {{- if .Values.discovery.podSecurityContext }}
+        {{- toYaml .Values.discovery.podSecurityContext | nindent 8 }}
+        {{- else }}
         {{- toYaml .Values.controllerManager.podSecurityContext | nindent 8 }}
+        {{- end }}
       containers:
       - name: discovery
         image: {{ include "hsm-secrets-operator.discoveryImage" . }}
@@ -68,7 +72,11 @@ spec:
         resources:
           {{- toYaml .Values.controllerManager.resources | nindent 12 }}
         securityContext:
+          {{- if .Values.discovery.securityContext }}
+          {{- toYaml .Values.discovery.securityContext | nindent 12 }}
+          {{- else }}
           {{- toYaml .Values.controllerManager.securityContext | nindent 12 }}
+          {{- end }}
         volumeMounts:
         - name: dev
           mountPath: /dev

@@ -61,13 +61,13 @@ helm install {{ template "chart.name" . }} hsm-secrets-operator/{{ template "cha
   --set hsm.pkcs11.slotId=0
 ```
 
-### Installation with Examples
+### Installation with Resources
 
 ```bash
 # Install with example resources
 helm install {{ template "chart.name" . }} hsm-secrets-operator/{{ template "chart.name" . }} \
-  --set examples.hsmsecret.enabled=true \
-  --set examples.hsmdevice.enabled=true
+  --set hsmsecret.enabled=true \
+  --set hsmdevice.enabled=true
 ```
 
 ### Installation with Prometheus Monitoring

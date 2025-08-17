@@ -113,6 +113,21 @@ discovery:
       - "/dev/ttyUSB*"
       - "/dev/hidraw*"
 
+  # Security context for discovery pods (requires privilege to read USB devices)
+  podSecurityContext:
+    runAsUser: 0
+    runAsGroup: 0
+    runAsNonRoot: false
+
+  # Container security context for discovery pods
+  securityContext:
+    privileged: true
+    allowPrivilegeEscalation: true
+    capabilities:
+      drop: []
+      add:
+        - SYS_ADMIN
+
 # API server configuration
 api:
   # Enable the REST API server
@@ -165,24 +180,31 @@ crds:
   # Keep CRDs when the chart is uninstalled
   keep: true
 
-# Examples and samples
-examples:
-  # Create sample HSMSecret resources
-  hsmsecret:
-    enabled: false
-    samples:
-      - name: "example-secret"
-        namespace: "default"
-        hsmPath: "secrets/examples/example-secret"
-        syncInterval: 300
+# HSM Device Configuration
+hsmdevice:
+  # Enable HSMDevice resource creation
+  enabled: false
+  # List of HSM devices to discover
+  devices:
+    - name: "pico-hsm-discovery"
+      namespace: "default"
+      deviceType: "PicoHSM"
+      maxDevices: 5
+    - name: "smartcard-hsm-discovery"
+      namespace: "default"
+      deviceType: "SmartCardHSM"
+      maxDevices: 3
 
-  # Create sample HSMDevice resources
-  hsmdevice:
-    enabled: false
-    samples:
-      - name: "pico-hsm-discovery"
-        namespace: "default"
-        deviceType: "pico-hsm"
+# HSM Secret Configuration
+hsmsecret:
+  # Enable HSMSecret resource creation
+  enabled: false
+  # List of HSM secrets to manage
+  secrets:
+    - name: "example-secret"
+      namespace: "default"
+      hsmPath: "secrets/examples/example-secret"
+      syncInterval: 300
 
 # Additional configuration
 config:

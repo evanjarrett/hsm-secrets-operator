@@ -82,16 +82,16 @@
    kubectl logs daemonset/{{ include "hsm-secrets-operator.fullname" . }}-discovery -n {{ .Release.Namespace }}
 {{- end }}
 
-{{- if .Values.examples.hsmsecret.enabled }}
+{{- if .Values.hsmsecret.enabled }}
 
-9. Example HSMSecret resources have been created. Check them with:
+9. HSMSecret resources have been created. Check them with:
    
    kubectl get hsmsecrets -n {{ .Release.Namespace }}
 {{- end }}
 
-{{- if .Values.examples.hsmdevice.enabled }}
+{{- if .Values.hsmdevice.enabled }}
 
-10. Example HSMDevice resources have been created. Check them with:
+10. HSMDevice resources have been created. Check them with:
    
     kubectl get hsmdevices -n {{ .Release.Namespace }}
 {{- end }}

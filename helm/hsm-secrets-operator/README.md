@@ -94,12 +94,12 @@ The following table lists the configurable parameters of the HSM Secrets Operato
 | `serviceAccount.name` | Service account name | `""` |
 | `rbac.create` | Create RBAC resources | `true` |
 
-### Examples Configuration
+### Resource Configuration
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `examples.hsmsecret.enabled` | Create example HSMSecret resources | `false` |
-| `examples.hsmdevice.enabled` | Create example HSMDevice resources | `false` |
+| `hsmsecret.enabled` | Create example HSMSecret resources | `false` |
+| `hsmdevice.enabled` | Create example HSMDevice resources | `false` |
 
 ### Other Configuration
 
@@ -133,13 +133,13 @@ helm install hsm-secrets-operator ./helm/hsm-secrets-operator \
   --set hsm.pkcs11.slotId=0
 ```
 
-### Installation with Examples
+### Installation with Resources
 
 ```bash
 # Install with example resources
 helm install hsm-secrets-operator ./helm/hsm-secrets-operator \
-  --set examples.hsmsecret.enabled=true \
-  --set examples.hsmdevice.enabled=true
+  --set hsmsecret.enabled=true \
+  --set hsmdevice.enabled=true
 ```
 
 ### Installation with Prometheus Monitoring

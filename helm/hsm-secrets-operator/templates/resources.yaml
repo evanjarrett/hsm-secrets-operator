@@ -1,5 +1,5 @@
-{{- if .Values.examples.hsmsecret.enabled }}
-{{- range .Values.examples.hsmsecret.samples }}
+{{- if .Values.hsmsecret.enabled }}
+{{- range .Values.hsmsecret.secrets }}
 ---
 apiVersion: hsm.j5t.io/v1alpha1
 kind: HSMSecret
@@ -8,7 +8,7 @@ metadata:
   namespace: {{ .namespace | default $.Release.Namespace }}
   labels:
     {{- include "hsm-secrets-operator.labels" $ | nindent 4 }}
-    app.kubernetes.io/component: example
+    app.kubernetes.io/component: hsmsecret
 spec:
   hsmPath: {{ .hsmPath }}
   {{- with .secretName }}
@@ -24,8 +24,8 @@ spec:
 {{- end }}
 {{- end }}
 
-{{- if .Values.examples.hsmdevice.enabled }}
-{{- range .Values.examples.hsmdevice.samples }}
+{{- if .Values.hsmdevice.enabled }}
+{{- range .Values.hsmdevice.devices }}
 ---
 apiVersion: hsm.j5t.io/v1alpha1
 kind: HSMDevice
@@ -34,13 +34,27 @@ metadata:
   namespace: {{ .namespace | default $.Release.Namespace }}
   labels:
     {{- include "hsm-secrets-operator.labels" $ | nindent 4 }}
-    app.kubernetes.io/component: example
+    app.kubernetes.io/component: hsmdevice
 spec:
   {{- with .deviceType }}
   deviceType: {{ . }}
   {{- end }}
-  {{- with .discovery }}
-  discovery:
+  {{- with .maxDevices }}
+  maxDevices: {{ . }}
+  {{- end }}
+  {{- with .pkcs11LibraryPath }}
+  pkcs11LibraryPath: {{ . }}
+  {{- end }}
+  {{- with .nodeSelector }}
+  nodeSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .usb }}
+  usb:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .devicePath }}
+  devicePath:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 {{- end }}
