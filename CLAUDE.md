@@ -366,35 +366,6 @@ The Dockerfile builds an Alpine-based environment with:
 - operator-sdk CLI tool
 - kubectl access with appropriate RBAC
 
-### Quick Start
-```bash
-# Initialize operator project
-operator-sdk init --domain=security --repo=github.com/evanjarrett/hsm-secrets-operator
-
-# Create CRD
-operator-sdk create api --group=hsm --version=v1alpha1 --kind=HSMSecret
-
-# Build and deploy
-make docker-build docker-push IMG=<registry>/hsm-secrets-operator:latest
-make deploy IMG=<registry>/hsm-secrets-operator:latest
-```
-
-### Example Usage
-```yaml
-# Create HSMSecret resource
-apiVersion: hsm.j5t.io/v1alpha1
-kind: HSMSecret
-metadata:
-  name: database-credentials
-  namespace: production
-spec:
-  hsmPath: "secrets/production/database-credentials"
-  secretName: "database-credentials"
-  autoSync: true
-  syncInterval: 60
-  secretType: Opaque
-```
-
 ### Monitoring Operations
 ```bash
 # View HSMSecret status with custom columns
