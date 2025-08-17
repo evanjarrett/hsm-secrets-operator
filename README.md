@@ -133,3 +133,10 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
+
+
+
+
+pkcs11-tool --module "/usr/local/lib/libsc-hsm-pkcs11.so" --token-label "Pico-HSM" --pin $BAO_HSM_PIN --keygen --key-type aes:32 --label "bao-root-key-aes" --id "02"
+
+pkcs11-tool --module "/usr/local/lib/libsc-hsm-pkcs11.so"  --token-label "Pico-HSM"  --list-mechanisms

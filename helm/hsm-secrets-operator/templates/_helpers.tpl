@@ -84,6 +84,14 @@ Create the image reference
 {{- end }}
 
 {{/*
+Create the discovery image reference
+*/}}
+{{- define "hsm-secrets-operator.discoveryImage" -}}
+{{- $tag := .Values.discoveryImage.tag | default .Chart.AppVersion }}
+{{- printf "%s:%s" .Values.discoveryImage.repository $tag }}
+{{- end }}
+
+{{/*
 Create system namespace name
 */}}
 {{- define "hsm-secrets-operator.systemNamespace" -}}

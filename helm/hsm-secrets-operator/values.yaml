@@ -8,6 +8,12 @@ image:
   pullPolicy: IfNotPresent
   tag: ""  # Defaults to the chart appVersion
 
+# Discovery image configuration (separate lightweight image)
+discoveryImage:
+  repository: ghcr.io/evanjarrett/hsm-secrets-operator-discovery
+  pullPolicy: IfNotPresent
+  tag: ""  # Defaults to the chart appVersion
+
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
@@ -88,6 +94,9 @@ hsm:
 discovery:
   # Enable device discovery (DaemonSet)
   enabled: true
+  
+  # Sync interval for device discovery (e.g., "30s", "1m", "5m")
+  syncInterval: "30s"
 
   # USB device discovery
   usb:

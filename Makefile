@@ -51,6 +51,7 @@ endif
 OPERATOR_SDK_VERSION ?= v1.41.1
 # Image URL to use all building/pushing image targets
 IMG ?= controller:latest
+DISCOVERY_IMG ?= hsm-discovery:latest
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -173,6 +174,20 @@ docker-build: ## Build docker image with the manager.
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
+
+.PHONY: docker-build-discovery
+docker-build-discovery: ## Build docker image for the discovery agent.
+	$(CONTAINER_TOOL) build -f Dockerfile.discovery -t ${DISCOVERY_IMG} .
+
+.PHONY: docker-push-discovery
+docker-push-discovery: ## Push docker image for the discovery agent.
+	$(CONTAINER_TOOL) push ${DISCOVERY_IMG}
+
+.PHONY: docker-build-all
+docker-build-all: docker-build docker-build-discovery ## Build both docker images.
+
+.PHONY: docker-push-all
+docker-push-all: docker-push docker-push-discovery ## Push both docker images.
 
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
