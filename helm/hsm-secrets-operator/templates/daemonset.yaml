@@ -1,0 +1,117 @@
+{{- if .Values.discovery.enabled }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "hsm-secrets-operator.fullname" . }}-discovery
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hsm-secrets-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: discovery
+    app.kubernetes.io/part-of: hsm-secrets-operator
+spec:
+  selector:
+    matchLabels:
+      {{- include "hsm-secrets-operator.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: discovery
+  template:
+    metadata:
+      annotations:
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "hsm-secrets-operator.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: discovery
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "hsm-secrets-operator.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.controllerManager.podSecurityContext | nindent 8 }}
+      containers:
+      - name: discovery
+        image: {{ include "hsm-secrets-operator.image" . }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+        - /manager
+        args:
+        - --mode=discovery
+        - --node-name=$(NODE_NAME)
+        {{- if .Values.config.verboseLogging }}
+        - --zap-log-level=debug
+        {{- end }}
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: USB_DISCOVERY_ENABLED
+          value: {{ .Values.discovery.usb.enabled | quote }}
+        - name: PATH_DISCOVERY_ENABLED
+          value: {{ .Values.discovery.path.enabled | quote }}
+        {{- if .Values.discovery.usb.enabled }}
+        - name: USB_DEVICE_TYPES
+          value: {{ join "," .Values.discovery.usb.deviceTypes | quote }}
+        {{- end }}
+        {{- if .Values.discovery.path.enabled }}
+        - name: PATH_PATTERNS
+          value: {{ join "," .Values.discovery.path.patterns | quote }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.controllerManager.resources | nindent 12 }}
+        securityContext:
+          {{- toYaml .Values.controllerManager.securityContext | nindent 12 }}
+        volumeMounts:
+        - name: dev
+          mountPath: /dev
+          readOnly: true
+        - name: sys
+          mountPath: /sys
+          readOnly: true
+        {{- if eq .Values.hsm.clientType "pkcs11" }}
+        - name: pkcs11-lib
+          mountPath: /usr/lib/x86_64-linux-gnu
+          readOnly: true
+        {{- end }}
+      volumes:
+      - name: dev
+        hostPath:
+          path: /dev
+          type: Directory
+      - name: sys
+        hostPath:
+          path: /sys
+          type: Directory
+      {{- if eq .Values.hsm.clientType "pkcs11" }}
+      - name: pkcs11-lib
+        hostPath:
+          path: /usr/lib/x86_64-linux-gnu
+          type: Directory
+      {{- end }}
+      hostNetwork: false
+      hostPID: false
+      hostIPC: false
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+{{- end }}

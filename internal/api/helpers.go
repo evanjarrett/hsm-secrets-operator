@@ -30,7 +30,7 @@ import (
 )
 
 // generateHSMPath creates an HSM path from label and ID
-func (s *Server) generateHSMPath(label string, id uint32) string {
+func (s *Server) generateHSMPath(label string, _ uint32) string {
 	return fmt.Sprintf("secrets/api/%s", label)
 }
 
@@ -74,7 +74,7 @@ func (s *Server) convertToHSMData(data map[string]interface{}, format SecretForm
 }
 
 // convertFromHSMData converts HSM data back to API format
-func (s *Server) convertFromHSMData(hsmData hsm.SecretData) (map[string]interface{}, error) {
+func (s *Server) convertFromHSMData(hsmData hsm.SecretData) map[string]interface{} {
 	data := make(map[string]interface{})
 
 	for key, value := range hsmData {
@@ -88,7 +88,7 @@ func (s *Server) convertFromHSMData(hsmData hsm.SecretData) (map[string]interfac
 		}
 	}
 
-	return data, nil
+	return data
 }
 
 // createHSMSecretResource creates a corresponding HSMSecret Kubernetes resource
@@ -225,10 +225,11 @@ func (s *Server) importFromKubernetes(ctx context.Context, secretName, namespace
 }
 
 // validateSecretAccess checks if the current user has access to the secret (placeholder for future authorization)
-func (s *Server) validateSecretAccess(ctx context.Context, label string, operation string) error {
-	// TODO: Implement proper authorization logic
-	// This could integrate with Kubernetes RBAC, external auth systems, etc.
-
-	s.logger.V(1).Info("Access validation", "label", label, "operation", operation)
-	return nil
-}
+// Currently unused - commented out to avoid lint warnings
+// func (s *Server) validateSecretAccess(ctx context.Context, label string, operation string) error {
+//	// TODO: Implement proper authorization logic
+//	// This could integrate with Kubernetes RBAC, external auth systems, etc.
+//
+//	s.logger.V(1).Info("Access validation", "label", label, "operation", operation)
+//	return nil
+// }

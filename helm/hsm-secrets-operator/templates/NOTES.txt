@@ -1,0 +1,101 @@
+1. HSM Secrets Operator has been deployed successfully!
+
+   Chart version: {{ .Chart.Version }}
+   App version: {{ .Chart.AppVersion }}
+   
+2. The operator is running with the following configuration:
+   
+   {{- if eq .Values.hsm.clientType "mock" }}
+   🔧 HSM Client: Mock (for testing)
+   {{- else if eq .Values.hsm.clientType "pkcs11" }}
+   🔐 HSM Client: PKCS#11 (production)
+   📚 PKCS#11 Library: {{ .Values.hsm.pkcs11.library }}
+   🎰 Slot ID: {{ .Values.hsm.pkcs11.slotId }}
+   {{- end }}
+   
+   {{- if .Values.discovery.enabled }}
+   🔍 Device Discovery: Enabled (DaemonSet deployed)
+     {{- if .Values.discovery.usb.enabled }}
+     📱 USB Discovery: {{ join ", " .Values.discovery.usb.deviceTypes }}
+     {{- end }}
+     {{- if .Values.discovery.path.enabled }}
+     📁 Path Discovery: {{ join ", " .Values.discovery.path.patterns }}
+     {{- end }}
+   {{- else }}
+   🔍 Device Discovery: Disabled
+   {{- end }}
+
+3. Check the operator status:
+   
+   kubectl get deployment {{ include "hsm-secrets-operator.controllerManagerName" . }} -n {{ .Release.Namespace }}
+   kubectl logs -f deployment/{{ include "hsm-secrets-operator.controllerManagerName" . }} -n {{ .Release.Namespace }}
+
+4. View Custom Resources:
+   
+   # List HSM Secrets
+   kubectl get hsmsecrets --all-namespaces
+   
+   # List HSM Devices
+   kubectl get hsmdevices --all-namespaces
+   
+   # Describe a specific HSM Secret (if any exist)
+   kubectl describe hsmsecret <secret-name> -n <namespace>
+
+5. Create your first HSM Secret:
+   
+   cat <<EOF | kubectl apply -f -
+   apiVersion: hsm.j5t.io/v1alpha1
+   kind: HSMSecret
+   metadata:
+     name: my-first-secret
+     namespace: {{ .Release.Namespace }}
+   spec:
+     hsmPath: "secrets/{{ .Release.Namespace }}/my-first-secret"
+     secretName: "my-first-secret"
+     autoSync: true
+     syncInterval: {{ .Values.config.defaultSyncInterval }}
+   EOF
+
+{{- if .Values.api.enabled }}
+
+6. API Server is available at:
+   
+   kubectl port-forward svc/{{ include "hsm-secrets-operator.fullname" . }}-api {{ .Values.api.port }}:{{ .Values.api.port }} -n {{ .Release.Namespace }}
+   
+   Then access: http://localhost:{{ .Values.api.port }}
+{{- end }}
+
+{{- if .Values.metrics.enabled }}
+
+7. Metrics are available at:
+   
+   kubectl port-forward svc/{{ include "hsm-secrets-operator.metricsServiceName" . }} 8443:8443 -n {{ .Release.Namespace }}
+   
+   Then access: https://localhost:8443/metrics
+{{- end }}
+
+{{- if .Values.discovery.enabled }}
+
+8. Device discovery is running. Check discovered devices:
+   
+   kubectl get hsmdevices --all-namespaces
+   kubectl logs daemonset/{{ include "hsm-secrets-operator.fullname" . }}-discovery -n {{ .Release.Namespace }}
+{{- end }}
+
+{{- if .Values.examples.hsmsecret.enabled }}
+
+9. Example HSMSecret resources have been created. Check them with:
+   
+   kubectl get hsmsecrets -n {{ .Release.Namespace }}
+{{- end }}
+
+{{- if .Values.examples.hsmdevice.enabled }}
+
+10. Example HSMDevice resources have been created. Check them with:
+   
+    kubectl get hsmdevices -n {{ .Release.Namespace }}
+{{- end }}
+
+For more information, visit: https://github.com/evanjarrett/hsm-secrets-operator
+
+Happy secret managing! 🔐

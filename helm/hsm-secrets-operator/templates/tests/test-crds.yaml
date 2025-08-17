@@ -1,0 +1,86 @@
+{{- if .Values.crds.install }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "hsm-secrets-operator.fullname" . }}-test-crds"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hsm-secrets-operator.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "2"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  serviceAccountName: {{ include "hsm-secrets-operator.serviceAccountName" . }}
+  containers:
+  - name: kubectl
+    image: bitnami/kubectl:1.29
+    command: ['/bin/sh']
+    args:
+      - -c
+      - |
+        echo "Testing CRD installation..."
+        
+        # Check if HSMSecret CRD exists
+        if ! kubectl get crd hsmsecrets.hsm.j5t.io; then
+          echo "ERROR: HSMSecret CRD not found"
+          exit 1
+        fi
+        echo "✓ HSMSecret CRD found"
+        
+        # Check if HSMDevice CRD exists  
+        if ! kubectl get crd hsmdevices.hsm.j5t.io; then
+          echo "ERROR: HSMDevice CRD not found"
+          exit 1
+        fi
+        echo "✓ HSMDevice CRD found"
+        
+        # Test creating a sample HSMSecret (dry-run)
+        cat <<EOF | kubectl apply --dry-run=client -f -
+        apiVersion: hsm.j5t.io/v1alpha1
+        kind: HSMSecret
+        metadata:
+          name: test-secret
+          namespace: {{ .Release.Namespace }}
+        spec:
+          hsmPath: "secrets/test/test-secret"
+          secretName: "test-secret"
+          autoSync: true
+          syncInterval: 300
+        EOF
+        echo "✓ HSMSecret validation passed"
+        
+        # Test creating a sample HSMDevice (dry-run)
+        cat <<EOF | kubectl apply --dry-run=client -f -
+        apiVersion: hsm.j5t.io/v1alpha1
+        kind: HSMDevice
+        metadata:
+          name: test-device
+          namespace: {{ .Release.Namespace }}
+        spec:
+          deviceType: "pico-hsm"
+          discovery:
+            usb:
+              enabled: true
+        EOF
+        echo "✓ HSMDevice validation passed"
+        
+        echo "All CRD tests passed!"
+    resources:
+      limits:
+        cpu: 200m
+        memory: 256Mi
+      requests:
+        cpu: 50m
+        memory: 64Mi
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      runAsUser: 1001
+      runAsGroup: 1001
+{{- end }}

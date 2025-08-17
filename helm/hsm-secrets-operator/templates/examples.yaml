@@ -1,0 +1,47 @@
+{{- if .Values.examples.hsmsecret.enabled }}
+{{- range .Values.examples.hsmsecret.samples }}
+---
+apiVersion: hsm.j5t.io/v1alpha1
+kind: HSMSecret
+metadata:
+  name: {{ .name }}
+  namespace: {{ .namespace | default $.Release.Namespace }}
+  labels:
+    {{- include "hsm-secrets-operator.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: example
+spec:
+  hsmPath: {{ .hsmPath }}
+  {{- with .secretName }}
+  secretName: {{ . }}
+  {{- end }}
+  {{- with .secretType }}
+  secretType: {{ . }}
+  {{- end }}
+  {{- with .syncInterval }}
+  syncInterval: {{ . }}
+  {{- end }}
+  autoSync: {{ .autoSync | default true }}
+{{- end }}
+{{- end }}
+
+{{- if .Values.examples.hsmdevice.enabled }}
+{{- range .Values.examples.hsmdevice.samples }}
+---
+apiVersion: hsm.j5t.io/v1alpha1
+kind: HSMDevice
+metadata:
+  name: {{ .name }}
+  namespace: {{ .namespace | default $.Release.Namespace }}
+  labels:
+    {{- include "hsm-secrets-operator.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: example
+spec:
+  {{- with .deviceType }}
+  deviceType: {{ . }}
+  {{- end }}
+  {{- with .discovery }}
+  discovery:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- end }}

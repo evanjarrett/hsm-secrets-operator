@@ -152,7 +152,7 @@ func (r *HSMDeviceReconciler) discoverUSBDevices(ctx context.Context, hsmDevice 
 		return nil, fmt.Errorf("USB discovery failed: %w", err)
 	}
 
-	var devices []hsmv1alpha1.DiscoveredDevice
+	devices := make([]hsmv1alpha1.DiscoveredDevice, 0)
 	for _, usbDev := range usbDevices {
 		device := hsmv1alpha1.DiscoveredDevice{
 			DevicePath:   usbDev.DevicePath,
@@ -194,7 +194,7 @@ func (r *HSMDeviceReconciler) discoverPathDevices(ctx context.Context, hsmDevice
 		return nil, fmt.Errorf("path discovery failed: %w", err)
 	}
 
-	var devices []hsmv1alpha1.DiscoveredDevice
+	devices := make([]hsmv1alpha1.DiscoveredDevice, 0)
 	for _, usbDev := range usbDevices {
 		device := hsmv1alpha1.DiscoveredDevice{
 			DevicePath:   usbDev.DevicePath,

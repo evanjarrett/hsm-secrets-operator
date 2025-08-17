@@ -54,9 +54,9 @@ type MirroringManager struct {
 }
 
 // NewMirroringManager creates a new mirroring manager
-func NewMirroringManager(client client.Client, nodeName string) *MirroringManager {
+func NewMirroringManager(k8sClient client.Client, nodeName string) *MirroringManager {
 	return &MirroringManager{
-		client:      client,
+		client:      k8sClient,
 		logger:      ctrl.Log.WithName("hsm-mirroring-manager"),
 		hsmClients:  make(map[string]hsm.Client),
 		mirrorCache: make(map[string]*MirroredSecretData),
@@ -66,11 +66,11 @@ func NewMirroringManager(client client.Client, nodeName string) *MirroringManage
 }
 
 // RegisterHSMClient registers an HSM client for a specific node
-func (m *MirroringManager) RegisterHSMClient(nodeName string, client hsm.Client) {
+func (m *MirroringManager) RegisterHSMClient(nodeName string, hsmClient hsm.Client) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	m.hsmClients[nodeName] = client
+	m.hsmClients[nodeName] = hsmClient
 	m.nodeHealth[nodeName] = time.Now()
 	m.logger.Info("Registered HSM client for node", "node", nodeName)
 }
@@ -97,15 +97,13 @@ func (m *MirroringManager) SyncDevices(ctx context.Context, hsmDevice *hsmv1alph
 	}
 
 	// Update mirroring status
-	if err := m.updateMirroringStatus(ctx, hsmDevice, primaryNode, mirrorNodes); err != nil {
-		return fmt.Errorf("failed to update mirroring status: %w", err)
-	}
+	m.updateMirroringStatus(ctx, hsmDevice, primaryNode, mirrorNodes)
 
 	return nil
 }
 
 // determineMirrorTopology determines which nodes should be primary vs mirrors
-func (m *MirroringManager) determineMirrorTopology(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice) (string, []string, error) {
+func (m *MirroringManager) determineMirrorTopology(_ context.Context, hsmDevice *hsmv1alpha1.HSMDevice) (string, []string, error) {
 	availableNodes := make([]string, 0)
 
 	// Collect nodes with available devices
@@ -175,10 +173,7 @@ func (m *MirroringManager) syncFromPrimary(ctx context.Context, hsmDevice *hsmv1
 	}
 
 	// List all secrets on the primary device
-	secrets, err := m.listSecretsFromHSM(ctx, primaryClient, hsmDevice)
-	if err != nil {
-		return fmt.Errorf("failed to list secrets from primary: %w", err)
-	}
+	secrets := m.listSecretsFromHSM(ctx, primaryClient, hsmDevice)
 
 	m.logger.Info("Found secrets on primary", "count", len(secrets), "primary", primaryNode)
 
@@ -269,7 +264,7 @@ func (m *MirroringManager) syncToMirrorNode(ctx context.Context, data *MirroredS
 }
 
 // listSecretsFromHSM lists all secrets from an HSM client
-func (m *MirroringManager) listSecretsFromHSM(ctx context.Context, client hsm.Client, hsmDevice *hsmv1alpha1.HSMDevice) ([]string, error) {
+func (m *MirroringManager) listSecretsFromHSM(ctx context.Context, hsmClient hsm.Client, _ *hsmv1alpha1.HSMDevice) []string {
 	// This is a simplified implementation
 	// In a real implementation, you would use HSM-specific APIs to list secrets
 
@@ -285,12 +280,12 @@ func (m *MirroringManager) listSecretsFromHSM(ctx context.Context, client hsm.Cl
 
 	for _, path := range basePaths {
 		// Check if secret exists
-		if _, err := client.ReadSecret(ctx, path); err == nil {
+		if _, err := hsmClient.ReadSecret(ctx, path); err == nil {
 			secrets = append(secrets, path)
 		}
 	}
 
-	return secrets, nil
+	return secrets
 }
 
 // GetReadOnlyAccess provides readonly access to secrets from mirrors when primary is down
@@ -373,7 +368,7 @@ func (m *MirroringManager) HandleFailover(ctx context.Context, hsmDevice *hsmv1a
 }
 
 // updateMirroringStatus updates the mirroring status in the HSMDevice
-func (m *MirroringManager) updateMirroringStatus(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, primaryNode string, mirrorNodes []string) error {
+func (m *MirroringManager) updateMirroringStatus(_ context.Context, hsmDevice *hsmv1alpha1.HSMDevice, primaryNode string, mirrorNodes []string) {
 	now := metav1.Now()
 
 	if hsmDevice.Status.Mirroring == nil {
@@ -401,7 +396,7 @@ func (m *MirroringManager) updateMirroringStatus(ctx context.Context, hsmDevice 
 		}
 	}
 
-	return nil
+	// Status updated successfully
 }
 
 // IsNodeHealthy checks if a node is healthy based on last seen time
