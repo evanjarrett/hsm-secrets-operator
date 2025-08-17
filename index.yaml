@@ -4,6 +4,33 @@ entries:
   - annotations:
       category: Security
     apiVersion: v2
+    appVersion: v0.1.5
+    created: "2025-08-17T22:43:19.513377679Z"
+    description: A Kubernetes operator that bridges Pico HSM binary data storage with
+      Kubernetes Secrets
+    digest: 6f74467e8a31ea33589302b3618be4b0ce633e47a7dfd9cb4db48e15ae524e68
+    home: https://github.com/evanjarrett/hsm-secrets-operator
+    icon: https://raw.githubusercontent.com/cncf/artwork/master/projects/kubernetes/icon/color/kubernetes-icon-color.svg
+    keywords:
+    - kubernetes
+    - operator
+    - hsm
+    - secrets
+    - security
+    - pkcs11
+    - pico-hsm
+    maintainers:
+    - name: Evan Jarrett
+    name: hsm-secrets-operator
+    sources:
+    - https://github.com/evanjarrett/hsm-secrets-operator
+    type: application
+    urls:
+    - https://github.com/evanjarrett/hsm-secrets-operator/releases/download/hsm-secrets-operator-0.1.6/hsm-secrets-operator-0.1.6.tgz
+    version: 0.1.6
+  - annotations:
+      category: Security
+    apiVersion: v2
     appVersion: 0.1.5
     created: "2025-08-17T19:49:03.620938249Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
@@ -163,4 +190,4 @@ entries:
     urls:
     - https://github.com/evanjarrett/hsm-secrets-operator/releases/download/hsm-secrets-operator-0.1.0/hsm-secrets-operator-0.1.0.tgz
     version: 0.1.0
-generated: "2025-08-17T19:49:03.62096553Z"
+generated: "2025-08-17T22:43:19.513407525Z"
