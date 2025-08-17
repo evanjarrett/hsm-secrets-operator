@@ -25,7 +25,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 
 	"github.com/go-logr/logr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -47,7 +46,7 @@ type USBDevice struct {
 // USBDiscoverer handles USB device discovery
 type USBDiscoverer struct {
 	logger logr.Logger
-	mutex  sync.RWMutex
+	// mutex  sync.RWMutex // unused
 
 	// Known USB paths to scan
 	usbSysPaths []string
@@ -74,7 +73,7 @@ func (u *USBDiscoverer) DiscoverDevices(ctx context.Context, spec *hsmv1alpha1.U
 		"vendorId", spec.VendorID,
 		"productId", spec.ProductID)
 
-	var devices []USBDevice
+	devices := make([]USBDevice, 0)
 
 	// Scan USB devices in sysfs
 	usbDevices, err := u.scanUSBDevices(ctx)
@@ -104,7 +103,7 @@ func (u *USBDiscoverer) DiscoverDevices(ctx context.Context, spec *hsmv1alpha1.U
 func (u *USBDiscoverer) DiscoverByPath(ctx context.Context, pathSpec *hsmv1alpha1.DevicePathSpec) ([]USBDevice, error) {
 	u.logger.V(1).Info("Starting path-based device discovery", "path", pathSpec.Path)
 
-	var devices []USBDevice
+	devices := make([]USBDevice, 0)
 
 	// Handle glob patterns
 	matches, err := filepath.Glob(pathSpec.Path)
@@ -150,8 +149,8 @@ func (u *USBDiscoverer) DiscoverByPath(ctx context.Context, pathSpec *hsmv1alpha
 }
 
 // scanUSBDevices scans the USB subsystem for devices
-func (u *USBDiscoverer) scanUSBDevices(ctx context.Context) ([]USBDevice, error) {
-	var devices []USBDevice
+func (u *USBDiscoverer) scanUSBDevices(_ context.Context) ([]USBDevice, error) {
+	devices := make([]USBDevice, 0)
 
 	usbSysPath := "/sys/bus/usb/devices"
 	if _, err := os.Stat(usbSysPath); err != nil {
@@ -175,9 +174,9 @@ func (u *USBDiscoverer) scanUSBDevices(ctx context.Context) ([]USBDevice, error)
 			return nil
 		}
 
-		device, err := u.parseUSBDevice(path)
-		if err != nil {
-			u.logger.V(2).Info("Failed to parse USB device", "path", path, "error", err)
+		device := u.parseUSBDevice(path)
+		if device == nil {
+			u.logger.V(2).Info("Failed to parse USB device", "path", path)
 			return nil
 		}
 
@@ -196,7 +195,7 @@ func (u *USBDiscoverer) scanUSBDevices(ctx context.Context) ([]USBDevice, error)
 }
 
 // parseUSBDevice parses USB device information from sysfs
-func (u *USBDiscoverer) parseUSBDevice(devicePath string) (*USBDevice, error) {
+func (u *USBDiscoverer) parseUSBDevice(devicePath string) *USBDevice {
 	device := &USBDevice{
 		DeviceInfo: make(map[string]string),
 	}
@@ -228,7 +227,7 @@ func (u *USBDiscoverer) parseUSBDevice(devicePath string) (*USBDevice, error) {
 
 	// Skip devices without vendor/product IDs
 	if device.VendorID == "" || device.ProductID == "" {
-		return nil, nil
+		return nil
 	}
 
 	// Try to find associated device paths
@@ -238,11 +237,11 @@ func (u *USBDiscoverer) parseUSBDevice(devicePath string) (*USBDevice, error) {
 	device.DeviceInfo["sysfs-path"] = devicePath
 	device.DeviceInfo["discovery-method"] = "usb"
 
-	return device, nil
+	return device
 }
 
 // findDevicePaths attempts to find device paths for a USB device
-func (u *USBDiscoverer) findDevicePaths(vendorID, productID, serial string) string {
+func (u *USBDiscoverer) findDevicePaths(_, _, _ string) string {
 	// This is a simplified implementation
 	// In a real implementation, you'd want to scan /dev and match devices
 	// For now, we'll look for common HSM device paths
@@ -273,7 +272,12 @@ func (u *USBDiscoverer) readSysfsFile(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			// Log the error but don't fail the operation
+			u.logger.V(2).Info("Failed to close sysfs file", "path", path, "error", err)
+		}
+	}()
 
 	scanner := bufio.NewScanner(file)
 	if scanner.Scan() {

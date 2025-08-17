@@ -253,7 +253,9 @@ func (r *HSMSecretReconciler) buildSecret(hsmSecret *hsmv1alpha1.HSMSecret, secr
 	}
 
 	// Set owner reference
-	ctrl.SetControllerReference(hsmSecret, &secret, r.Scheme)
+	if err := ctrl.SetControllerReference(hsmSecret, &secret, r.Scheme); err != nil {
+		ctrl.Log.Error(err, "Failed to set owner reference")
+	}
 
 	return secret
 }
@@ -277,7 +279,7 @@ func (r *HSMSecretReconciler) convertSecretDataToHSMData(secretData map[string][
 }
 
 // updateStatus updates the HSMSecret status
-func (r *HSMSecretReconciler) updateStatus(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret, status hsmv1alpha1.SyncStatus, errorMsg string) {
+func (r *HSMSecretReconciler) updateStatus(_ context.Context, hsmSecret *hsmv1alpha1.HSMSecret, status hsmv1alpha1.SyncStatus, errorMsg string) {
 	now := metav1.Now()
 	hsmSecret.Status.SyncStatus = status
 	hsmSecret.Status.LastError = errorMsg

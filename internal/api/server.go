@@ -43,9 +43,9 @@ type Server struct {
 }
 
 // NewServer creates a new API server instance
-func NewServer(client client.Client, hsmClient hsm.Client, mirroringManager *discovery.MirroringManager, logger logr.Logger) *Server {
+func NewServer(k8sClient client.Client, hsmClient hsm.Client, mirroringManager *discovery.MirroringManager, logger logr.Logger) *Server {
 	s := &Server{
-		client:           client,
+		client:           k8sClient,
 		hsmClient:        hsmClient,
 		mirroringManager: mirroringManager,
 		validator:        validator.New(),
@@ -75,9 +75,9 @@ func (s *Server) setupRouter() {
 		v1.GET("/health", s.handleHealth)
 
 		// HSM secrets management
-		hsm := v1.Group("/hsm")
+		hsmGroup := v1.Group("/hsm")
 		{
-			secrets := hsm.Group("/secrets")
+			secrets := hsmGroup.Group("/secrets")
 			{
 				secrets.POST("", s.handleCreateSecret)
 				secrets.GET("", s.handleListSecrets)
@@ -225,11 +225,7 @@ func (s *Server) handleGetSecret(c *gin.Context) {
 	}
 
 	// Convert HSM data back to API format
-	data, err := s.convertFromHSMData(hsmData)
-	if err != nil {
-		s.sendError(c, http.StatusInternalServerError, "data_conversion_error", err.Error(), nil)
-		return
-	}
+	data := s.convertFromHSMData(hsmData)
 
 	// Create metadata
 	checksum := hsm.CalculateChecksum(hsmData)
