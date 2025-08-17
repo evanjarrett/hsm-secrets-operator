@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Write(*)",
+      "Edit(*)",
+      "Bash(helm lint:*)",
+      "Bash(kubectl get:*)",
+      "Bash(kubectl describe:*)",
+      "Bash(kubectl exec:*)",
+      "Bash(grep:*)",
+      "Bash(kubectl logs:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
