@@ -1,0 +1,330 @@
+name: Helm Chart CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'helm/**'
+      - '.github/workflows/helm-chart.yml'
+    tags:
+      - 'v*'
+      - 'chart-*'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'helm/**'
+      - '.github/workflows/helm-chart.yml'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Force publish chart'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  HELM_VERSION: "3.14.0"
+  CHART_TESTING_VERSION: "3.10.1"
+  KUBERNETES_VERSION: "1.29.0"
+  
+jobs:
+  # Job 1: Lint and validate Helm chart
+  lint-and-test:
+    name: Lint and Test Chart
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          check-latest: true
+
+      - name: Set up chart-testing
+        uses: helm/chart-testing-action@v2.6.1
+        with:
+          version: ${{ env.CHART_TESTING_VERSION }}
+
+      - name: Add Helm repositories
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm repo update
+
+      - name: Lint Helm chart
+        run: |
+          helm lint helm/hsm-secrets-operator
+          ct lint --charts helm/hsm-secrets-operator --validate-maintainers=false
+
+      - name: Check for chart changes
+        id: list-changed
+        run: |
+          changed=$(ct list-changed --target-branch ${{ github.event.repository.default_branch }})
+          if [[ -n "$changed" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create test cluster (kind)
+        if: steps.list-changed.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        uses: helm/kind-action@v1.10.0
+        with:
+          version: v0.20.0
+          kubectl_version: ${{ env.KUBERNETES_VERSION }}
+
+      - name: Install Custom Resource Definitions
+        if: steps.list-changed.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          # Apply CRDs first since ct install doesn't handle CRD dependencies well
+          kubectl apply -f helm/hsm-secrets-operator/templates/crds/
+
+      - name: Run chart-testing (install)
+        if: steps.list-changed.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          ct install --charts helm/hsm-secrets-operator \
+            --helm-extra-set-args "--set=crds.install=false" \
+            --debug
+
+      - name: Test chart templates
+        run: |
+          helm template test helm/hsm-secrets-operator > /tmp/rendered-templates.yaml
+          kubectl --dry-run=client apply -f /tmp/rendered-templates.yaml
+
+      - name: Test chart with different values
+        run: |
+          # Test with PKCS#11 configuration
+          helm template test-pkcs11 helm/hsm-secrets-operator \
+            --set hsm.clientType=pkcs11 \
+            --set hsm.pkcs11.library=/usr/lib/pkcs11.so \
+            > /tmp/rendered-pkcs11.yaml
+          kubectl --dry-run=client apply -f /tmp/rendered-pkcs11.yaml
+          
+          # Test with discovery disabled
+          helm template test-no-discovery helm/hsm-secrets-operator \
+            --set discovery.enabled=false \
+            --set metrics.enabled=false \
+            > /tmp/rendered-minimal.yaml
+          kubectl --dry-run=client apply -f /tmp/rendered-minimal.yaml
+
+  # Job 2: Security scanning
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Render chart templates
+        run: |
+          helm template hsm-secrets-operator helm/hsm-secrets-operator > /tmp/all-templates.yaml
+
+      - name: Run Checkov security scan
+        uses: bridgecrewio/checkov-action@master
+        with:
+          file: /tmp/all-templates.yaml
+          framework: kubernetes
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+          quiet: true
+          soft_fail: true
+
+      - name: Upload Checkov results to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov-results.sarif
+
+      - name: Run Trivy security scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: '/tmp/all-templates.yaml'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy results to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+
+  # Job 3: Generate documentation
+  documentation:
+    name: Generate Documentation
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Install helm-docs
+        run: |
+          cd /tmp
+          wget https://github.com/norwoodj/helm-docs/releases/download/v1.11.3/helm-docs_1.11.3_Linux_x86_64.tar.gz
+          tar -xzf helm-docs_1.11.3_Linux_x86_64.tar.gz
+          sudo mv helm-docs /usr/local/bin
+
+      - name: Generate documentation
+        run: |
+          cd helm/hsm-secrets-operator
+          helm-docs --chart-search-root=. --template-files=./.helm-docs/README.md.gotmpl
+
+      - name: Check if documentation is up-to-date
+        run: |
+          if ! git diff --exit-code helm/hsm-secrets-operator/README.md; then
+            echo "Documentation is not up-to-date. Please run 'helm-docs' and commit the changes."
+            exit 1
+          fi
+
+  # Job 4: Package and publish chart
+  package-and-publish:
+    name: Package and Publish
+    runs-on: ubuntu-latest
+    needs: [lint-and-test, security-scan]
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      startsWith(github.ref, 'refs/tags/') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Determine chart version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/chart-* ]]; then
+            # Extract version from tag (e.g., chart-1.0.0 -> 1.0.0)
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#chart-}"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            # Extract version from tag (e.g., v1.0.0 -> 1.0.0)
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
+          else
+            # Use chart version from Chart.yaml with build metadata
+            VERSION=$(helm show chart helm/hsm-secrets-operator | grep '^version:' | cut -d' ' -f2)
+            VERSION="${VERSION}+build.$(date +%Y%m%d%H%M%S).${GITHUB_SHA:0:8}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Chart version: $VERSION"
+
+      - name: Update chart version
+        if: steps.version.outputs.version != ''
+        run: |
+          sed -i "s/^version:.*/version: ${{ steps.version.outputs.version }}/" helm/hsm-secrets-operator/Chart.yaml
+
+      - name: Package Helm chart
+        run: |
+          mkdir -p .cr-release-packages
+          helm dependency update helm/hsm-secrets-operator
+          helm package helm/hsm-secrets-operator --destination .cr-release-packages
+
+      - name: Upload chart package as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-chart-package
+          path: .cr-release-packages/*.tgz
+          retention-days: 30
+
+      - name: Install chart-releaser
+        run: |
+          cd /tmp
+          wget https://github.com/helm/chart-releaser/releases/download/v1.6.0/chart-releaser_1.6.0_linux_amd64.tar.gz
+          tar -xzf chart-releaser_1.6.0_linux_amd64.tar.gz
+          sudo mv cr /usr/local/bin
+
+      - name: Publish to GitHub Pages
+        env:
+          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        run: |
+          cr upload --owner "${{ github.repository_owner }}" --git-repo "${{ github.event.repository.name }}" --package-path .cr-release-packages
+          cr index --owner "${{ github.repository_owner }}" --git-repo "${{ github.event.repository.name }}" --package-path .cr-release-packages --index-path .
+          
+          # Commit and push the index
+          git add index.yaml
+          git commit -m "Update Helm chart index" || exit 0
+          git push origin main
+
+  # Job 5: Create GitHub Release
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: package-and-publish
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download chart package
+        uses: actions/download-artifact@v4
+        with:
+          name: helm-chart-package
+          path: ./packages
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ./packages/*.tgz
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+
+  # Job 6: Notify on completion
+  notify:
+    name: Notify
+    runs-on: ubuntu-latest
+    needs: [lint-and-test, security-scan, documentation, package-and-publish]
+    if: always()
+    steps:
+      - name: Workflow Summary
+        run: |
+          echo "## 📊 Workflow Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Lint and Test | ${{ needs.lint-and-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Scan | ${{ needs.security-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Documentation | ${{ needs.documentation.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Package and Publish | ${{ needs.package-and-publish.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ needs.package-and-publish.result }}" == "success" ]]; then
+            echo "✅ Helm chart successfully packaged and published!" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 📦 Installation" >> $GITHUB_STEP_SUMMARY
+            echo '```bash' >> $GITHUB_STEP_SUMMARY
+            echo "helm repo add hsm-secrets-operator https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/" >> $GITHUB_STEP_SUMMARY
+            echo "helm repo update" >> $GITHUB_STEP_SUMMARY
+            echo "helm install hsm-secrets-operator hsm-secrets-operator/hsm-secrets-operator" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
