@@ -5,8 +5,8 @@ on:
   pull_request:
 
 jobs:
-  lint:
-    name: Run on Ubuntu
+  golint:
+    name: Go Lint
     runs-on: ubuntu-latest
     steps:
       - name: Clone the code
@@ -21,3 +21,37 @@ jobs:
         uses: golangci/golangci-lint-action@v8
         with:
           version: v2.4.0
+
+  helm-lint:
+    name: Helm Lint
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Set up Helm
+      uses: azure/setup-helm@v4
+      with:
+        version: '3.14.0'
+        
+    - name: Lint Helm chart
+      run: |
+        helm lint helm/hsm-secrets-operator
+        
+    - name: Template Helm chart
+      run: |
+        helm template test helm/hsm-secrets-operator > /tmp/rendered.yaml
+        
+    - name: Validate rendered templates
+      run: |
+        # Basic YAML validation for multiple documents
+        python -c "
+        import yaml
+        with open('/tmp/rendered.yaml', 'r') as f:
+            docs = yaml.safe_load_all(f)
+            count = 0
+            for doc in docs:
+                if doc is not None:
+                    count += 1
+            print(f'YAML validation passed - {count} documents found')
+        "
