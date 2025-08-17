@@ -4,7 +4,7 @@
 
 # Operator image configuration
 image:
-  repository: hsm-secrets-operator
+  repository: ghcr.io/evanjarrett/shsm-secrets-operator
   pullPolicy: IfNotPresent
   tag: ""  # Defaults to the chart appVersion
 
