@@ -1,0 +1,28 @@
+# Lightweight discovery agent - no HSM libraries needed
+FROM golang:1.24-alpine AS builder
+ARG TARGETOS
+ARG TARGETARCH
+
+WORKDIR /workspace
+# Copy the Go Modules manifests
+COPY go.mod go.mod
+COPY go.sum go.sum
+# cache deps before building and copying source so that we don't need to re-download as much
+# and so that source changes don't invalidate our downloaded layer
+RUN go mod download
+
+# Copy the go source (only what's needed for discovery)
+COPY cmd/discovery/ cmd/discovery/
+COPY api/ api/
+COPY internal/ internal/
+
+# Build discovery binary only
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o discovery cmd/discovery/main.go
+
+# Use distroless for minimal attack surface and size
+FROM gcr.io/distroless/static:nonroot
+WORKDIR /
+COPY --from=builder /workspace/discovery .
+USER 65532:65532
+
+ENTRYPOINT ["/discovery"]
