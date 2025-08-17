@@ -1,0 +1,379 @@
+# Custom PKCS#11 Library Configuration Examples
+
+---
+# Method 1: ConfigMap for library path configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hsm-library-config
+  namespace: hsm-secrets-operator-system
+data:
+  # Different library paths for different vendors
+  opensc-library.conf: |
+    # OpenSC library (default)
+    /usr/lib/x86_64-linux-gnu/pkcs11/opensc-pkcs11.so
+  
+  softhsm-library.conf: |
+    # SoftHSM library
+    /usr/lib/softhsm/libsofthsm2.so
+  
+  yubico-library.conf: |
+    # YubiKey PKCS#11 library
+    /usr/lib/x86_64-linux-gnu/libykcs11.so.1
+  
+  nitrokey-library.conf: |
+    # Nitrokey PKCS#11 library
+    /usr/lib/nitrokey/libnitrokey-pkcs11.so
+  
+  custom-vendor.conf: |
+    # Custom vendor library
+    /opt/custom-hsm/lib/libcustomhsm-pkcs11.so
+
+---
+# HSMDevice using different library paths
+apiVersion: hsm.j5t.io/v1alpha1
+kind: HSMDevice
+metadata:
+  name: custom-hsm-device
+  namespace: default
+  labels:
+    vendor: custom-vendor
+spec:
+  deviceType: Generic  # Use Generic for custom devices
+  
+  # Custom USB device
+  usb:
+    vendorId: "1234"  # Your vendor ID
+    productId: "5678"  # Your product ID
+    # serialNumber: "CUSTOM-001"  # Optional specific device
+  
+  # Custom PKCS#11 library path
+  pkcs11LibraryPath: "/opt/custom-hsm/lib/libcustomhsm-pkcs11.so"
+  
+  nodeSelector:
+    hsm.vendor: "custom-vendor"  # Only deploy on nodes with this vendor
+
+---
+# Alternative: Path-based discovery for custom device paths
+apiVersion: hsm.j5t.io/v1alpha1
+kind: HSMDevice
+metadata:
+  name: path-based-hsm
+  namespace: default
+spec:
+  deviceType: Generic
+  
+  # Use device path instead of USB discovery
+  devicePath:
+    path: "/dev/custom-hsm*"
+    permissions: "0666"
+  
+  # Custom library path
+  pkcs11LibraryPath: "/usr/local/lib/libcustomhsm.so"
+  
+  nodeSelector:
+    custom-hsm.enabled: "true"
+
+---
+# Method 2: Init container to install custom libraries
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hsm-operator-with-custom-lib
+  namespace: hsm-secrets-operator-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hsm-operator-custom
+  template:
+    metadata:
+      labels:
+        app: hsm-operator-custom
+    spec:
+      # Init container to install custom PKCS#11 library
+      initContainers:
+      - name: install-custom-pkcs11
+        image: alpine:latest
+        command:
+        - sh
+        - -c
+        - |
+          # Download and install custom PKCS#11 library
+          echo "Installing custom PKCS#11 library..."
+          
+          # Example: Download from vendor
+          # wget -O /shared/libcustomhsm.so https://vendor.com/lib/libcustomhsm.so
+          
+          # Or copy from mounted volume
+          if [ -f /vendor-libs/libcustomhsm.so ]; then
+            cp /vendor-libs/libcustomhsm.so /shared/
+            chmod 755 /shared/libcustomhsm.so
+            echo "Custom library installed at /shared/libcustomhsm.so"
+          fi
+          
+          # Set permissions
+          ls -la /shared/
+        
+        volumeMounts:
+        - name: shared-libs
+          mountPath: /shared
+        - name: vendor-libs
+          mountPath: /vendor-libs
+          readOnly: true
+        
+        securityContext:
+          runAsUser: 0  # Need root to install libraries
+      
+      containers:
+      - name: manager
+        image: controller:latest
+        command:
+        - /manager
+        args:
+        - --leader-elect
+        - --metrics-bind-address=127.0.0.1:8080
+        
+        # Environment variable for custom library path
+        env:
+        - name: CUSTOM_PKCS11_PATH
+          value: "/shared/libcustomhsm.so"
+        
+        volumeMounts:
+        - name: shared-libs
+          mountPath: /shared
+          readOnly: true
+        
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+      
+      volumes:
+      - name: shared-libs
+        emptyDir: {}
+      - name: vendor-libs
+        configMap:
+          name: vendor-library-files
+          defaultMode: 0755
+
+---
+# Method 3: Sidecar container approach
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hsm-operator-with-sidecar
+  namespace: hsm-secrets-operator-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hsm-operator-sidecar
+  template:
+    metadata:
+      labels:
+        app: hsm-operator-sidecar
+    spec:
+      containers:
+      # Main operator container
+      - name: manager
+        image: controller:latest
+        command:
+        - /manager
+        args:
+        - --leader-elect
+        
+        volumeMounts:
+        - name: pkcs11-libs
+          mountPath: /usr/local/lib/pkcs11
+          readOnly: true
+        
+        env:
+        - name: LD_LIBRARY_PATH
+          value: "/usr/local/lib/pkcs11:$LD_LIBRARY_PATH"
+      
+      # Sidecar container providing PKCS#11 libraries
+      - name: pkcs11-provider
+        image: custom-pkcs11-provider:latest
+        command:
+        - sh
+        - -c
+        - |
+          # Copy libraries to shared volume and keep container running
+          cp -r /vendor-libs/* /shared-libs/
+          echo "PKCS#11 libraries provided"
+          # Keep container running
+          tail -f /dev/null
+        
+        volumeMounts:
+        - name: pkcs11-libs
+          mountPath: /shared-libs
+        
+        # Resource limits for sidecar
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 50m
+            memory: 32Mi
+      
+      volumes:
+      - name: pkcs11-libs
+        emptyDir: {}
+
+---
+# Method 4: DaemonSet to install libraries on nodes
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: custom-pkcs11-installer
+  namespace: hsm-secrets-operator-system
+  labels:
+    app: pkcs11-installer
+spec:
+  selector:
+    matchLabels:
+      app: pkcs11-installer
+  template:
+    metadata:
+      labels:
+        app: pkcs11-installer
+    spec:
+      # Run on nodes with custom HSM hardware
+      nodeSelector:
+        hsm.vendor: "custom-vendor"
+      
+      hostNetwork: true
+      hostPID: true
+      
+      containers:
+      - name: installer
+        image: alpine:latest
+        command:
+        - sh
+        - -c
+        - |
+          echo "Installing custom PKCS#11 library on node..."
+          
+          # Install to host filesystem (requires privileged access)
+          if [ ! -f /host/usr/local/lib/libcustomhsm.so ]; then
+            # Copy from container to host
+            cp /vendor-libs/libcustomhsm.so /host/usr/local/lib/
+            chmod 755 /host/usr/local/lib/libcustomhsm.so
+            
+            # Update ldconfig on host
+            chroot /host ldconfig
+            
+            echo "Custom PKCS#11 library installed"
+          else
+            echo "Library already installed"
+          fi
+          
+          # Keep container running to maintain installation
+          sleep infinity
+        
+        volumeMounts:
+        - name: host-root
+          mountPath: /host
+        - name: vendor-libs
+          mountPath: /vendor-libs
+          readOnly: true
+        
+        securityContext:
+          privileged: true  # Required to modify host filesystem
+        
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+      
+      volumes:
+      - name: host-root
+        hostPath:
+          path: /
+      - name: vendor-libs
+        configMap:
+          name: custom-pkcs11-libraries
+          defaultMode: 0755
+
+---
+# ConfigMap containing the actual library files (base64 encoded)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: custom-pkcs11-libraries
+  namespace: hsm-secrets-operator-system
+binaryData:
+  # Base64 encoded library file - replace with actual library
+  libcustomhsm.so: <base64-encoded-library-file>
+
+---
+# Node labeling job to identify HSM-capable nodes
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hsm-node-labeler
+  namespace: hsm-secrets-operator-system
+spec:
+  template:
+    spec:
+      serviceAccountName: hsm-node-labeler
+      containers:
+      - name: labeler
+        image: bitnami/kubectl:latest
+        command:
+        - sh
+        - -c
+        - |
+          # Detect nodes with custom HSM hardware
+          for node in $(kubectl get nodes -o name); do
+            node_name=$(echo $node | cut -d/ -f2)
+            echo "Checking node: $node_name"
+            
+            # Check if node has custom HSM (this is vendor-specific)
+            # Example: check for specific USB devices
+            if kubectl get node $node_name -o jsonpath='{.status.allocatable}' | grep -q "custom-hsm"; then
+              echo "Labeling $node_name with custom HSM"
+              kubectl label node $node_name hsm.vendor=custom-vendor --overwrite
+              kubectl label node $node_name custom-hsm.enabled=true --overwrite
+            fi
+          done
+      
+      restartPolicy: OnFailure
+
+---
+# RBAC for node labeling job
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hsm-node-labeler
+  namespace: hsm-secrets-operator-system
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: hsm-node-labeler
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "patch", "update"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: hsm-node-labeler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: hsm-node-labeler
+subjects:
+- kind: ServiceAccount
+  name: hsm-node-labeler
+  namespace: hsm-secrets-operator-system
