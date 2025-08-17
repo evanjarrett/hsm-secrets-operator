@@ -1,5 +1,0 @@
-## Append samples of your project ##
-resources:
-- hsm_v1alpha1_hsmsecret.yaml
-- hsm_v1alpha1_hsmdevice.yaml
-# +kubebuilder:scaffold:manifestskustomizesamples
