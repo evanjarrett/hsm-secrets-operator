@@ -4,7 +4,7 @@
 
 # Operator image configuration
 image:
-  repository: ghcr.io/evanjarrett/shsm-secrets-operator
+  repository: ghcr.io/evanjarrett/hsm-secrets-operator
   pullPolicy: IfNotPresent
   tag: ""  # Defaults to the chart appVersion
 
@@ -128,7 +128,7 @@ metrics:
 # Webhook configuration
 webhook:
   # Enable admission webhooks
-  enabled: true
+  enabled: false
   port: 9443
 
   # Certificate configuration

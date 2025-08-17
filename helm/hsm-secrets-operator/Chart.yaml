@@ -2,7 +2,7 @@ apiVersion: v2
 name: hsm-secrets-operator
 description: A Kubernetes operator that bridges Pico HSM binary data storage with Kubernetes Secrets
 type: application
-version: 0.1.2
+version: 0.1.3
 appVersion: "latest"
 icon: https://raw.githubusercontent.com/cncf/artwork/master/projects/kubernetes/icon/color/kubernetes-icon-color.svg
 home: https://github.com/evanjarrett/hsm-secrets-operator
