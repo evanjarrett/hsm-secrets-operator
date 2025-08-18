@@ -78,11 +78,6 @@ spec:
         - name: sys
           mountPath: /sys
           readOnly: true
-        {{- if eq .Values.hsm.clientType "pkcs11" }}
-        - name: pkcs11-lib
-          mountPath: /usr/lib/x86_64-linux-gnu
-          readOnly: true
-        {{- end }}
       volumes:
       - name: plugins-registry
         hostPath:
@@ -100,12 +95,6 @@ spec:
         hostPath:
           path: /sys
           type: Directory
-      {{- if eq .Values.hsm.clientType "pkcs11" }}
-      - name: pkcs11-lib
-        hostPath:
-          path: /usr/lib/x86_64-linux-gnu
-          type: Directory
-      {{- end }}
       hostNetwork: false
       hostPID: false
       hostIPC: false

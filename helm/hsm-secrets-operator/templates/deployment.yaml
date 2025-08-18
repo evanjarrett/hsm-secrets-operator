@@ -104,11 +104,6 @@ spec:
           {{- toYaml .Values.controllerManager.securityContext | nindent 12 }}
         {{- if or (eq .Values.hsm.clientType "pkcs11") .Values.discovery.enabled }}
         volumeMounts:
-        {{- if eq .Values.hsm.clientType "pkcs11" }}
-        - name: pkcs11-lib
-          mountPath: /usr/lib/x86_64-linux-gnu
-          readOnly: true
-        {{- end }}
         {{- if .Values.discovery.enabled }}
         - name: dev
           mountPath: /dev
@@ -125,12 +120,6 @@ spec:
         {{- end }}
       {{- if or (eq .Values.hsm.clientType "pkcs11") .Values.discovery.enabled .Values.webhook.enabled }}
       volumes:
-      {{- if eq .Values.hsm.clientType "pkcs11" }}
-      - name: pkcs11-lib
-        hostPath:
-          path: /usr/lib/x86_64-linux-gnu
-          type: Directory
-      {{- end }}
       {{- if .Values.discovery.enabled }}
       - name: dev
         hostPath:
