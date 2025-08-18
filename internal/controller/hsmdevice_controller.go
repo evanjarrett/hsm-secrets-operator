@@ -294,6 +294,11 @@ func (r *HSMDeviceReconciler) updateStatus(ctx context.Context, hsmDevice *hsmv1
 	// Check if status actually needs updating to avoid reconciliation loops
 	needsUpdate := false
 
+	logger := log.FromContext(ctx)
+	logger.V(2).Info("Checking if status update needed",
+		"currentPhase", hsmDevice.Status.Phase, "newPhase", phase,
+		"currentDevices", hsmDevice.Status.TotalDevices, "newDevices", len(devices))
+
 	// Check if phase changed
 	if hsmDevice.Status.Phase != phase {
 		needsUpdate = true
@@ -366,26 +371,45 @@ func (r *HSMDeviceReconciler) updateStatus(ctx context.Context, hsmDevice *hsmv1
 
 	if shouldUpdateCondition {
 		needsUpdate = true
-		condition := metav1.Condition{
-			Type:               conditionType,
-			Status:             conditionStatus,
-			LastTransitionTime: now,
-			Reason:             reason,
-			Message:            message,
-		}
 
 		if existingConditionIndex >= 0 {
-			hsmDevice.Status.Conditions[existingConditionIndex] = condition
+			// Update existing condition but preserve LastTransitionTime if status hasn't changed
+			existingCondition := hsmDevice.Status.Conditions[existingConditionIndex]
+			lastTransitionTime := existingCondition.LastTransitionTime
+
+			// Only update LastTransitionTime if the status actually changed
+			if existingCondition.Status != conditionStatus {
+				lastTransitionTime = now
+			}
+
+			hsmDevice.Status.Conditions[existingConditionIndex] = metav1.Condition{
+				Type:               conditionType,
+				Status:             conditionStatus,
+				LastTransitionTime: lastTransitionTime,
+				Reason:             reason,
+				Message:            message,
+			}
 		} else {
+			// New condition
+			condition := metav1.Condition{
+				Type:               conditionType,
+				Status:             conditionStatus,
+				LastTransitionTime: now,
+				Reason:             reason,
+				Message:            message,
+			}
 			hsmDevice.Status.Conditions = append(hsmDevice.Status.Conditions, condition)
 		}
 	}
 
 	// Only update status if there are actual changes
 	if needsUpdate {
+		logger.V(1).Info("Updating HSMDevice status", "reason", "status changed")
 		if err := r.Status().Update(ctx, hsmDevice); err != nil {
 			return ctrl.Result{}, err
 		}
+	} else {
+		logger.V(2).Info("Skipping status update", "reason", "no changes detected")
 	}
 
 	// Requeue based on discovery result

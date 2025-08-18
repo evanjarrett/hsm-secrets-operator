@@ -89,9 +89,12 @@ func (u *USBDiscoverer) DiscoverDevices(ctx context.Context, spec *hsmv1alpha1.U
 	var devices []USBDevice
 
 	// Choose detection method based on configuration
+	u.logger.V(1).Info("Using detection method", "method", u.detectionMethod)
+
 	switch u.detectionMethod {
 	case "sysfs":
 		// Use native sysfs reading (recommended method)
+		u.logger.V(1).Info("Forcing native sysfs detection method")
 		sysfsDevices, err := u.scanUSBWithSysfs()
 		if err != nil {
 			return nil, fmt.Errorf("native sysfs detection method failed: %w", err)
@@ -99,32 +102,25 @@ func (u *USBDiscoverer) DiscoverDevices(ctx context.Context, spec *hsmv1alpha1.U
 		devices = u.filterDevices(sysfsDevices, spec, "native-sysfs")
 
 	case "legacy":
-		// Use legacy privileged sysfs scanning (backward compatibility)
-		legacyDevices, err := u.scanUSBDevices(ctx)
+		// Legacy method removed - use native sysfs instead
+		u.logger.V(1).Info("Legacy method deprecated, using native sysfs")
+		sysfsDevices, err := u.scanUSBWithSysfs()
 		if err != nil {
-			return nil, fmt.Errorf("legacy sysfs detection method failed: %w", err)
+			return nil, fmt.Errorf("native sysfs detection method failed: %w", err)
 		}
-		devices = u.filterDevices(legacyDevices, spec, "legacy-sysfs")
+		devices = u.filterDevices(sysfsDevices, spec, "native-sysfs")
 
 	case "auto":
 		fallthrough
 	default:
-		// Try native sysfs first, fallback to legacy if needed
+		// Always use native sysfs - no fallback needed
+		u.logger.V(1).Info("Auto-detection: using native sysfs")
 		sysfsDevices, err := u.scanUSBWithSysfs()
-		if err == nil && len(sysfsDevices) > 0 {
-			u.logger.V(1).Info("Using native sysfs for USB discovery", "foundDevices", len(sysfsDevices))
-			devices = u.filterDevices(sysfsDevices, spec, "native-sysfs")
-		} else {
-			u.logger.V(1).Info("native sysfs failed, falling back to legacy sysfs scan", "error", err)
-
-			// Fallback to legacy privileged sysfs scanning
-			legacyDevices, err := u.scanUSBDevices(ctx)
-			if err != nil {
-				return nil, fmt.Errorf("all USB detection methods failed - native sysfs: %v, legacy: %w",
-					"failed", err)
-			}
-			devices = u.filterDevices(legacyDevices, spec, "legacy-sysfs")
+		if err != nil {
+			return nil, fmt.Errorf("native sysfs detection method failed: %w", err)
 		}
+		u.logger.V(1).Info("Using native sysfs for USB discovery", "foundDevices", len(sysfsDevices))
+		devices = u.filterDevices(sysfsDevices, spec, "native-sysfs")
 	}
 
 	u.logger.Info("USB device discovery completed",
@@ -221,8 +217,11 @@ func (u *USBDiscoverer) scanUSBWithSysfs() ([]USBDevice, error) {
 	}
 
 	// Read the USB bus devices directly (like lsusb does)
+	u.logger.V(1).Info("Scanning USB devices in sysfs", "path", usbSysPath)
+
 	err := filepath.WalkDir(usbSysPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			u.logger.V(2).Info("Error walking USB device", "path", path, "error", err)
 			return err
 		}
 
@@ -243,8 +242,13 @@ func (u *USBDiscoverer) scanUSBWithSysfs() ([]USBDevice, error) {
 			return nil
 		}
 
+		u.logger.V(2).Info("Found potential USB device directory", "name", name, "path", path)
+
 		device := u.parseUSBDeviceFromSysfs(path)
 		if device != nil {
+			u.logger.V(1).Info("Successfully parsed USB device",
+				"vendorId", device.VendorID, "productId", device.ProductID,
+				"manufacturer", device.Manufacturer, "product", device.Product)
 			devices = append(devices, *device)
 		}
 
@@ -343,138 +347,6 @@ func (u *USBDiscoverer) parseUSBDeviceFromSysfs(devicePath string) *USBDevice {
 		"product", device.Product)
 
 	return device
-}
-
-// scanUSBDevices scans the USB subsystem for devices
-func (u *USBDiscoverer) scanUSBDevices(_ context.Context) ([]USBDevice, error) {
-	devices := make([]USBDevice, 0)
-
-	// Try different USB sysfs paths
-	var usbSysPath string
-	for _, path := range u.usbSysPaths {
-		if _, err := os.Stat(path); err == nil {
-			usbSysPath = path
-			u.logger.V(1).Info("Using USB sysfs path", "path", usbSysPath)
-			break
-		}
-	}
-
-	if usbSysPath == "" {
-		u.logger.V(1).Info("No USB sysfs path available", "tried", u.usbSysPaths)
-		return devices, nil
-	}
-
-	err := filepath.WalkDir(usbSysPath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		// Skip if not a directory or if it doesn't look like a USB device
-		if !d.IsDir() {
-			return nil
-		}
-
-		// Check if this is a USB device directory (e.g., 1-1.2)
-		name := d.Name()
-		if !regexp.MustCompile(`^\d+-[\d.]+$`).MatchString(name) {
-			return nil
-		}
-
-		device := u.parseUSBDevice(path)
-		if device == nil {
-			u.logger.V(2).Info("Failed to parse USB device", "path", path)
-			return nil
-		}
-
-		if device != nil {
-			devices = append(devices, *device)
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to walk USB devices: %w", err)
-	}
-
-	return devices, nil
-}
-
-// parseUSBDevice parses USB device information from sysfs
-func (u *USBDiscoverer) parseUSBDevice(devicePath string) *USBDevice {
-	device := &USBDevice{
-		DeviceInfo: make(map[string]string),
-	}
-
-	// Read vendor ID
-	if vendorID, err := u.readSysfsFile(filepath.Join(devicePath, "idVendor")); err == nil {
-		device.VendorID = strings.TrimSpace(vendorID)
-	}
-
-	// Read product ID
-	if productID, err := u.readSysfsFile(filepath.Join(devicePath, "idProduct")); err == nil {
-		device.ProductID = strings.TrimSpace(productID)
-	}
-
-	// Read serial number
-	if serial, err := u.readSysfsFile(filepath.Join(devicePath, "serial")); err == nil {
-		device.SerialNumber = strings.TrimSpace(serial)
-	}
-
-	// Read manufacturer
-	if manufacturer, err := u.readSysfsFile(filepath.Join(devicePath, "manufacturer")); err == nil {
-		device.Manufacturer = strings.TrimSpace(manufacturer)
-	}
-
-	// Read product name
-	if product, err := u.readSysfsFile(filepath.Join(devicePath, "product")); err == nil {
-		device.Product = strings.TrimSpace(product)
-	}
-
-	// Skip devices without vendor/product IDs
-	if device.VendorID == "" || device.ProductID == "" {
-		return nil
-	}
-
-	// Try to find associated device paths
-	device.DevicePath = u.findDevicePaths(device.VendorID, device.ProductID, device.SerialNumber)
-
-	// Add additional device info
-	device.DeviceInfo["sysfs-path"] = devicePath
-	device.DeviceInfo["discovery-method"] = "usb"
-
-	return device
-}
-
-// findDevicePaths attempts to find device paths for a USB device
-func (u *USBDiscoverer) findDevicePaths(_, _, _ string) string {
-	// This is a simplified implementation
-	// In a real implementation, you'd want to scan /dev and match devices
-	// For now, we'll look for common HSM device paths in all device directories
-
-	commonPaths := []string{
-		"ttyUSB0", "ttyUSB1", "ttyUSB2", "ttyUSB3",
-		"ttyACM0", "ttyACM1", "ttyACM2", "ttyACM3",
-		"sc-hsm", "pkcs11",
-	}
-
-	// Try both host-mounted and container paths
-	for _, devPath := range u.devicePaths {
-		for _, deviceName := range commonPaths {
-			fullPath := filepath.Join(devPath, deviceName)
-			if _, err := os.Stat(fullPath); err == nil {
-				u.logger.V(2).Info("Found device path", "path", fullPath)
-				// Return the path that would be accessible to the application
-				// If we're using host-mounted paths, convert back to container paths
-				if strings.HasPrefix(devPath, "/host/") {
-					return filepath.Join("/dev", deviceName)
-				}
-				return fullPath
-			}
-		}
-	}
-
-	return ""
 }
 
 // readSysfsFile reads a single-line file from sysfs
