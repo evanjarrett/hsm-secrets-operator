@@ -39,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/api"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/controller"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/discovery"
@@ -240,11 +241,19 @@ func main() {
 	// Register the HSM client with the mirroring manager for this node
 	mirroringManager.RegisterHSMClient(nodeName, hsmClient)
 
+	// Create agent manager
+	agentImage := os.Getenv("AGENT_IMAGE")
+	if agentImage == "" {
+		agentImage = "hsm-secrets-operator:latest" // Default to same image as manager
+	}
+	agentManager := agent.NewManager(mgr.GetClient(), agentImage, "hsm-secrets-operator-system")
+
 	if err := (&controller.HSMSecretReconciler{
 		Client:           mgr.GetClient(),
 		Scheme:           mgr.GetScheme(),
 		HSMClient:        hsmClient,
 		MirroringManager: mirroringManager,
+		AgentManager:     agentManager,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "HSMSecret")
 		os.Exit(1)

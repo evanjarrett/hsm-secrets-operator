@@ -14,6 +14,12 @@ discoveryImage:
   pullPolicy: IfNotPresent
   tag: ""  # Defaults to the chart appVersion
 
+# Agent image configuration (for HSM agent pods)
+agentImage:
+  repository: ghcr.io/evanjarrett/hsm-secrets-operator
+  pullPolicy: IfNotPresent
+  tag: ""  # Defaults to the chart appVersion (uses same image as manager)
+
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""

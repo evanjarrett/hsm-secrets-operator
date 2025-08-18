@@ -63,6 +63,9 @@ spec:
           value: {{ .Values.config.defaultSyncInterval | quote }}
         - name: DEFAULT_SECRET_TYPE
           value: {{ .Values.config.defaultSecretType | quote }}
+        # Agent image configuration for dynamic agent pod deployment
+        - name: AGENT_IMAGE
+          value: {{ include "hsm-secrets-operator.agentImage" . }}
         ports:
         {{- if .Values.metrics.enabled }}
         - name: metrics

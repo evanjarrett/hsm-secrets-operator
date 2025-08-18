@@ -34,6 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/discovery"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
 )
@@ -52,6 +53,7 @@ type HSMSecretReconciler struct {
 	Scheme           *runtime.Scheme
 	HSMClient        hsm.Client
 	MirroringManager *discovery.MirroringManager
+	AgentManager     *agent.Manager
 }
 
 // +kubebuilder:rbac:groups=hsm.j5t.io,resources=hsmsecrets,verbs=get;list;watch;create;update;patch;delete
@@ -60,6 +62,8 @@ type HSMSecretReconciler struct {
 // +kubebuilder:rbac:groups=hsm.j5t.io,resources=hsmdevices,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile handles HSMSecret reconciliation
 func (r *HSMSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -76,10 +80,17 @@ func (r *HSMSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	// Check if HSM client is available
-	if r.HSMClient == nil || !r.HSMClient.IsConnected() {
-		logger.Error(fmt.Errorf("HSM client not available"), "HSM client not connected")
+	// Find target HSM device and ensure agent is running
+	hsmDevice, agentClient, err := r.ensureHSMAgent(ctx, &hsmSecret)
+	if err != nil {
+		logger.Error(err, "Failed to ensure HSM agent")
 		return ctrl.Result{RequeueAfter: time.Minute * 5}, nil
+	}
+
+	// Use agent client instead of direct HSM client
+	if agentClient == nil || !agentClient.IsConnected() {
+		logger.Error(fmt.Errorf("HSM agent not available"), "HSM agent not connected", "device", hsmDevice.Name)
+		return ctrl.Result{RequeueAfter: time.Minute * 2}, nil
 	}
 
 	// Handle deletion
@@ -97,8 +108,8 @@ func (r *HSMSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	// Reconcile the HSMSecret
-	result, err := r.reconcileNormal(ctx, &hsmSecret)
+	// Reconcile the HSMSecret using the agent client
+	result, err := r.reconcileNormal(ctx, &hsmSecret, agentClient)
 	if err != nil {
 		logger.Error(err, "Failed to reconcile HSMSecret")
 		r.updateStatus(ctx, &hsmSecret, hsmv1alpha1.SyncStatusError, err.Error())
@@ -107,8 +118,40 @@ func (r *HSMSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return result, err
 }
 
+// ensureHSMAgent finds an HSM device for the secret and ensures an agent is running
+func (r *HSMSecretReconciler) ensureHSMAgent(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret) (*hsmv1alpha1.HSMDevice, hsm.Client, error) {
+	logger := log.FromContext(ctx)
+
+	// Find the appropriate HSM device
+	hsmDevice, err := r.findHSMDeviceForSecret(ctx, hsmSecret)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to find HSM device for secret: %w", err)
+	}
+
+	// Ensure agent pod is running for this device
+	if r.AgentManager == nil {
+		return nil, nil, fmt.Errorf("agent manager not configured")
+	}
+
+	agentEndpoint, err := r.AgentManager.EnsureAgent(ctx, hsmDevice, hsmSecret)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to ensure HSM agent: %w", err)
+	}
+
+	// Create agent client
+	agentClient := agent.NewClient(agentEndpoint, hsmDevice.Name, logger)
+
+	// Wait a moment for agent to start if just created
+	if !agentClient.IsConnected() {
+		logger.Info("Waiting for HSM agent to start", "device", hsmDevice.Name, "endpoint", agentEndpoint)
+		time.Sleep(5 * time.Second)
+	}
+
+	return hsmDevice, agentClient, nil
+}
+
 // reconcileNormal handles normal reconciliation logic
-func (r *HSMSecretReconciler) reconcileNormal(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret) (ctrl.Result, error) {
+func (r *HSMSecretReconciler) reconcileNormal(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret, hsmClient hsm.Client) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	// Set default values
@@ -123,7 +166,7 @@ func (r *HSMSecretReconciler) reconcileNormal(ctx context.Context, hsmSecret *hs
 	}
 
 	// Read secret from HSM with readonly fallback support
-	hsmData, err := r.readSecretWithFallback(ctx, hsmSecret)
+	hsmData, err := r.readSecretWithFallback(ctx, hsmSecret, hsmClient)
 	if err != nil {
 		logger.Error(err, "Failed to read secret from HSM and mirrors", "path", hsmSecret.Spec.HSMPath)
 		return ctrl.Result{RequeueAfter: time.Minute * 2}, err
@@ -314,12 +357,12 @@ func (r *HSMSecretReconciler) updateStatus(_ context.Context, hsmSecret *hsmv1al
 }
 
 // readSecretWithFallback attempts to read a secret from primary HSM, falling back to mirrors if needed
-func (r *HSMSecretReconciler) readSecretWithFallback(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret) (hsm.SecretData, error) {
+func (r *HSMSecretReconciler) readSecretWithFallback(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret, hsmClient hsm.Client) (hsm.SecretData, error) {
 	logger := log.FromContext(ctx)
 
-	// Try to read from primary HSM first
-	if r.HSMClient != nil && r.HSMClient.IsConnected() {
-		data, err := r.HSMClient.ReadSecret(ctx, hsmSecret.Spec.HSMPath)
+	// Try to read from primary HSM first (via agent)
+	if hsmClient != nil && hsmClient.IsConnected() {
+		data, err := hsmClient.ReadSecret(ctx, hsmSecret.Spec.HSMPath)
 		if err == nil {
 			logger.V(1).Info("Successfully read secret from primary HSM", "path", hsmSecret.Spec.HSMPath)
 			return data, nil

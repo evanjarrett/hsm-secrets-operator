@@ -52,7 +52,7 @@ COPY --from=base /usr/lib/libcrypto.so* /usr/lib/
 COPY --from=base /usr/local/ /usr/local/
 
 WORKDIR /
-COPY --from=builder /workspace/manager .
+COPY --from=builder /workspace/discovery .
 USER 65532:65532
 
-ENTRYPOINT ["/manager"]
+ENTRYPOINT ["/discovery"]

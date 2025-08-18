@@ -167,9 +167,10 @@ quality: fmt vet lint ## Run full code quality check (format, vet, lint)
 ##@ Build
 
 .PHONY: build
-build: manifests generate fmt vet ## Build manager and discovery binaries.
+build: manifests generate fmt vet ## Build manager, discovery, and agent binaries.
 	go build -o bin/manager cmd/manager/main.go
 	go build -o bin/discovery cmd/discovery/main.go
+	go build -o bin/agent cmd/agent/main.go
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.

@@ -92,6 +92,14 @@ Create the discovery image reference
 {{- end }}
 
 {{/*
+Create the agent image reference
+*/}}
+{{- define "hsm-secrets-operator.agentImage" -}}
+{{- $tag := .Values.agentImage.tag | default .Chart.AppVersion }}
+{{- printf "%s:%s" .Values.agentImage.repository $tag }}
+{{- end }}
+
+{{/*
 Create system namespace name
 */}}
 {{- define "hsm-secrets-operator.systemNamespace" -}}

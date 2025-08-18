@@ -10,29 +10,38 @@ spec:
   # Device type - automatically uses well-known USB specs
   deviceType: PicoHSM
   
-  # Auto-discovery will use built-in USB specifications
-  # For Pico HSM: vendorId: "20a0", productId: "4230"
+  # Discovery configuration (choose one method)
+  discovery:
+    # Option 1: USB discovery (recommended for Pico HSM)
+    usb:
+      vendorId: "20a0"
+      productId: "4230"
+      # serialNumber: "PICO123456"  # Optional: target specific device
+    
+    # Option 2: Auto-discovery based on device type
+    # autoDiscovery: true
+    
+    # Option 3: Device path discovery
+    # devicePath:
+    #   path: "/dev/ttyUSB*"
+    #   permissions: "0666"
   
-  # Optional: Override USB specification
-  # usb:
-  #   vendorId: "20a0"
-  #   productId: "4230"
-  #   serialNumber: "PICO123456"  # Optional: target specific device
+  # PKCS#11 configuration per device
+  pkcs11:
+    libraryPath: "/usr/local/lib/libsc-hsm-pkcs11.so"
+    slotId: 0
+    pinSecret:
+      name: "pico-hsm-pin"
+      key: "pin"
+      namespace: "default"  # Optional: cross-namespace secret
+    tokenLabel: "PicoHSM"     # Optional: specific token
   
-  # Optional: Path-based discovery instead of USB
-  # devicePath:
-  #   path: "/dev/ttyUSB*"
-  #   permissions: "rw"
+  # Optional: target specific nodes
+  nodeSelector:
+    hsm-type: "pico"
   
-  # Optional: Node selector to limit discovery to specific nodes
-  # nodeSelector:
-  #   kubernetes.io/hostname: "worker-node-1"
-  
-  # Optional: PKCS#11 library path
-  pkcs11LibraryPath: "/usr/local/lib/libsc-hsm-pkcs11.so"
-  
-  # Maximum number of devices to discover (default: 10)
-  maxDevices: 5
+  # Maximum number of devices to discover (default: 1)
+  maxDevices: 1
 ---
 apiVersion: hsm.j5t.io/v1alpha1
 kind: HSMDevice
@@ -42,12 +51,21 @@ metadata:
 spec:
   deviceType: SmartCardHSM
   
-  # Use custom USB specification
-  usb:
-    vendorId: "04e6"
-    productId: "5816"
+  # Discovery configuration
+  discovery:
+    usb:
+      vendorId: "04e6"
+      productId: "5816"
   
-  pkcs11LibraryPath: "/usr/lib/opensc-pkcs11.so"
+  # PKCS#11 configuration
+  pkcs11:
+    libraryPath: "/usr/lib/opensc-pkcs11.so"
+    slotId: 0
+    pinSecret:
+      name: "smartcard-hsm-pin"
+      key: "pin"
+    tokenLabel: "SmartCard-HSM"
+  
   maxDevices: 3
 ---
 apiVersion: hsm.j5t.io/v1alpha1
@@ -58,10 +76,20 @@ metadata:
 spec:
   deviceType: Generic
   
-  # Use path-based discovery
-  devicePath:
-    path: "/dev/sc-hsm*"
-    permissions: "rw"
+  # Discovery configuration
+  discovery:
+    # Device path discovery method
+    devicePath:
+      path: "/dev/sc-hsm*"
+      permissions: "0666"
   
-  pkcs11LibraryPath: "/usr/lib/generic-pkcs11.so"
+  # PKCS#11 configuration
+  pkcs11:
+    libraryPath: "/usr/lib/generic-pkcs11.so"
+    slotId: 0
+    pinSecret:
+      name: "generic-hsm-pin"
+      key: "pin"
+    tokenLabel: "GenericHSM"
+  
   maxDevices: 10
