@@ -42,19 +42,20 @@ spec:
   {{- with .maxDevices }}
   maxDevices: {{ . }}
   {{- end }}
-  {{- with .pkcs11LibraryPath }}
-  pkcs11LibraryPath: {{ . }}
+  {{- with .discovery }}
+  discovery:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .pkcs11 }}
+  pkcs11:
+    {{- toYaml . | nindent 4 }}
   {{- end }}
   {{- with .nodeSelector }}
   nodeSelector:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  {{- with .usb }}
-  usb:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
-  {{- with .devicePath }}
-  devicePath:
+  {{- with .mirroring }}
+  mirroring:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 {{- end }}

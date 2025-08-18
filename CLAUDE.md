@@ -26,6 +26,8 @@ make cleanup-test-e2e        # Tear down Kind cluster
 # Run specific test package
 go test ./internal/controller -v
 go test ./internal/hsm -v
+go test ./internal/discovery -v
+go test ./internal/api -v
 
 # Code quality (ALWAYS RUN BEFORE COMMITTING)
 make fmt                      # Format code (or: gofmt -w .)
@@ -56,6 +58,33 @@ make docker-build-discovery DISCOVERY_IMG=hsm-discovery:latest
 make docker-build-all
 ```
 
+### CRD Management
+```bash
+# Generate CRDs and RBAC manifests
+make manifests                # Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects
+make generate                 # Generate DeepCopy methods for CRD types
+
+# Install CRDs into cluster
+make install                  # Install CRDs into the K8s cluster
+make uninstall               # Uninstall CRDs from the K8s cluster
+
+# Deploy operator to cluster
+make deploy IMG=<some-registry>/hsm-secrets-operator:tag
+make undeploy                # Remove operator from cluster
+```
+
+### Helm Chart Commands
+```bash
+# Lint Helm chart
+helm lint helm/hsm-secrets-operator
+
+# Template Helm chart for validation
+helm template test helm/hsm-secrets-operator
+
+# Sync CRDs to Helm after changes
+make helm-sync               # Copies CRDs from config/crd/bases/ to helm/hsm-secrets-operator/crds/
+```
+
 ## Code Quality Requirements
 
 **⚠️ CRITICAL: Always run these commands before making code changes:**
@@ -75,7 +104,7 @@ make test
 
 **Why this matters:**
 - `gofmt` ensures consistent formatting across the codebase
-- `golangci-lint` catches potential bugs, inefficient code, and style violations  
+- `golangci-lint` catches potential bugs, inefficient code, and style violations (configured in `.golangci.yml`)
 - Running these tools prevents CI/CD failures and maintains code quality
 - **The status update loop bug** was caught by adding proper linting workflows
 
