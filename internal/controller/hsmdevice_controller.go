@@ -102,12 +102,15 @@ func (r *HSMDeviceReconciler) reconcileDeviceDiscovery(ctx context.Context, hsmD
 	var err error
 
 	// Perform discovery based on specification
-	if hsmDevice.Spec.USB != nil {
+	if hsmDevice.Spec.Discovery != nil && hsmDevice.Spec.Discovery.USB != nil {
 		discoveredDevices, err = r.discoverUSBDevices(ctx, hsmDevice)
-	} else if hsmDevice.Spec.DevicePath != nil {
+	} else if hsmDevice.Spec.Discovery != nil && hsmDevice.Spec.Discovery.DevicePath != nil {
 		discoveredDevices, err = r.discoverPathDevices(ctx, hsmDevice)
-	} else {
+	} else if hsmDevice.Spec.Discovery != nil && hsmDevice.Spec.Discovery.AutoDiscovery {
 		// Auto-discovery based on device type
+		discoveredDevices, err = r.autoDiscoverDevices(ctx, hsmDevice)
+	} else {
+		// Fallback: try auto-discovery for backwards compatibility
 		discoveredDevices, err = r.autoDiscoverDevices(ctx, hsmDevice)
 	}
 
@@ -154,7 +157,7 @@ func (r *HSMDeviceReconciler) discoverUSBDevices(ctx context.Context, hsmDevice 
 		return nil, fmt.Errorf("USB discoverer not available")
 	}
 
-	usbDevices, err := r.USBDiscoverer.DiscoverDevices(ctx, hsmDevice.Spec.USB)
+	usbDevices, err := r.USBDiscoverer.DiscoverDevices(ctx, hsmDevice.Spec.Discovery.USB)
 	if err != nil {
 		return nil, fmt.Errorf("USB discovery failed: %w", err)
 	}
@@ -196,7 +199,7 @@ func (r *HSMDeviceReconciler) discoverPathDevices(ctx context.Context, hsmDevice
 		return nil, fmt.Errorf("USB discoverer not available")
 	}
 
-	usbDevices, err := r.USBDiscoverer.DiscoverByPath(ctx, hsmDevice.Spec.DevicePath)
+	usbDevices, err := r.USBDiscoverer.DiscoverByPath(ctx, hsmDevice.Spec.Discovery.DevicePath)
 	if err != nil {
 		return nil, fmt.Errorf("path discovery failed: %w", err)
 	}
@@ -211,7 +214,7 @@ func (r *HSMDeviceReconciler) discoverPathDevices(ctx context.Context, hsmDevice
 			Available:    true,
 			DeviceInfo: map[string]string{
 				"discovery-type": "path",
-				"path-pattern":   hsmDevice.Spec.DevicePath.Path,
+				"path-pattern":   hsmDevice.Spec.Discovery.DevicePath.Path,
 			},
 		}
 
@@ -246,7 +249,10 @@ func (r *HSMDeviceReconciler) autoDiscoverDevices(ctx context.Context, hsmDevice
 
 	// Use the well-known spec for discovery
 	tempDevice := *hsmDevice
-	tempDevice.Spec.USB = spec
+	if tempDevice.Spec.Discovery == nil {
+		tempDevice.Spec.Discovery = &hsmv1alpha1.DiscoverySpec{}
+	}
+	tempDevice.Spec.Discovery.USB = spec
 
 	return r.discoverUSBDevices(ctx, &tempDevice)
 }

@@ -53,7 +53,7 @@ const (
 	// HSMDeviceTypePicoHSM represents a Pico HSM device
 	HSMDeviceTypePicoHSM HSMDeviceType = "PicoHSM"
 	// HSMDeviceTypeSmartCardHSM represents a SmartCard-HSM
-	HSMDeviceTypeSmartCardHSM HSMDeviceType = "SmartCardHSM"
+	HSMDeviceTypeSmartCardHSM HSMDeviceType = "SmartCard-HSM"
 	// HSMDeviceTypeGeneric represents a generic PKCS#11 device
 	HSMDeviceTypeGeneric HSMDeviceType = "Generic"
 )
@@ -97,11 +97,41 @@ type MirroringSpec struct {
 	AutoFailover bool `json:"autoFailover,omitempty"`
 }
 
-// HSMDeviceSpec defines the desired state of HSMDevice.
-type HSMDeviceSpec struct {
-	// DeviceType specifies the type of HSM device
-	DeviceType HSMDeviceType `json:"deviceType"`
+// PKCS11Config defines PKCS#11 connection configuration for an HSM device
+type PKCS11Config struct {
+	// LibraryPath is the path to the PKCS#11 library for this device
+	// +optional
+	LibraryPath string `json:"libraryPath,omitempty"`
 
+	// SlotId is the PKCS#11 slot ID to use for this device
+	// +kubebuilder:default=0
+	// +optional
+	SlotId int32 `json:"slotId,omitempty"`
+
+	// PinSecret references a Kubernetes Secret containing the HSM PIN
+	// +optional
+	PinSecret *SecretKeySelector `json:"pinSecret,omitempty"`
+
+	// TokenLabel optionally specifies the token label to match
+	// +optional
+	TokenLabel string `json:"tokenLabel,omitempty"`
+}
+
+// SecretKeySelector selects a key from a Secret
+type SecretKeySelector struct {
+	// Name is the name of the secret
+	Name string `json:"name"`
+
+	// Key is the key within the secret
+	Key string `json:"key"`
+
+	// Namespace is the namespace of the secret (optional, defaults to HSMDevice namespace)
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+}
+
+// DiscoverySpec defines how to discover HSM devices
+type DiscoverySpec struct {
 	// USB defines USB-based device discovery criteria
 	// +optional
 	USB *USBDeviceSpec `json:"usb,omitempty"`
@@ -110,13 +140,28 @@ type HSMDeviceSpec struct {
 	// +optional
 	DevicePath *DevicePathSpec `json:"devicePath,omitempty"`
 
+	// AutoDiscovery enables automatic discovery based on device type
+	// +kubebuilder:default=false
+	// +optional
+	AutoDiscovery bool `json:"autoDiscovery,omitempty"`
+}
+
+// HSMDeviceSpec defines the desired state of HSMDevice.
+type HSMDeviceSpec struct {
+	// DeviceType specifies the type of HSM device
+	DeviceType HSMDeviceType `json:"deviceType"`
+
+	// Discovery defines how to discover this HSM device
+	// +optional
+	Discovery *DiscoverySpec `json:"discovery,omitempty"`
+
 	// NodeSelector specifies which nodes should be scanned for this device
 	// +optional
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 
-	// PKCS11LibraryPath is the path to the PKCS#11 library for this device
+	// PKCS11 defines PKCS#11 connection configuration for this device
 	// +optional
-	PKCS11LibraryPath string `json:"pkcs11LibraryPath,omitempty"`
+	PKCS11 *PKCS11Config `json:"pkcs11,omitempty"`
 
 	// MaxDevices limits how many instances of this device can be discovered
 	// +kubebuilder:default=10
@@ -126,6 +171,11 @@ type HSMDeviceSpec struct {
 	// Mirroring configures cross-node device mirroring for high availability
 	// +optional
 	Mirroring *MirroringSpec `json:"mirroring,omitempty"`
+
+	// PKCS11LibraryPath is the path to the PKCS#11 library for this device
+	// +optional
+	// Deprecated: Use PKCS11.LibraryPath instead
+	PKCS11LibraryPath string `json:"pkcs11LibraryPath,omitempty"`
 }
 
 // DeviceRole defines the role of a device in a mirrored setup

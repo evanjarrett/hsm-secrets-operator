@@ -74,21 +74,11 @@ tolerations: []
 # Affinity for controller pods
 affinity: {}
 
-# HSM configuration
+# Global HSM configuration (fallback defaults)
 hsm:
-  # HSM client type: "mock" for testing, "pkcs11" for production
-  clientType: "mock"
-
-  # PKCS#11 library configuration (used when clientType is "pkcs11")
-  pkcs11:
-    # Path to the PKCS#11 library
-    library: "/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so"
-    # HSM slot ID
-    slotId: 0
-    # HSM PIN (should be provided via secret)
-    pinSecret:
-      name: "hsm-pin"
-      key: "pin"
+  # Default HSM client type: "mock" for testing, "pkcs11" for production
+  # Individual HSMDevice resources can override this
+  defaultClientType: "mock"
 
 # Device discovery configuration
 discovery:
@@ -97,21 +87,6 @@ discovery:
   
   # Sync interval for device discovery (e.g., "30s", "1m", "5m")
   syncInterval: "30s"
-
-  # USB device discovery
-  usb:
-    enabled: true
-    # Well-known HSM device types to discover
-    deviceTypes:
-      - "pico-hsm"
-      - "smartcard-hsm"
-
-  # Path-based device discovery
-  path:
-    enabled: true
-    patterns:
-      - "/dev/ttyUSB*"
-      - "/dev/hidraw*"
 
   # Security context for discovery pods (requires privilege to read USB devices)
   podSecurityContext:
@@ -133,7 +108,7 @@ api:
   # Enable the REST API server
   enabled: true
   # Port for the API server
-  port: 8080
+  port: 8090
   # Enable metrics endpoint
   metrics:
     enabled: true
@@ -181,19 +156,83 @@ crds:
   keep: true
 
 # HSM Device Configuration
+# Each HSMDevice is completely self-contained with its own:
+# - Discovery method (USB vendor/product ID, device paths, etc.)
+# - PKCS#11 configuration (library path, slot ID, PIN secret)
+# - Node selection and device limits
 hsmdevice:
   # Enable HSMDevice resource creation
   enabled: false
-  # List of HSM devices to discover
+  # List of HSM devices to create and manage
   devices:
     - name: "pico-hsm-discovery"
       namespace: "default"
       deviceType: "PicoHSM"
       maxDevices: 5
+      # Discovery configuration
+      discovery:
+        usb:
+          vendorId: "20a0"
+          productId: "4230"
+      # PKCS#11 configuration
+      pkcs11:
+        libraryPath: "/usr/lib/libsc-hsm-pkcs11.so"
+        slotId: 0
+        pinSecret:
+          name: "pico-hsm-pin"
+          key: "pin"
     - name: "smartcard-hsm-discovery"
       namespace: "default"
-      deviceType: "SmartCardHSM"
+      deviceType: "SmartCard-HSM"
       maxDevices: 3
+      # Discovery configuration
+      discovery:
+        usb:
+          vendorId: "04e6"
+          productId: "5816"
+      # PKCS#11 configuration
+      pkcs11:
+        libraryPath: "/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so"
+        slotId: 0
+        pinSecret:
+          name: "smartcard-hsm-pin"
+          key: "pin"
+    # Example: YubiKey HSM with custom configuration
+    - name: "yubikey-hsm"
+      namespace: "default"
+      deviceType: "Generic"
+      maxDevices: 2
+      discovery:
+        usb:
+          vendorId: "1050"
+          productId: "0407"
+      pkcs11:
+        libraryPath: "/usr/lib/x86_64-linux-gnu/libykcs11.so"
+        slotId: 9
+        tokenLabel: "YubiHSM"
+        pinSecret:
+          name: "yubikey-pin"
+          key: "pin"
+          namespace: "security"  # Different namespace
+      # Only create this device on nodes with specific label
+      nodeSelector:
+        hsm-type: "yubikey"
+    # Example: Device path-based discovery for custom HSM
+    - name: "custom-hsm-path"
+      namespace: "security"
+      deviceType: "Generic"
+      maxDevices: 1
+      discovery:
+        devicePath:
+          path: "/dev/custom-hsm*"
+          permissions: "0666"
+      pkcs11:
+        libraryPath: "/opt/custom-hsm/lib/libcustom-pkcs11.so"
+        slotId: 1
+        pinSecret:
+          name: "custom-hsm-credentials"
+          key: "hsm-pin"
+          namespace: "security"
 
 # HSM Secret Configuration
 hsmsecret:

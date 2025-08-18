@@ -47,41 +47,6 @@ make docker-build-discovery DISCOVERY_IMG=hsm-discovery:latest
 
 # Build both manager and discovery images
 make docker-build-all
-
-# Push images
-make docker-push IMG=<registry>/hsm-secrets-operator:tag
-make docker-push-discovery DISCOVERY_IMG=<registry>/hsm-discovery:tag
-```
-
-### Deployment
-```bash
-# Install CRDs
-make install
-
-# Deploy manager (handles HSMSecret CRDs)
-make deploy IMG=<registry>/hsm-secrets-operator:tag
-
-# Deploy discovery DaemonSet (handles HSMDevice CRDs - non-privileged by default)
-kubectl apply -f config/samples/daemonset.yaml
-
-# Test with samples
-kubectl apply -f config/samples/
-
-# Clean up
-make uninstall
-make undeploy
-```
-
-### Development Iteration
-```bash
-# Local development cycle
-make manifests generate fmt vet  # Generate and validate code
-make run                         # Run manager locally
-
-# For discovery development
-go run cmd/discovery/main.go --node-name=local-test --detection-method=sysfs
-go run cmd/discovery/main.go --node-name=local-test --detection-method=legacy  
-go run cmd/discovery/main.go --node-name=local-test --detection-method=auto
 ```
 
 ## Code Quality Requirements
@@ -194,7 +159,9 @@ Discovery:  /sys/bus/usb ←→ Device Status ←→ HSMDevice CRD
 - **Delete Secrets**: Remove secrets from both HSM and Kubernetes
 - **Auto-Sync**: Detect HSM changes and update corresponding Secret objects
 
-## HSMSecret CRD Structure
+## CRD Structures
+
+### HSMSecret CRD Structure
 
 ```yaml
 apiVersion: hsm.j5t.io/v1alpha1
@@ -218,6 +185,57 @@ status:
   secretRef:                                     # Reference to created Secret
     name: "appname-secret"
     namespace: "appnamespace"
+```
+
+### HSMDevice CRD Structure (New Per-Device Configuration)
+
+```yaml
+apiVersion: hsm.j5t.io/v1alpha1
+kind: HSMDevice
+metadata:
+  name: my-pico-hsm
+  namespace: secrets
+spec:
+  deviceType: "PicoHSM"
+  
+  # Discovery configuration (choose one method)
+  discovery:
+    # Option 1: USB discovery
+    usb:
+      vendorId: "20a0"
+      productId: "4230"
+    # Option 2: Device path discovery  
+    # devicePath:
+    #   path: "/dev/ttyUSB*"
+    #   permissions: "0666"
+    # Option 3: Auto-discovery based on device type
+    # autoDiscovery: true
+  
+  # PKCS#11 configuration per device
+  pkcs11:
+    libraryPath: "/usr/lib/libsc-hsm-pkcs11.so"
+    slotId: 0
+    pinSecret:
+      name: "pico-hsm-pin"
+      key: "pin"
+      namespace: "secrets"  # Optional: cross-namespace secret
+    tokenLabel: "MyHSM"     # Optional: specific token
+  
+  # Optional: target specific nodes
+  nodeSelector:
+    hsm-type: "pico"
+  
+  maxDevices: 1
+
+status:
+  totalDevices: 1
+  availableDevices: 1
+  phase: "Ready"
+  discoveredDevices:
+    - devicePath: "/dev/ttyUSB0"
+      nodeName: "worker-1"
+      available: true
+      lastSeen: "2025-01-15T10:30:00Z"
 ```
 
 ## Implementation Strategy
@@ -276,6 +294,36 @@ status:
   - `hsm-secrets-operator` (full image with HSM libraries)
   - `hsm-discovery` (lightweight distroless image)
 
+### Per-Device Configuration Architecture ✅ COMPLETED
+**Problem**: Global HSM configuration was inflexible for mixed HSM environments and created redundant configuration.
+
+**Solution Applied**:
+- **File**: `api/v1alpha1/hsmdevice_types.go`
+- **New Structure**: Each HSMDevice CRD is completely self-contained with:
+  - **Discovery Configuration**: USB vendor/product IDs, device paths, or auto-discovery
+  - **PKCS#11 Configuration**: Library path, slot ID, PIN secrets, token labels
+  - **Node Selection**: Target specific nodes with device-specific requirements
+  - **Security**: Cross-namespace PIN secret references
+
+**Benefits**:
+- **Mixed Environments**: Support multiple HSM types with different libraries
+- **Complete Isolation**: Each device has its own configuration and secrets
+- **Flexibility**: USB discovery, device paths, or auto-discovery per device
+- **Security**: Per-device PIN secrets with cross-namespace support
+
+### Port Configuration Fix ✅ RESOLVED
+**Problem**: API server port conflict with metrics server after configuration changes.
+
+**Root Cause**: API server was configured to use port 8080, conflicting with metrics server.
+
+**Solution Applied**:
+- **API Server**: Restored to port 8090 (dedicated for REST API)
+- **Metrics Server**: Port 8080 internal, exposed as 8443 via service
+- **Health Probes**: Port 8081 (unchanged)
+- **Service Mapping**: Corrected service target ports to match actual server ports
+
+**Result**: Clean port separation with no conflicts.
+
 ## ✅ Current Implementation Status
 
 ### Completed Components
@@ -314,12 +362,14 @@ status:
    - **Topology Manager**: Primary/mirror device role assignment and health monitoring
 
 5. **HSMDevice CRD** (`api/v1alpha1/hsmdevice_types.go`)
-   - Complete device discovery specification with USB and path-based options
-   - Auto-discovery based on device types with well-known specifications
-   - Mirroring policies for cross-node high availability
-   - Node selector support for targeted discovery
-   - Comprehensive status tracking with discovered device details
-   - Custom printer columns for `kubectl get hsmdevice`
+   - **Per-Device Configuration**: Complete self-contained device specifications
+   - **Discovery Methods**: USB vendor/product IDs, device paths, or auto-discovery
+   - **PKCS#11 Integration**: Library path, slot ID, PIN secrets, token labels per device
+   - **Security Features**: Cross-namespace PIN secret references
+   - **Node Targeting**: Device-specific node selectors
+   - **Mirroring Support**: Cross-node high availability policies
+   - **Backwards Compatibility**: Deprecated fields with migration path
+   - **Custom Printer Columns**: Enhanced `kubectl get hsmdevice` output
 
 6. **REST API Server** (`internal/api/`)
    - **Gin HTTP Server**: Complete REST API with all CRUD operations
