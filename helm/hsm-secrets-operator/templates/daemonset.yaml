@@ -57,18 +57,8 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
-        - name: USB_DISCOVERY_ENABLED
-          value: {{ .Values.discovery.usb.enabled | quote }}
-        - name: PATH_DISCOVERY_ENABLED
-          value: {{ .Values.discovery.path.enabled | quote }}
-        {{- if .Values.discovery.usb.enabled }}
-        - name: USB_DEVICE_TYPES
-          value: {{ join "," .Values.discovery.usb.deviceTypes | quote }}
-        {{- end }}
-        {{- if .Values.discovery.path.enabled }}
-        - name: PATH_PATTERNS
-          value: {{ join "," .Values.discovery.path.patterns | quote }}
-        {{- end }}
+        # Discovery configuration is now per-device via HSMDevice CRDs
+        # No global discovery environment variables needed
         resources:
           {{- toYaml .Values.controllerManager.resources | nindent 12 }}
         securityContext:
