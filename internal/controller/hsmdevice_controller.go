@@ -47,6 +47,8 @@ type HSMDeviceReconciler struct {
 	NodeName         string
 	USBDiscoverer    *discovery.USBDiscoverer
 	MirroringManager *discovery.MirroringManager
+	DeviceManager    *discovery.HSMDeviceManager
+	pluginStarted    bool
 }
 
 // +kubebuilder:rbac:groups=hsm.j5t.io,resources=hsmdevices,verbs=get;list;watch;create;update;patch;delete
@@ -425,6 +427,27 @@ func (r *HSMDeviceReconciler) updateStatus(ctx context.Context, hsmDevice *hsmv1
 		logger.V(2).Info("Skipping status update", "reason", "no changes detected")
 	}
 
+	// Update device manager with discovered devices for Kubernetes resource management
+	if r.DeviceManager != nil {
+		logger.V(1).Info("Updating device manager with discovered devices", "deviceCount", len(devices))
+		r.DeviceManager.UpdateDevices(devices)
+
+		// Start device plugin if we have devices and it's not already running
+		if len(devices) > 0 {
+			// Try to start the device plugin (idempotent - won't start if already running)
+			if err := r.startDevicePluginIfNeeded(); err != nil {
+				logger.Error(err, "Failed to start device plugin")
+			}
+		}
+
+		// Log device resource information
+		resourceName := r.DeviceManager.GetResourceName()
+		availableDevices := r.DeviceManager.GetAvailableDevices()
+		logger.Info("Device resources updated",
+			"resourceName", resourceName,
+			"availableDevices", len(availableDevices))
+	}
+
 	// Requeue based on discovery result
 	requeueInterval := DefaultDiscoveryInterval
 	if phase == hsmv1alpha1.HSMDevicePhasePending || phase == hsmv1alpha1.HSMDevicePhaseError {
@@ -433,6 +456,24 @@ func (r *HSMDeviceReconciler) updateStatus(ctx context.Context, hsmDevice *hsmv1
 	}
 
 	return ctrl.Result{RequeueAfter: requeueInterval}, nil
+}
+
+// startDevicePluginIfNeeded starts the device plugin if not already running
+func (r *HSMDeviceReconciler) startDevicePluginIfNeeded() error {
+	if r.pluginStarted {
+		return nil // Already running
+	}
+
+	if r.DeviceManager == nil {
+		return fmt.Errorf("device manager not initialized")
+	}
+
+	if err := r.DeviceManager.Start(); err != nil {
+		return fmt.Errorf("failed to start device plugin: %w", err)
+	}
+
+	r.pluginStarted = true
+	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

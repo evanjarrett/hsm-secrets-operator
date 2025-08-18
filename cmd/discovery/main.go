@@ -97,12 +97,16 @@ func main() {
 	// Initialize mirroring manager for cross-node HSM device synchronization
 	mirroringManager := discovery.NewMirroringManager(mgr.GetClient(), nodeName)
 
+	// Initialize device manager for Kubernetes resource management
+	deviceManager := discovery.NewHSMDeviceManager(hsmv1alpha1.HSMDeviceTypePicoHSM, "pico-hsm")
+
 	if err := (&controller.HSMDeviceReconciler{
 		Client:           mgr.GetClient(),
 		Scheme:           mgr.GetScheme(),
 		NodeName:         nodeName,
 		USBDiscoverer:    usbDiscoverer,
 		MirroringManager: mirroringManager,
+		DeviceManager:    deviceManager,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "HSMDevice")
 		os.Exit(1)
