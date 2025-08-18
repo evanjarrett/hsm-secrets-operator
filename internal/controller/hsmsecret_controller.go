@@ -397,19 +397,17 @@ func (r *HSMSecretReconciler) findHSMDeviceForSecret(ctx context.Context, hsmSec
 		return nil, fmt.Errorf("failed to list HSM devices: %w", err)
 	}
 
-	// Look for devices that have mirroring enabled and are in a ready state
+	// Look for devices that are in a ready state with available devices
 	for _, device := range hsmDeviceList.Items {
-		if device.Spec.Mirroring != nil &&
-			device.Spec.Mirroring.Policy != hsmv1alpha1.MirroringPolicyNone &&
-			device.Status.Phase == hsmv1alpha1.HSMDevicePhaseReady &&
+		if device.Status.Phase == hsmv1alpha1.HSMDevicePhaseReady &&
 			len(device.Status.DiscoveredDevices) > 0 {
 
-			// This is a suitable device for readonly access
+			// This is a suitable device for HSM operations
 			return &device, nil
 		}
 	}
 
-	return nil, fmt.Errorf("no suitable HSM device found with mirroring enabled")
+	return nil, fmt.Errorf("no suitable HSM device found in ready state")
 }
 
 // SetupWithManager sets up the controller with the Manager.

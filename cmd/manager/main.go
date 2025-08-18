@@ -258,6 +258,16 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "HSMSecret")
 		os.Exit(1)
 	}
+
+	// Set up HSMDevice agent controller to deploy agents when devices are ready
+	if err := (&controller.HSMDeviceAgentReconciler{
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		AgentManager: agentManager,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "HSMDeviceAgent")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if metricsCertWatcher != nil {
@@ -287,7 +297,7 @@ func main() {
 
 	// Start API server if enabled
 	if enableAPI {
-		apiServer := api.NewServer(mgr.GetClient(), hsmClient, mirroringManager, ctrl.Log.WithName("api"))
+		apiServer := api.NewServer(mgr.GetClient(), agentManager, mirroringManager, ctrl.Log.WithName("api"))
 
 		// Start API server in a separate goroutine
 		go func() {
