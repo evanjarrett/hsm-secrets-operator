@@ -359,10 +359,14 @@ func (m *HSMDeviceManager) register() error {
 			_, err = client.Register(ctx, req)
 			if err == nil {
 				m.logger.Info("Successfully registered with kubelet", "socket", socket)
-				conn.Close()
+				if closeErr := conn.Close(); closeErr != nil {
+					m.logger.Error(closeErr, "Failed to close connection after successful registration")
+				}
 				return nil
 			}
-			conn.Close()
+			if closeErr := conn.Close(); closeErr != nil {
+				m.logger.Error(closeErr, "Failed to close connection after failed registration")
+			}
 			m.logger.V(1).Info("Registration failed on socket", "socket", socket, "error", err)
 		}
 	}
