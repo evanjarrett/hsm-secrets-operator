@@ -94,9 +94,6 @@ func main() {
 	// Initialize USB discoverer with detection method preference
 	usbDiscoverer := discovery.NewUSBDiscovererWithMethod(detectionMethod)
 
-	// Initialize mirroring manager for cross-node HSM device synchronization
-	mirroringManager := discovery.NewMirroringManager(mgr.GetClient(), nodeName)
-
 	// Initialize device manager for Kubernetes resource management
 	deviceManager := discovery.NewHSMDeviceManager(hsmv1alpha1.HSMDeviceTypePicoHSM, "pico-hsm")
 
@@ -105,7 +102,7 @@ func main() {
 		Scheme:           mgr.GetScheme(),
 		NodeName:         nodeName,
 		USBDiscoverer:    usbDiscoverer,
-		MirroringManager: mirroringManager,
+		MirroringManager: nil, // Discovery doesn't handle secret mirroring
 		DeviceManager:    deviceManager,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "HSMDevice")

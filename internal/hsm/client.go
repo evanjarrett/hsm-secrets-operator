@@ -90,14 +90,41 @@ type Config struct {
 }
 
 // DefaultConfig returns a default HSM configuration
+// NOTE: PKCS11LibraryPath must be set from HSMDevice.Spec.PKCS11.LibraryPath
 func DefaultConfig() Config {
 	return Config{
-		PKCS11LibraryPath: "/usr/lib/opensc-pkcs11.so",
+		PKCS11LibraryPath: "", // Must be configured per-device
 		SlotID:            0,
 		ConnectionTimeout: 30 * time.Second,
 		RetryAttempts:     3,
 		RetryDelay:        2 * time.Second,
 	}
+}
+
+// ConfigFromHSMDevice creates a Config from HSMDevice spec
+func ConfigFromHSMDevice(hsmDevice HSMDeviceSpec, pin string) Config {
+	config := DefaultConfig()
+	
+	if hsmDevice.PKCS11 != nil {
+		config.PKCS11LibraryPath = hsmDevice.PKCS11.LibraryPath
+		config.SlotID = uint(hsmDevice.PKCS11.SlotId)
+		config.TokenLabel = hsmDevice.PKCS11.TokenLabel
+	}
+	
+	config.PIN = pin
+	return config
+}
+
+// HSMDeviceSpec represents the HSMDevice spec for config creation
+// This avoids importing the full v1alpha1 package in the hsm package
+type HSMDeviceSpec struct {
+	PKCS11 *PKCS11Config `json:"pkcs11,omitempty"`
+}
+
+type PKCS11Config struct {
+	LibraryPath string `json:"libraryPath,omitempty"`
+	SlotId      int32  `json:"slotId,omitempty"`
+	TokenLabel  string `json:"tokenLabel,omitempty"`
 }
 
 // CalculateChecksum calculates SHA256 checksum of secret data

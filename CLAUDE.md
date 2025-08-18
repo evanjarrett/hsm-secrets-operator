@@ -216,7 +216,7 @@ spec:
   
   # PKCS#11 configuration per device
   pkcs11:
-    libraryPath: "/usr/lib/libsc-hsm-pkcs11.so"
+    libraryPath: "/usr/lib/libsc-hsm-pkcs11.so"  # Example path - configure for your system
     slotId: 0
     pinSecret:
       name: "pico-hsm-pin"
