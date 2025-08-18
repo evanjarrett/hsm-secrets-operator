@@ -225,8 +225,19 @@ func (u *USBDiscoverer) scanUSBWithSysfs() ([]USBDevice, error) {
 			return err
 		}
 
-		// Skip if not a directory or if it doesn't look like a USB device
-		if !d.IsDir() {
+		// Skip the root directory itself
+		if path == usbSysPath {
+			return nil
+		}
+
+		// Check if this is a directory or symlink to a directory (handles sysfs symlinks)
+		info, err := os.Stat(path)
+		if err != nil {
+			u.logger.V(2).Info("Cannot stat USB device path", "path", path, "error", err)
+			return nil
+		}
+		
+		if !info.IsDir() {
 			return nil
 		}
 

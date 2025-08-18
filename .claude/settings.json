@@ -11,7 +11,8 @@
       "Bash(kubectl logs:*)",
       "Bash(make:*)",
       "Bash(gofmt:*)",
-      "Bash(golangci-lint run:*)"
+      "Bash(golangci-lint run:*)",
+      "Bash(go run:*)"
     ],
     "deny": [],
     "ask": []

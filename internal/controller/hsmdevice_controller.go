@@ -22,6 +22,7 @@ import (
 	"os"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -314,8 +315,15 @@ func (r *HSMDeviceReconciler) updateStatus(ctx context.Context, hsmDevice *hsmv1
 	}
 
 	// Only update LastDiscoveryTime if there are significant changes or it's been a while
-	shouldUpdateTime := needsUpdate || hsmDevice.Status.LastDiscoveryTime == nil
-	if !shouldUpdateTime && hsmDevice.Status.LastDiscoveryTime != nil {
+	shouldUpdateTime := false
+
+	// Update time if this is first time (nil), there are other changes, or it's been 5+ minutes
+	if hsmDevice.Status.LastDiscoveryTime == nil {
+		shouldUpdateTime = true
+	} else if needsUpdate {
+		// Only update time if there are other significant changes
+		shouldUpdateTime = true
+	} else {
 		// Update time only if it's been more than 5 minutes since last update
 		timeSinceLastUpdate := now.Sub(hsmDevice.Status.LastDiscoveryTime.Time)
 		shouldUpdateTime = timeSinceLastUpdate > (5 * time.Minute)
@@ -406,6 +414,11 @@ func (r *HSMDeviceReconciler) updateStatus(ctx context.Context, hsmDevice *hsmv1
 	if needsUpdate {
 		logger.V(1).Info("Updating HSMDevice status", "reason", "status changed")
 		if err := r.Status().Update(ctx, hsmDevice); err != nil {
+			if apierrors.IsConflict(err) {
+				// Resource was modified, requeue with short delay to retry
+				logger.V(1).Info("Status update conflict, will retry", "error", err)
+				return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
+			}
 			return ctrl.Result{}, err
 		}
 	} else {
