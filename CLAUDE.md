@@ -144,6 +144,27 @@ status:
 - [x] Well-known HSM device specifications (Pico HSM, SmartCard-HSM)
 - [x] Auto-discovery based on device types
 
+## 🚨 Critical Fixes Applied
+
+### Status Update Loop Fix ✅ RESOLVED
+**Problem**: HSMDevice controller was causing rapid reconciliation loops (spamming every millisecond) due to status updates triggering immediate re-reconciliation.
+
+**Root Cause**: `LastDiscoveryTime` was updated with `metav1.Now()` on every reconcile, causing Kubernetes to detect resource changes and immediately schedule new reconciliation.
+
+**Solution Applied**: 
+- **File**: `internal/controller/hsmdevice_controller.go:294-389`
+- **Logic**: Only update status when there are actual changes (device count, phase, etc.)
+- **Time Updates**: Only update `LastDiscoveryTime` when significant changes occur or every 5+ minutes
+- **Result**: Proper 30-second intervals instead of continuous loops
+
+### Architecture Separation ✅ COMPLETED
+**Manager vs Discovery Split**:
+- **Manager Binary** (`cmd/manager/main.go`): Handles HSMSecret CRDs, secret synchronization, API server
+- **Discovery Binary** (`cmd/discovery/main.go`): Handles HSMDevice CRDs, USB device discovery
+- **Separate Images**: 
+  - `hsm-secrets-operator` (full image with HSM libraries)
+  - `hsm-discovery` (lightweight distroless image)
+
 ## ✅ Current Implementation Status
 
 ### Completed Components
@@ -160,13 +181,18 @@ status:
    - **PKCS#11 Client**: Production-ready skeleton for real Pico HSM integration
    - **Checksum System**: SHA256 checksums for data integrity verification
 
-3. **Controller Implementation** (`internal/controller/hsmsecret_controller.go`)
-   - Complete reconciliation loop with error handling
-   - Bidirectional sync between HSM and Kubernetes Secrets
-   - Finalizer-based cleanup on HSMSecret deletion
-   - Auto-sync with configurable intervals (default: 300s)
-   - Owner references for proper garbage collection
-   - Status updates with detailed condition reporting
+3. **Controller Implementation**
+   - **HSMSecret Controller** (`internal/controller/hsmsecret_controller.go`):
+     - Complete reconciliation loop with error handling
+     - Bidirectional sync between HSM and Kubernetes Secrets
+     - Finalizer-based cleanup on HSMSecret deletion
+     - Auto-sync with configurable intervals (default: 300s)
+     - Owner references for proper garbage collection
+   - **HSMDevice Controller** (`internal/controller/hsmdevice_controller.go`):
+     - USB device discovery with proper requeue intervals
+     - **FIXED**: Status update loop prevention (no more rapid reconciliation)
+     - Host path support for Talos Linux (/host/sys, /host/dev)
+     - Well-known device type auto-discovery
 
 4. **USB Device Discovery & Mirroring** (`internal/discovery/`)
    - **USB Discoverer**: Scans sysfs for USB devices matching vendor/product IDs
@@ -205,21 +231,27 @@ status:
 The operator can be immediately deployed and tested:
 
 ```bash
-# Build and deploy
-make docker-build IMG=hsm-secrets-operator:latest
+# Build both images
+make docker-build IMG=hsm-secrets-operator:latest              # Manager
+make docker-build-discovery DISCOVERY_IMG=hsm-discovery:latest # Discovery
+
+# Deploy manager (handles HSMSecret CRDs and secret sync)
 make deploy IMG=hsm-secrets-operator:latest
 
-# Deploy device discovery (optional - for USB HSM auto-discovery)
-kubectl apply -f config/samples/daemonset.yaml
+# Deploy discovery DaemonSet (handles HSMDevice CRDs and USB discovery)
+kubectl apply -f deploy/talos/daemonset-discovery.yaml
+
+# For Talos Linux specifically
+kubectl apply -f examples/advanced/talos-deployment.yaml
 
 # Test with sample resources
 kubectl apply -f config/samples/hsm_v1alpha1_hsmsecret.yaml
 kubectl apply -f config/samples/hsm_v1alpha1_hsmdevice.yaml
 
-# Monitor status
+# Monitor status (should show proper 30s intervals, no rapid loops)
 kubectl get hsmsecret -w
 kubectl get hsmdevice -w
-kubectl get secrets
+kubectl logs -n hsm-secrets-operator-system -l app=hsm-device-discovery
 ```
 
 ### Complete Files Structure
@@ -228,12 +260,15 @@ kubectl get secrets
 │   ├── hsmsecret_types.go          # HSMSecret CRD with mirroring support
 │   ├── hsmdevice_types.go          # HSMDevice CRD with USB discovery
 │   └── groupversion_info.go        # API group metadata
+├── cmd/
+│   ├── manager/main.go             # Manager binary (HSMSecret controller + API)
+│   └── discovery/main.go           # Discovery binary (HSMDevice controller)
 ├── internal/
 │   ├── controller/
 │   │   ├── hsmsecret_controller.go # Secret reconciliation with fallback
-│   │   └── hsmdevice_controller.go # Device discovery and mirroring
+│   │   └── hsmdevice_controller.go # Device discovery (FIXED: no more loops!)
 │   ├── discovery/
-│   │   ├── usb.go                  # USB device discovery
+│   │   ├── usb.go                  # USB device discovery (Talos host path support)
 │   │   ├── mirroring.go            # Cross-node device mirroring
 │   │   └── deviceplugin.go         # Kubernetes device management
 │   ├── hsm/
@@ -260,13 +295,18 @@ kubectl get secrets
 │   └── build-talos.sh             # Talos Linux build automation
 ├── deploy/
 │   └── talos/                     # Talos-specific manifests
+│       ├── daemonset-discovery.yaml # Fixed discovery DaemonSet (no loops!)
+│       └── README.md               # Talos deployment guide
 ├── config/
 │   ├── crd/bases/                 # Generated CRD manifests
 │   ├── rbac/                      # Generated RBAC rules
 │   └── samples/                   # Sample resources
-├── Dockerfile                     # Standard operator image
+├── Dockerfile                     # Manager image (with HSM libraries)
+├── Dockerfile.discovery          # Discovery image (lightweight distroless)
 ├── Dockerfile.talos              # Talos-optimized image
-└── cmd/main.go                   # Main operator entry point
+├── test-loop-fix.yaml            # Test pod for verifying loop fix
+├── STATUS-UPDATE-LOOP-FIX.md     # Documentation of critical fix
+└── CLAUDE.md                     # This file (updated with fixes!)
 ```
 
 ## Technical Requirements

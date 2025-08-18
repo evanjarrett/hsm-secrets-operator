@@ -8,7 +8,8 @@
       "Bash(kubectl describe:*)",
       "Bash(kubectl exec:*)",
       "Bash(grep:*)",
-      "Bash(kubectl logs:*)"
+      "Bash(kubectl logs:*)",
+      "Bash(make:*)"
     ],
     "deny": [],
     "ask": []

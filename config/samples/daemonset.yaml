@@ -36,10 +36,10 @@ spec:
         image: hsm-secrets-operator:latest
         imagePullPolicy: IfNotPresent
         command:
-        - /manager
+        - /discovery
         args:
-        - --config=controller_manager_config.yaml
-        - --enable-device-discovery=true
+        - --sync-interval=30s
+        - --zap-log-level=info
         env:
         - name: NODE_NAME
           valueFrom:
@@ -74,10 +74,6 @@ spec:
         - name: usb-devices
           mountPath: /proc/bus/usb
           readOnly: true
-        - name: manager-config
-          mountPath: /controller_manager_config.yaml
-          subPath: controller_manager_config.yaml
-          readOnly: true
         livenessProbe:
           httpGet:
             path: /healthz
@@ -107,32 +103,4 @@ spec:
         hostPath:
           path: /proc/bus/usb
           type: DirectoryOrCreate
-      - name: manager-config
-        configMap:
-          name: hsm-secrets-operator-manager-config
       terminationGracePeriodSeconds: 10
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: hsm-secrets-operator-manager-config
-  namespace: hsm-secrets-operator-system
-data:
-  controller_manager_config.yaml: |
-    apiVersion: controller-runtime.sigs.k8s.io/v1alpha1
-    kind: ControllerManagerConfig
-    health:
-      healthProbeBindAddress: :8081
-    metrics:
-      bindAddress: 127.0.0.1:8080
-    webhook:
-      port: 9443
-    leaderElection:
-      leaderElect: true
-      resourceName: 64b68d60.j5t.io
-    # HSM-specific configuration
-    hsm:
-      deviceDiscoveryInterval: 30s
-      maxDevicesPerNode: 10
-      enableUSBDiscovery: true
-      enablePathDiscovery: true

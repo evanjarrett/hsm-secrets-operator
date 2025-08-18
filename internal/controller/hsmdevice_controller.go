@@ -291,11 +291,35 @@ func (r *HSMDeviceReconciler) getNodeName() string {
 func (r *HSMDeviceReconciler) updateStatus(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, phase hsmv1alpha1.HSMDevicePhase, devices []hsmv1alpha1.DiscoveredDevice, errorMsg string) (ctrl.Result, error) {
 	now := metav1.Now()
 
-	// Update basic status fields
-	hsmDevice.Status.Phase = phase
-	hsmDevice.Status.LastDiscoveryTime = &now
-	hsmDevice.Status.DiscoveredDevices = devices
-	hsmDevice.Status.TotalDevices = int32(len(devices))
+	// Check if status actually needs updating to avoid reconciliation loops
+	needsUpdate := false
+
+	// Check if phase changed
+	if hsmDevice.Status.Phase != phase {
+		needsUpdate = true
+		hsmDevice.Status.Phase = phase
+	}
+
+	// Check if device count changed
+	newDeviceCount := int32(len(devices))
+	if hsmDevice.Status.TotalDevices != newDeviceCount {
+		needsUpdate = true
+		hsmDevice.Status.TotalDevices = newDeviceCount
+		hsmDevice.Status.DiscoveredDevices = devices
+	}
+
+	// Only update LastDiscoveryTime if there are significant changes or it's been a while
+	shouldUpdateTime := needsUpdate || hsmDevice.Status.LastDiscoveryTime == nil
+	if !shouldUpdateTime && hsmDevice.Status.LastDiscoveryTime != nil {
+		// Update time only if it's been more than 5 minutes since last update
+		timeSinceLastUpdate := now.Sub(hsmDevice.Status.LastDiscoveryTime.Time)
+		shouldUpdateTime = timeSinceLastUpdate > (5 * time.Minute)
+	}
+
+	if shouldUpdateTime {
+		needsUpdate = true
+		hsmDevice.Status.LastDiscoveryTime = &now
+	}
 
 	// Count available devices
 	availableCount := int32(0)
@@ -304,9 +328,14 @@ func (r *HSMDeviceReconciler) updateStatus(ctx context.Context, hsmDevice *hsmv1
 			availableCount++
 		}
 	}
-	hsmDevice.Status.AvailableDevices = availableCount
 
-	// Update conditions
+	// Check if available device count changed
+	if hsmDevice.Status.AvailableDevices != availableCount {
+		needsUpdate = true
+		hsmDevice.Status.AvailableDevices = availableCount
+	}
+
+	// Update conditions only if needed
 	conditionType := "DeviceDiscovery"
 	conditionStatus := metav1.ConditionTrue
 	reason := string(phase)
@@ -317,30 +346,46 @@ func (r *HSMDeviceReconciler) updateStatus(ctx context.Context, hsmDevice *hsmv1
 		message = errorMsg
 	}
 
-	condition := metav1.Condition{
-		Type:               conditionType,
-		Status:             conditionStatus,
-		LastTransitionTime: now,
-		Reason:             reason,
-		Message:            message,
-	}
-
-	// Update or add condition
-	found := false
+	// Check if condition needs updating
+	shouldUpdateCondition := false
+	var existingConditionIndex int = -1
 	for i, cond := range hsmDevice.Status.Conditions {
 		if cond.Type == conditionType {
-			hsmDevice.Status.Conditions[i] = condition
-			found = true
+			existingConditionIndex = i
+			if cond.Status != conditionStatus || cond.Reason != reason || cond.Message != message {
+				shouldUpdateCondition = true
+			}
 			break
 		}
 	}
-	if !found {
-		hsmDevice.Status.Conditions = append(hsmDevice.Status.Conditions, condition)
+
+	// Add condition if it doesn't exist
+	if existingConditionIndex == -1 {
+		shouldUpdateCondition = true
 	}
 
-	// Update status
-	if err := r.Status().Update(ctx, hsmDevice); err != nil {
-		return ctrl.Result{}, err
+	if shouldUpdateCondition {
+		needsUpdate = true
+		condition := metav1.Condition{
+			Type:               conditionType,
+			Status:             conditionStatus,
+			LastTransitionTime: now,
+			Reason:             reason,
+			Message:            message,
+		}
+
+		if existingConditionIndex >= 0 {
+			hsmDevice.Status.Conditions[existingConditionIndex] = condition
+		} else {
+			hsmDevice.Status.Conditions = append(hsmDevice.Status.Conditions, condition)
+		}
+	}
+
+	// Only update status if there are actual changes
+	if needsUpdate {
+		if err := r.Status().Update(ctx, hsmDevice); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	// Requeue based on discovery result

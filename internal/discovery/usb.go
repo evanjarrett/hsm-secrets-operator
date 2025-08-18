@@ -48,7 +48,7 @@ type USBDiscoverer struct {
 	logger logr.Logger
 	// mutex  sync.RWMutex // unused
 
-	// Known USB paths to scan
+	// Known USB paths to scan (support both container and host-mounted paths)
 	usbSysPaths []string
 	devicePaths []string
 }
@@ -58,11 +58,14 @@ func NewUSBDiscoverer() *USBDiscoverer {
 	return &USBDiscoverer{
 		logger: ctrl.Log.WithName("usb-discoverer"),
 		usbSysPaths: []string{
-			"/sys/bus/usb/devices",
-			"/sys/class/usbmisc",
+			"/host/sys/bus/usb/devices", // Host-mounted path (for DaemonSet)
+			"/sys/bus/usb/devices",      // Container path (for regular deployment)
+			"/host/sys/class/usbmisc",   // Alternative host path
+			"/sys/class/usbmisc",        // Alternative container path
 		},
 		devicePaths: []string{
-			"/dev",
+			"/host/dev", // Host-mounted path (for DaemonSet)
+			"/dev",      // Container path (for regular deployment)
 		},
 	}
 }
@@ -152,9 +155,18 @@ func (u *USBDiscoverer) DiscoverByPath(ctx context.Context, pathSpec *hsmv1alpha
 func (u *USBDiscoverer) scanUSBDevices(_ context.Context) ([]USBDevice, error) {
 	devices := make([]USBDevice, 0)
 
-	usbSysPath := "/sys/bus/usb/devices"
-	if _, err := os.Stat(usbSysPath); err != nil {
-		u.logger.V(1).Info("USB sysfs path not available", "path", usbSysPath)
+	// Try different USB sysfs paths
+	var usbSysPath string
+	for _, path := range u.usbSysPaths {
+		if _, err := os.Stat(path); err == nil {
+			usbSysPath = path
+			u.logger.V(1).Info("Using USB sysfs path", "path", usbSysPath)
+			break
+		}
+	}
+
+	if usbSysPath == "" {
+		u.logger.V(1).Info("No USB sysfs path available", "tried", u.usbSysPaths)
 		return devices, nil
 	}
 
@@ -244,22 +256,27 @@ func (u *USBDiscoverer) parseUSBDevice(devicePath string) *USBDevice {
 func (u *USBDiscoverer) findDevicePaths(_, _, _ string) string {
 	// This is a simplified implementation
 	// In a real implementation, you'd want to scan /dev and match devices
-	// For now, we'll look for common HSM device paths
+	// For now, we'll look for common HSM device paths in all device directories
 
 	commonPaths := []string{
-		"/dev/ttyUSB0",
-		"/dev/ttyUSB1",
-		"/dev/ttyACM0",
-		"/dev/ttyACM1",
-		"/dev/sc-hsm",
-		"/dev/pkcs11",
+		"ttyUSB0", "ttyUSB1", "ttyUSB2", "ttyUSB3",
+		"ttyACM0", "ttyACM1", "ttyACM2", "ttyACM3",
+		"sc-hsm", "pkcs11",
 	}
 
-	for _, path := range commonPaths {
-		if _, err := os.Stat(path); err == nil {
-			// In a real implementation, you'd verify this device matches
-			// the USB device we found
-			return path
+	// Try both host-mounted and container paths
+	for _, devPath := range u.devicePaths {
+		for _, deviceName := range commonPaths {
+			fullPath := filepath.Join(devPath, deviceName)
+			if _, err := os.Stat(fullPath); err == nil {
+				u.logger.V(2).Info("Found device path", "path", fullPath)
+				// Return the path that would be accessible to the application
+				// If we're using host-mounted paths, convert back to container paths
+				if strings.HasPrefix(devPath, "/host/") {
+					return filepath.Join("/dev", deviceName)
+				}
+				return fullPath
+			}
 		}
 	}
 
