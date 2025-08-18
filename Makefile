@@ -51,7 +51,6 @@ endif
 OPERATOR_SDK_VERSION ?= v1.41.1
 # Image URL to use all building/pushing image targets
 IMG ?= controller:latest
-DISCOVERY_IMG ?= hsm-discovery:latest
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -187,19 +186,9 @@ docker-build: ## Build docker image with the manager.
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
 
-.PHONY: docker-build-discovery
-docker-build-discovery: ## Build docker image for the discovery agent (native sysfs, distroless).
-	$(CONTAINER_TOOL) build -f Dockerfile.discovery -t ${DISCOVERY_IMG} .
-
-.PHONY: docker-push-discovery
-docker-push-discovery: ## Push docker image for the discovery agent.
-	$(CONTAINER_TOOL) push ${DISCOVERY_IMG}
-
-.PHONY: docker-build-all
-docker-build-all: docker-build docker-build-discovery ## Build both docker images.
-
-.PHONY: docker-push-all
-docker-push-all: docker-push docker-push-discovery ## Push both docker images.
+.PHONY: docker-build-multiarch
+docker-build-multiarch: ## Build docker image for multiple architectures and push.
+	$(CONTAINER_TOOL) buildx build --platform linux/amd64,linux/arm64 --push -t ${IMG} .
 
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
@@ -209,14 +198,11 @@ docker-push-all: docker-push docker-push-discovery ## Push both docker images.
 # To adequately provide solutions that are compatible with multiple platforms, you should consider using this option.
 PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
 .PHONY: docker-buildx
-docker-buildx: ## Build and push docker image for the manager for cross-platform support
-	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
-	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
+docker-buildx: ## Build and push docker image for cross-platform support (linux/amd64,linux/arm64)
 	- $(CONTAINER_TOOL) buildx create --name hsm-secrets-operator-builder
 	$(CONTAINER_TOOL) buildx use hsm-secrets-operator-builder
-	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
+	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} .
 	- $(CONTAINER_TOOL) buildx rm hsm-secrets-operator-builder
-	rm Dockerfile.cross
 
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.

@@ -239,10 +239,10 @@ func (m *Manager) createAgentDeployment(ctx context.Context, hsmDevice *hsmv1alp
 							Name:  "agent",
 							Image: m.AgentImage,
 							Command: []string{
-								"/agent",
+								"/entrypoint.sh",
+								"agent",
 							},
 							Args: []string{
-								"--agent-mode",
 								"--device-name=" + hsmDevice.Name,
 								"--port=" + fmt.Sprintf("%d", AgentPort),
 								"--health-port=" + fmt.Sprintf("%d", AgentHealthPort),

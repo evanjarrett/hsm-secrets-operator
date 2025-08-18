@@ -40,7 +40,8 @@ spec:
         image: {{ include "hsm-secrets-operator.image" . }}
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         command:
-        - /manager
+        - /entrypoint.sh
+        - manager
         args:
         - --leader-elect={{ .Values.leaderElection.enabled }}
         {{- if .Values.config.verboseLogging }}

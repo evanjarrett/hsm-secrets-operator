@@ -43,7 +43,8 @@ spec:
         image: {{ include "hsm-secrets-operator.discoveryImage" . }}
         imagePullPolicy: {{ .Values.discoveryImage.pullPolicy }}
         command:
-        - /discovery
+        - /entrypoint.sh
+        - discovery
         args:
         - --node-name=$(NODE_NAME)
         {{- if .Values.discovery.syncInterval }}

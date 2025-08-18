@@ -122,13 +122,8 @@ func (r *HSMDeviceReconciler) reconcileDeviceDiscovery(ctx context.Context, hsmD
 
 	logger.Info("Device discovery completed", "foundDevices", len(discoveredDevices))
 
-	// Update status with discovered devices
-	phase := hsmv1alpha1.HSMDevicePhaseReady
-	if len(discoveredDevices) == 0 {
-		phase = hsmv1alpha1.HSMDevicePhasePending
-	}
-
-	result, err := r.updateStatus(ctx, hsmDevice, phase, discoveredDevices, "")
+	// Update status with discovered devices - phase will be calculated in updateStatus based on merged devices
+	result, err := r.updateStatus(ctx, hsmDevice, hsmv1alpha1.HSMDevicePhaseReady, discoveredDevices, "")
 	if err != nil {
 		return result, err
 	}
@@ -401,6 +396,24 @@ func (r *HSMDeviceReconciler) updateStatus(ctx context.Context, hsmDevice *hsmv1
 	if hsmDevice.Status.AvailableDevices != availableCount {
 		needsUpdate = true
 		hsmDevice.Status.AvailableDevices = availableCount
+	}
+
+	// Calculate phase based on merged device list (not just current node's discovery)
+	newPhase := hsmv1alpha1.HSMDevicePhaseReady
+	if len(mergedDevices) == 0 {
+		newPhase = hsmv1alpha1.HSMDevicePhasePending
+	}
+
+	// Override with error phase if needed
+	if phase == hsmv1alpha1.HSMDevicePhaseError {
+		newPhase = phase
+	}
+
+	// Check if phase changed
+	if hsmDevice.Status.Phase != newPhase {
+		needsUpdate = true
+		hsmDevice.Status.Phase = newPhase
+		phase = newPhase // Update the phase variable for condition logic
 	}
 
 	// Update conditions only if needed
