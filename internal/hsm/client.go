@@ -104,13 +104,13 @@ func DefaultConfig() Config {
 // ConfigFromHSMDevice creates a Config from HSMDevice spec
 func ConfigFromHSMDevice(hsmDevice HSMDeviceSpec, pin string) Config {
 	config := DefaultConfig()
-	
+
 	if hsmDevice.PKCS11 != nil {
 		config.PKCS11LibraryPath = hsmDevice.PKCS11.LibraryPath
 		config.SlotID = uint(hsmDevice.PKCS11.SlotId)
 		config.TokenLabel = hsmDevice.PKCS11.TokenLabel
 	}
-	
+
 	config.PIN = pin
 	return config
 }
