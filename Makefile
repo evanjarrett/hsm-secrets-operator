@@ -98,9 +98,9 @@ manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and Cust
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
 
 .PHONY: helm-sync
-helm-sync: manifests ## Sync generated CRDs from config/ to helm/ templates
-	@echo "Syncing CRDs from config/crd/bases/ to helm/hsm-secrets-operator/templates/crds/"
-	cp config/crd/bases/*.yaml helm/hsm-secrets-operator/templates/crds/
+helm-sync: manifests ## Sync generated CRDs from config/ to helm/crds/
+	@echo "Syncing CRDs from config/crd/bases/ to helm/hsm-secrets-operator/crds/"
+	cp config/crd/bases/*.yaml helm/hsm-secrets-operator/crds/
 	@echo "✅ CRDs synced successfully"
 
 .PHONY: generate

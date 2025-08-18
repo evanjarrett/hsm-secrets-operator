@@ -18,8 +18,13 @@ env:
 
 
 jobs:
+  # Run CI checks first
+  ci-check:
+    uses: ./.github/workflows/ci.yml
+
   build-manager:
     runs-on: ubuntu-latest
+    needs: ci-check
     permissions:
       contents: read
       packages: write
@@ -89,6 +94,7 @@ jobs:
 
   build-discovery:
     runs-on: ${{ matrix.runner }}
+    needs: ci-check
     permissions:
       contents: read
       packages: write

@@ -19,6 +19,10 @@ make test-e2e                 # Run end-to-end tests (requires Kind cluster)
 make setup-test-e2e          # Set up Kind cluster for e2e testing
 make cleanup-test-e2e        # Tear down Kind cluster
 
+# NOTE: E2E tests are slow and run manually or nightly (not on every push)
+# To trigger E2E tests manually in GitHub Actions:
+# Go to Actions tab -> "E2E Tests" -> "Run workflow"
+
 # Run specific test package
 go test ./internal/controller -v
 go test ./internal/hsm -v
@@ -37,7 +41,7 @@ gofmt -w .                    # Format all Go files
 golangci-lint run ./...       # Lint all packages (REQUIRED before code changes)
 
 # Sync CRDs from config/ to helm/ after CRD changes
-make helm-sync                # Sync generated CRDs to Helm templates
+make helm-sync                # Sync generated CRDs to Helm crds/ directory
 ```
 
 ### Docker Images

@@ -1,0 +1,48 @@
+name: E2E Tests
+
+# Only run E2E tests manually or on schedule (not on every push)
+on:
+  workflow_dispatch:  # Manual trigger
+  schedule:
+    - cron: '0 2 * * *'  # Run nightly at 2 AM UTC
+  # Optionally run on release tags
+  push:
+    tags: 
+      - 'v*.*.*'
+
+jobs:
+  test-e2e:
+    name: End-to-End Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install Kind
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+
+      - name: Verify Kind Installation
+        run: kind version
+
+      - name: Run E2E Tests
+        run: |
+          go mod tidy
+          make test-e2e
+
+      - name: Collect Logs on Failure
+        if: failure()
+        run: |
+          echo "=== Cluster Info ==="
+          kubectl cluster-info dump || true
+          echo "=== Pod Logs ==="
+          kubectl logs -l app=hsm-secrets-operator --all-containers=true --tail=100 || true
+          echo "=== Events ==="
+          kubectl get events --sort-by='.lastTimestamp' || true
