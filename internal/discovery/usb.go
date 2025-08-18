@@ -236,7 +236,7 @@ func (u *USBDiscoverer) scanUSBWithSysfs() ([]USBDevice, error) {
 			u.logger.V(2).Info("Cannot stat USB device path", "path", path, "error", err)
 			return nil
 		}
-		
+
 		if !info.IsDir() {
 			return nil
 		}
