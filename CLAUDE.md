@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ⚠️ Important Development Context
+
+**Remote Kubernetes Environment**: The Kubernetes cluster is running remotely, NOT on this local development system. Any local device checks (like `ls /dev/tty*` or local USB device detection) will NOT work and will not reflect the actual state of devices on the remote cluster nodes.
+
 ## Development Commands
 
 ### Building and Testing
