@@ -257,6 +257,29 @@ func (r *HSMDeviceReconciler) autoDiscoverDevices(ctx context.Context, hsmDevice
 	return r.discoverUSBDevices(ctx, &tempDevice)
 }
 
+// deviceListsEqual compares two lists of discovered devices for equality
+func deviceListsEqual(a, b []hsmv1alpha1.DiscoveredDevice) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	// Create maps for comparison (using device path and node as key)
+	aMap := make(map[string]hsmv1alpha1.DiscoveredDevice)
+	for _, device := range a {
+		key := device.NodeName + ":" + device.DevicePath
+		aMap[key] = device
+	}
+
+	for _, device := range b {
+		key := device.NodeName + ":" + device.DevicePath
+		if _, exists := aMap[key]; !exists {
+			return false
+		}
+	}
+
+	return true
+}
+
 // shouldDiscoverOnNode determines if device discovery should run on this node
 func (r *HSMDeviceReconciler) shouldDiscoverOnNode(hsmDevice *hsmv1alpha1.HSMDevice) bool {
 	// If no node selector is specified, discover on all nodes
@@ -299,6 +322,7 @@ func (r *HSMDeviceReconciler) getNodeName() string {
 }
 
 // updateStatus updates the HSMDevice status
+// nolint:gocyclo // Complex status update logic is kept together for maintainability
 func (r *HSMDeviceReconciler) updateStatus(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, phase hsmv1alpha1.HSMDevicePhase, devices []hsmv1alpha1.DiscoveredDevice, errorMsg string) (ctrl.Result, error) {
 	now := metav1.Now()
 
@@ -316,12 +340,33 @@ func (r *HSMDeviceReconciler) updateStatus(ctx context.Context, hsmDevice *hsmv1
 		hsmDevice.Status.Phase = phase
 	}
 
-	// Check if device count changed
-	newDeviceCount := int32(len(devices))
-	if hsmDevice.Status.TotalDevices != newDeviceCount {
+	// Merge discovered devices from this node with devices from other nodes
+	currentNodeName := r.getNodeName()
+	staleThreshold := 5 * time.Minute // Consider devices stale after 5 minutes
+
+	// Keep devices from other nodes, remove old entries from current node and stale devices
+	var mergedDevices []hsmv1alpha1.DiscoveredDevice
+	for _, existingDevice := range hsmDevice.Status.DiscoveredDevices {
+		if existingDevice.NodeName != currentNodeName {
+			// Check if device from other node is stale
+			if time.Since(existingDevice.LastSeen.Time) < staleThreshold {
+				// Keep fresh devices from other nodes
+				mergedDevices = append(mergedDevices, existingDevice)
+			}
+			// Stale devices are dropped
+		}
+		// Devices from current node are replaced with fresh discovery
+	}
+
+	// Add new devices from current node
+	mergedDevices = append(mergedDevices, devices...)
+
+	// Check if device list changed
+	newDeviceCount := int32(len(mergedDevices))
+	if hsmDevice.Status.TotalDevices != newDeviceCount || !deviceListsEqual(hsmDevice.Status.DiscoveredDevices, mergedDevices) {
 		needsUpdate = true
 		hsmDevice.Status.TotalDevices = newDeviceCount
-		hsmDevice.Status.DiscoveredDevices = devices
+		hsmDevice.Status.DiscoveredDevices = mergedDevices
 	}
 
 	// Only update LastDiscoveryTime if there are significant changes or it's been a while
@@ -344,9 +389,9 @@ func (r *HSMDeviceReconciler) updateStatus(ctx context.Context, hsmDevice *hsmv1
 		hsmDevice.Status.LastDiscoveryTime = &now
 	}
 
-	// Count available devices
+	// Count available devices from merged list
 	availableCount := int32(0)
-	for _, device := range devices {
+	for _, device := range mergedDevices {
 		if device.Available {
 			availableCount++
 		}
@@ -362,7 +407,7 @@ func (r *HSMDeviceReconciler) updateStatus(ctx context.Context, hsmDevice *hsmv1
 	conditionType := "DeviceDiscovery"
 	conditionStatus := metav1.ConditionTrue
 	reason := string(phase)
-	message := fmt.Sprintf("Discovered %d devices", len(devices))
+	message := fmt.Sprintf("Discovered %d devices", len(mergedDevices))
 
 	if phase == hsmv1alpha1.HSMDevicePhaseError {
 		conditionStatus = metav1.ConditionFalse
