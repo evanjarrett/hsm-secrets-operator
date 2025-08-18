@@ -31,11 +31,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
       # Install the cosign tool except on PR
       # https://github.com/sigstore/cosign-installer
       - name: Install cosign
@@ -225,7 +220,7 @@ jobs:
       - name: Get manifest digest
         id: manifest
         run: |
-          DIGEST=$(docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.DISCOVERY_IMAGE_NAME }}:${{ steps.meta-discovery.outputs.version }} --format '{{.Manifest.Digest}}')
+          DIGEST=$(docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.DISCOVERY_IMAGE_NAME }}:${{ steps.meta-discovery.outputs.version }} | grep "Digest:" | head -1 | awk '{print $2}')
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
 
       # Sign the Discovery Docker manifest
