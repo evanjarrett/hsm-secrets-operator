@@ -55,21 +55,10 @@ spec:
         - --health-probe-bind-address=:{{ .Values.health.port }}
         {{- end }}
         env:
-        - name: HSM_CLIENT_TYPE
-          value: {{ .Values.hsm.clientType | quote }}
-        {{- if eq .Values.hsm.clientType "pkcs11" }}
-        - name: PKCS11_LIBRARY
-          value: {{ .Values.hsm.pkcs11.library | quote }}
-        - name: PKCS11_SLOT_ID
-          value: {{ .Values.hsm.pkcs11.slotId | quote }}
-        {{- if .Values.hsm.pkcs11.pinSecret }}
-        - name: PKCS11_PIN
-          valueFrom:
-            secretKeyRef:
-              name: {{ .Values.hsm.pkcs11.pinSecret.name }}
-              key: {{ .Values.hsm.pkcs11.pinSecret.key }}
-        {{- end }}
-        {{- end }}
+        - name: HSM_DEFAULT_CLIENT_TYPE
+          value: {{ .Values.hsm.defaultClientType | quote }}
+        # PKCS#11 configuration is now per-device via HSMDevice CRDs
+        # No global HSM configuration environment variables needed
         - name: DEFAULT_SYNC_INTERVAL
           value: {{ .Values.config.defaultSyncInterval | quote }}
         - name: DEFAULT_SECRET_TYPE
