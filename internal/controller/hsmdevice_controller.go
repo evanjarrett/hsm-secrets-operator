@@ -443,6 +443,7 @@ func (r *HSMDeviceReconciler) updateStatus(ctx context.Context, hsmDevice *hsmv1
 			// Try to start the device plugin (idempotent - won't start if already running)
 			if err := r.startDevicePluginIfNeeded(); err != nil {
 				logger.Error(err, "Failed to start device plugin")
+				return ctrl.Result{RequeueAfter: RetryDiscoveryInterval}, err
 			}
 		}
 

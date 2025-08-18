@@ -17,8 +17,10 @@ limitations under the License.
 package controller
 
 import (
+	"maps"
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -245,7 +247,7 @@ func (r *HSMSecretReconciler) buildSecret(hsmSecret *hsmv1alpha1.HSMSecret, secr
 			Namespace: hsmSecret.Namespace,
 			Labels: map[string]string{
 				"managed-by": "hsm-secrets-operator",
-				"hsm-path":   hsmSecret.Spec.HSMPath,
+				"hsm-path":   strings.ReplaceAll(hsmSecret.Spec.HSMPath, "/", "_"),
 			},
 		},
 		Type: secretType,
@@ -263,18 +265,14 @@ func (r *HSMSecretReconciler) buildSecret(hsmSecret *hsmv1alpha1.HSMSecret, secr
 // convertHSMDataToSecretData converts HSM data format to Kubernetes Secret data format
 func (r *HSMSecretReconciler) convertHSMDataToSecretData(hsmData hsm.SecretData) map[string][]byte {
 	result := make(map[string][]byte)
-	for k, v := range hsmData {
-		result[k] = v
-	}
+	maps.Copy(result, hsmData)
 	return result
 }
 
 // convertSecretDataToHSMData converts Kubernetes Secret data format to HSM data format
 func (r *HSMSecretReconciler) convertSecretDataToHSMData(secretData map[string][]byte) hsm.SecretData {
 	result := make(hsm.SecretData)
-	for k, v := range secretData {
-		result[k] = v
-	}
+	maps.Copy(result, secretData)
 	return result
 }
 

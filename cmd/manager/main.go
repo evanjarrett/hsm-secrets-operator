@@ -89,7 +89,7 @@ func main() {
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.BoolVar(&enableAPI, "enable-api", true,
 		"Enable the REST API server for HSM secret management")
-	flag.IntVar(&apiPort, "api-port", 8090,
+	flag.IntVar(&apiPort, "api-port", 8080,
 		"Port for the REST API server")
 	opts := zap.Options{
 		Development: true,
