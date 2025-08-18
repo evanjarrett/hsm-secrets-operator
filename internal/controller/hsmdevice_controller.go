@@ -26,8 +26,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/discovery"
@@ -417,9 +419,13 @@ func (r *HSMDeviceReconciler) updateStatus(ctx context.Context, hsmDevice *hsmv1
 		logger.V(1).Info("Updating HSMDevice status", "reason", "status changed")
 		if err := r.Status().Update(ctx, hsmDevice); err != nil {
 			if apierrors.IsConflict(err) {
-				// Resource was modified, requeue with short delay to retry
 				logger.V(1).Info("Status update conflict, will retry", "error", err)
-				return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
+				// Use the same requeue logic as the main reconciliation
+				requeueInterval := DefaultDiscoveryInterval
+				if phase == hsmv1alpha1.HSMDevicePhasePending || phase == hsmv1alpha1.HSMDevicePhaseError {
+					requeueInterval = RetryDiscoveryInterval
+				}
+				return ctrl.Result{RequeueAfter: requeueInterval}, nil
 			}
 			return ctrl.Result{}, err
 		}
@@ -479,7 +485,7 @@ func (r *HSMDeviceReconciler) startDevicePluginIfNeeded() error {
 // SetupWithManager sets up the controller with the Manager.
 func (r *HSMDeviceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&hsmv1alpha1.HSMDevice{}).
+		For(&hsmv1alpha1.HSMDevice{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("hsmdevice").
 		Complete(r)
 }

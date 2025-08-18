@@ -65,6 +65,8 @@ spec:
         volumeMounts:
         - name: device-plugin-path
           mountPath: /var/lib/kubelet/device-plugins
+        - name: kubelet-plugins-registry
+          mountPath: /var/lib/kubelet/plugins_registry
         - name: dev-path
           mountPath: /dev
           readOnly: true
@@ -90,6 +92,10 @@ spec:
       - name: device-plugin-path
         hostPath:
           path: /var/lib/kubelet/device-plugins
+          type: DirectoryOrCreate
+      - name: kubelet-plugins-registry
+        hostPath:
+          path: /var/lib/kubelet/plugins_registry
           type: DirectoryOrCreate
       - name: dev-path
         hostPath:

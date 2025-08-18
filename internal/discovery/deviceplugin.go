@@ -38,10 +38,10 @@ import (
 const (
 	// ResourceNamePrefix is the prefix for HSM device resources
 	ResourceNamePrefix = "hsm.j5t.io"
-	// KubeletSocket is the socket path for communicating with kubelet
-	KubeletSocket = "kubelet.sock"
 	// DevicePluginPath is the standard path for device plugins
 	DevicePluginPath = "/var/lib/kubelet/device-plugins/"
+	// KubeletSocket is the registration socket path
+	KubeletSocket = "/var/lib/kubelet/plugins_registry/kubelet.sock"
 )
 
 // Device represents a managed HSM device
@@ -329,34 +329,45 @@ func (m *HSMDeviceManager) PreStartContainer(ctx context.Context, req *pluginapi
 
 // register registers the device plugin with kubelet
 func (m *HSMDeviceManager) register() error {
-	kubeletSocket := filepath.Join(DevicePluginPath, KubeletSocket)
-	conn, err := grpc.NewClient("unix://"+kubeletSocket, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		return fmt.Errorf("failed to connect to kubelet: %v", err)
+	// Try different kubelet registration socket paths (different k8s versions use different paths)
+	registrationSockets := []string{
+		"/var/lib/kubelet/plugins_registry/kubelet.sock", // Kubernetes 1.11+
+		"/var/lib/kubelet/plugins/kubelet.sock",          // Older Kubernetes
+		filepath.Join(DevicePluginPath, "kubelet.sock"),  // Legacy path (shouldn't exist but try anyway)
 	}
-	defer func() {
-		if err := conn.Close(); err != nil {
-			m.logger.Error(err, "Failed to close gRPC connection")
+
+	var conn *grpc.ClientConn
+	var err error
+
+	for _, socket := range registrationSockets {
+		m.logger.V(1).Info("Trying kubelet registration socket", "path", socket)
+		conn, err = grpc.NewClient("unix://"+socket, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err == nil {
+			// Try to actually connect to verify the socket works
+			client := pluginapi.NewRegistrationClient(conn)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			// Test the connection with a simple RPC call
+			req := &pluginapi.RegisterRequest{
+				Version:      pluginapi.Version,
+				Endpoint:     filepath.Base(m.socket),
+				ResourceName: m.resourceName,
+				Options:      &pluginapi.DevicePluginOptions{PreStartRequired: false},
+			}
+
+			_, err = client.Register(ctx, req)
+			if err == nil {
+				m.logger.Info("Successfully registered with kubelet", "socket", socket)
+				conn.Close()
+				return nil
+			}
+			conn.Close()
+			m.logger.V(1).Info("Registration failed on socket", "socket", socket, "error", err)
 		}
-	}()
-
-	client := pluginapi.NewRegistrationClient(conn)
-	req := &pluginapi.RegisterRequest{
-		Version:      pluginapi.Version,
-		Endpoint:     filepath.Base(m.socket),
-		ResourceName: m.resourceName,
-		Options:      &pluginapi.DevicePluginOptions{PreStartRequired: false},
 	}
 
-	m.logger.Info("Registering with kubelet", "resourceName", m.resourceName, "endpoint", req.Endpoint)
-
-	_, err = client.Register(context.Background(), req)
-	if err != nil {
-		return fmt.Errorf("registration failed: %v", err)
-	}
-
-	m.logger.Info("Successfully registered with kubelet")
-	return nil
+	return fmt.Errorf("failed to register with kubelet on any socket path: %v", err)
 }
 
 // getPluginDevices converts internal devices to plugin API devices
