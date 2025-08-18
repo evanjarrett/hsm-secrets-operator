@@ -35,6 +35,9 @@ make quality                  # ONE COMMAND: Format + vet + lint (RECOMMENDED)
 # OR run individually:
 gofmt -w .                    # Format all Go files
 golangci-lint run ./...       # Lint all packages (REQUIRED before code changes)
+
+# Sync CRDs from config/ to helm/ after CRD changes
+make helm-sync                # Sync generated CRDs to Helm templates
 ```
 
 ### Docker Images

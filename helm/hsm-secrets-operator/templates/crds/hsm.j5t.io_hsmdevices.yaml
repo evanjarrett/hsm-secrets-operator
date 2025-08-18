@@ -1,17 +1,10 @@
-{{- if .Values.crds.install }}
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
-    {{- if not .Values.crds.keep }}
-    "helm.sh/hook": pre-install,pre-upgrade
-    "helm.sh/hook-delete-policy": before-hook-creation
-    {{- end }}
   name: hsmdevices.hsm.j5t.io
-  labels:
-    {{- include "hsm-secrets-operator.labels" . | nindent 4 }}
 spec:
   group: hsm.j5t.io
   names:
@@ -67,23 +60,51 @@ spec:
           spec:
             description: HSMDeviceSpec defines the desired state of HSMDevice.
             properties:
-              devicePath:
-                description: DevicePath defines path-based device discovery criteria
-                properties:
-                  path:
-                    description: Path is the device path pattern (e.g., "/dev/ttyUSB*",
-                      "/dev/sc-hsm*")
-                    type: string
-                  permissions:
-                    description: Permissions are the required permissions for device
-                      access
-                    type: string
-                required:
-                - path
-                type: object
               deviceType:
                 description: DeviceType specifies the type of HSM device
                 type: string
+              discovery:
+                description: Discovery defines how to discover this HSM device
+                properties:
+                  autoDiscovery:
+                    default: false
+                    description: AutoDiscovery enables automatic discovery based on
+                      device type
+                    type: boolean
+                  devicePath:
+                    description: DevicePath defines path-based device discovery criteria
+                    properties:
+                      path:
+                        description: Path is the device path pattern (e.g., "/dev/ttyUSB*",
+                          "/dev/sc-hsm*")
+                        type: string
+                      permissions:
+                        description: Permissions are the required permissions for
+                          device access
+                        type: string
+                    required:
+                    - path
+                    type: object
+                  usb:
+                    description: USB defines USB-based device discovery criteria
+                    properties:
+                      productId:
+                        description: ProductID is the USB product ID (e.g., "4230"
+                          for Pico HSM)
+                        type: string
+                      serialNumber:
+                        description: SerialNumber optionally matches a specific device
+                          serial number
+                        type: string
+                      vendorId:
+                        description: VendorID is the USB vendor ID (e.g., "20a0" for
+                          Pico HSM)
+                        type: string
+                    required:
+                    - productId
+                    - vendorId
+                    type: object
+                type: object
               maxDevices:
                 default: 10
                 description: MaxDevices limits how many instances of this device can
@@ -127,29 +148,47 @@ spec:
                 description: NodeSelector specifies which nodes should be scanned
                   for this device
                 type: object
-              pkcs11LibraryPath:
-                description: PKCS11LibraryPath is the path to the PKCS#11 library
-                  for this device
-                type: string
-              usb:
-                description: USB defines USB-based device discovery criteria
+              pkcs11:
+                description: PKCS11 defines PKCS#11 connection configuration for this
+                  device
                 properties:
-                  productId:
-                    description: ProductID is the USB product ID (e.g., "4230" for
-                      Pico HSM)
+                  libraryPath:
+                    description: LibraryPath is the path to the PKCS#11 library for
+                      this device
                     type: string
-                  serialNumber:
-                    description: SerialNumber optionally matches a specific device
-                      serial number
+                  pinSecret:
+                    description: PinSecret references a Kubernetes Secret containing
+                      the HSM PIN
+                    properties:
+                      key:
+                        description: Key is the key within the secret
+                        type: string
+                      name:
+                        description: Name is the name of the secret
+                        type: string
+                      namespace:
+                        description: Namespace is the namespace of the secret (optional,
+                          defaults to HSMDevice namespace)
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                  slotId:
+                    default: 0
+                    description: SlotId is the PKCS#11 slot ID to use for this device
+                    format: int32
+                    type: integer
+                  tokenLabel:
+                    description: TokenLabel optionally specifies the token label to
+                      match
                     type: string
-                  vendorId:
-                    description: VendorID is the USB vendor ID (e.g., "20a0" for Pico
-                      HSM)
-                    type: string
-                required:
-                - productId
-                - vendorId
                 type: object
+              pkcs11LibraryPath:
+                description: |-
+                  PKCS11LibraryPath is the path to the PKCS#11 library for this device
+                  Deprecated: Use PKCS11.LibraryPath instead
+                type: string
             required:
             - deviceType
             type: object
@@ -331,4 +370,3 @@ spec:
     storage: true
     subresources:
       status: {}
-{{- end }}
