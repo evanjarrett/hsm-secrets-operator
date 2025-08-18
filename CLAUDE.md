@@ -23,10 +23,18 @@ make cleanup-test-e2e        # Tear down Kind cluster
 go test ./internal/controller -v
 go test ./internal/hsm -v
 
-# Code quality
-make fmt                      # Format code
+# Code quality (ALWAYS RUN BEFORE COMMITTING)
+make fmt                      # Format code (or: gofmt -w .)
 make vet                      # Run go vet
-make lint                     # Run golangci-lint (if configured)
+make lint                     # Run golangci-lint ./... (fixed to scan all packages)
+make lint-fix                 # Run golangci-lint with auto-fixes
+make quality                  # Run all quality checks (fmt + vet + lint)
+
+# Quality check workflow for development
+make quality                  # ONE COMMAND: Format + vet + lint (RECOMMENDED)
+# OR run individually:
+gofmt -w .                    # Format all Go files
+golangci-lint run ./...       # Lint all packages (REQUIRED before code changes)
 ```
 
 ### Docker Images
@@ -75,6 +83,35 @@ go run cmd/discovery/main.go --node-name=local-test --detection-method=sysfs
 go run cmd/discovery/main.go --node-name=local-test --detection-method=legacy  
 go run cmd/discovery/main.go --node-name=local-test --detection-method=auto
 ```
+
+## Code Quality Requirements
+
+**⚠️ CRITICAL: Always run these commands before making code changes:**
+
+```bash
+# RECOMMENDED: One command to run all quality checks
+make quality
+
+# OR run individually:
+# 1. Format code (fixes spacing, imports, etc.)
+gofmt -w .
+# 2. Lint code (catches bugs, style issues, inefficiencies)  
+golangci-lint run ./...
+# 3. Run tests to ensure nothing broke
+make test
+```
+
+**Why this matters:**
+- `gofmt` ensures consistent formatting across the codebase
+- `golangci-lint` catches potential bugs, inefficient code, and style violations  
+- Running these tools prevents CI/CD failures and maintains code quality
+- **The status update loop bug** was caught by adding proper linting workflows
+
+**Before committing any changes:**
+1. ✅ `gofmt -w .` (format all files)
+2. ✅ `golangci-lint run ./...` (must show "0 issues")  
+3. ✅ `make test` (all tests must pass)
+4. ✅ Test your changes locally
 
 ## Project Overview
 
