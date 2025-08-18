@@ -274,8 +274,121 @@ func (u *USBDiscoverer) scanUSBWithSysfs() ([]USBDevice, error) {
 	return devices, nil
 }
 
-// findHSMDevicePath looks for HSM device paths without requiring root access
-func (u *USBDiscoverer) findHSMDevicePath(vendorID, productID string) string {
+// findHSMDevicePath looks for HSM device paths using sysfs information
+func (u *USBDiscoverer) findHSMDevicePath(sysfsPath, vendorID, productID string) string {
+	// Method 1: Extract bus/device numbers and construct /dev/bus/usb path
+	if usbDevPath := u.findUSBDevicePath(sysfsPath); usbDevPath != "" {
+		u.logger.V(2).Info("Found USB device path", "path", usbDevPath, "vendorId", vendorID, "productId", productID)
+		return usbDevPath
+	}
+
+	// Method 2: Check for serial device nodes (ttyUSB, ttyACM)
+	if serialPath := u.findSerialDevicePath(sysfsPath); serialPath != "" {
+		u.logger.V(2).Info("Found serial device path", "path", serialPath, "vendorId", vendorID, "productId", productID)
+		return serialPath
+	}
+
+	// Method 3: Check for HID device nodes (hidraw)
+	if hidPath := u.findHIDDevicePath(sysfsPath); hidPath != "" {
+		u.logger.V(2).Info("Found HID device path", "path", hidPath, "vendorId", vendorID, "productId", productID)
+		return hidPath
+	}
+
+	// Method 4: Fallback to common paths (legacy compatibility)
+	if commonPath := u.findCommonDevicePath(vendorID, productID); commonPath != "" {
+		u.logger.V(2).Info("Found common device path", "path", commonPath, "vendorId", vendorID, "productId", productID)
+		return commonPath
+	}
+
+	return ""
+}
+
+// findUSBDevicePath constructs /dev/bus/usb path from sysfs path
+func (u *USBDiscoverer) findUSBDevicePath(sysfsPath string) string {
+	// Extract bus and device numbers from sysfs path
+	// sysfsPath looks like: /sys/bus/usb/devices/1-6
+	// We need to read busnum and devnum files
+
+	busNumPath := filepath.Join(sysfsPath, "busnum")
+	devNumPath := filepath.Join(sysfsPath, "devnum")
+
+	busNum, err1 := u.readSysfsFile(busNumPath)
+	devNum, err2 := u.readSysfsFile(devNumPath)
+
+	if err1 != nil || err2 != nil {
+		u.logger.V(2).Info("Could not read bus/dev numbers", "sysfsPath", sysfsPath, "busErr", err1, "devErr", err2)
+		return ""
+	}
+
+	busNum = strings.TrimSpace(busNum)
+	devNum = strings.TrimSpace(devNum)
+
+	// Format as 3-digit numbers for /dev/bus/usb path
+	if len(busNum) == 1 {
+		busNum = "00" + busNum
+	} else if len(busNum) == 2 {
+		busNum = "0" + busNum
+	}
+
+	if len(devNum) == 1 {
+		devNum = "00" + devNum
+	} else if len(devNum) == 2 {
+		devNum = "0" + devNum
+	}
+
+	// Construct device path
+	usbDevPath := fmt.Sprintf("/dev/bus/usb/%s/%s", busNum, devNum)
+
+	// Check both container and host-mounted paths
+	if u.deviceExists(usbDevPath) {
+		return usbDevPath
+	}
+
+	return ""
+}
+
+// findSerialDevicePath looks for ttyUSB/ttyACM device nodes
+func (u *USBDiscoverer) findSerialDevicePath(sysfsPath string) string {
+	// Look for tty subdirectories in sysfs
+	ttyPattern := filepath.Join(sysfsPath, "*", "tty", "tty*")
+	matches, err := filepath.Glob(ttyPattern)
+	if err != nil {
+		return ""
+	}
+
+	for _, match := range matches {
+		devName := filepath.Base(match)
+		devPath := "/dev/" + devName
+		if u.deviceExists(devPath) {
+			return devPath
+		}
+	}
+
+	return ""
+}
+
+// findHIDDevicePath looks for hidraw device nodes
+func (u *USBDiscoverer) findHIDDevicePath(sysfsPath string) string {
+	// Look for hidraw subdirectories in sysfs
+	hidPattern := filepath.Join(sysfsPath, "*", "hidraw", "hidraw*")
+	matches, err := filepath.Glob(hidPattern)
+	if err != nil {
+		return ""
+	}
+
+	for _, match := range matches {
+		devName := filepath.Base(match)
+		devPath := "/dev/" + devName
+		if u.deviceExists(devPath) {
+			return devPath
+		}
+	}
+
+	return ""
+}
+
+// findCommonDevicePath checks common device paths (legacy fallback)
+func (u *USBDiscoverer) findCommonDevicePath(vendorID, _ string) string {
 	// Common HSM device paths that might be accessible without root
 	commonPaths := []string{
 		"/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/ttyUSB2", "/dev/ttyUSB3",
@@ -294,13 +407,28 @@ func (u *USBDiscoverer) findHSMDevicePath(vendorID, productID string) string {
 	}
 
 	for _, path := range commonPaths {
-		if _, err := os.Stat(path); err == nil {
-			u.logger.V(2).Info("Found HSM device path", "path", path, "vendorId", vendorID, "productId", productID)
+		if u.deviceExists(path) {
 			return path
 		}
 	}
 
 	return ""
+}
+
+// deviceExists checks if a device path exists, trying both container and host-mounted paths
+func (u *USBDiscoverer) deviceExists(devicePath string) bool {
+	// Try both container and host-mounted paths
+	paths := []string{
+		devicePath,           // /dev/ttyUSB0 or /dev/bus/usb/001/002
+		"/host" + devicePath, // /host/dev/ttyUSB0 or /host/dev/bus/usb/001/002
+	}
+
+	for _, path := range paths {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // parseUSBDeviceFromSysfs parses USB device information directly from sysfs (native lsusb equivalent)
@@ -340,7 +468,7 @@ func (u *USBDiscoverer) parseUSBDeviceFromSysfs(devicePath string) *USBDevice {
 	}
 
 	// Try to find associated device paths
-	device.DevicePath = u.findHSMDevicePath(device.VendorID, device.ProductID)
+	device.DevicePath = u.findHSMDevicePath(devicePath, device.VendorID, device.ProductID)
 
 	// Add additional device info
 	device.DeviceInfo["sysfs-path"] = devicePath

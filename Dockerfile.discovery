@@ -19,6 +19,31 @@ COPY internal/ internal/
 # Build discovery binary only
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o discovery cmd/discovery/main.go
 
+FROM alpine:3.22 AS base 
+
+# Update Alpine packages
+RUN apk update
+
+# Install compilation tools
+RUN apk add --no-cache \
+  git \
+  gcc \
+  g++ \
+  make \
+  cmake \
+  pkgconfig \
+  openssl-dev \
+  pcsc-lite-dev \
+  libusb-dev \
+  autoconf \
+  automake \
+  libtool
+
+RUN cd / && git clone https://github.com/CardContact/sc-hsm-embedded.git 
+WORKDIR /sc-hsm-embedded
+RUN autoreconf -fi && ./configure
+RUN make && make install
+
 FROM alpine:3.22
 RUN apk add --no-cache opensc-dev ccid pcsc-lite openssl libtool libusb
 
