@@ -146,13 +146,13 @@ func (c *Client) ReadSecret(ctx context.Context, path string) (hsm.SecretData, e
 			secretData[key] = v
 		case []interface{}:
 			// Handle JSON array (byte array)
-			bytes := make([]byte, len(v))
+			byteArray := make([]byte, len(v))
 			for i, b := range v {
 				if byteVal, ok := b.(float64); ok {
-					bytes[i] = byte(byteVal)
+					byteArray[i] = byte(byteVal)
 				}
 			}
-			secretData[key] = bytes
+			secretData[key] = byteArray
 		default:
 			// Convert to string as fallback
 			secretData[key] = []byte(fmt.Sprintf("%v", v))
@@ -329,7 +329,11 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, request
 			continue
 		}
 
-		defer resp.Body.Close()
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				c.logger.V(1).Info("Failed to close response body", "error", err)
+			}
+		}()
 
 		// Read response body
 		bodyBytes, err := io.ReadAll(resp.Body)

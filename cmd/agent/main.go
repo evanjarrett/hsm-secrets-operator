@@ -65,7 +65,8 @@ func main() {
 	if deviceName == "" {
 		deviceName = os.Getenv("HSM_DEVICE_NAME")
 		if deviceName == "" {
-			setupLog.Error(fmt.Errorf("device name required"), "Device name must be provided via --device-name or HSM_DEVICE_NAME environment variable")
+			setupLog.Error(fmt.Errorf("device name required"),
+				"Device name must be provided via --device-name or HSM_DEVICE_NAME environment variable")
 			os.Exit(1)
 		}
 	}

@@ -55,7 +55,7 @@ type Manager struct {
 }
 
 // NewManager creates a new agent manager
-func NewManager(client client.Client, agentImage, namespace string) *Manager {
+func NewManager(k8sClient client.Client, agentImage, namespace string) *Manager {
 	if agentImage == "" {
 		agentImage = AgentImage
 	}
@@ -64,7 +64,7 @@ func NewManager(client client.Client, agentImage, namespace string) *Manager {
 	}
 
 	return &Manager{
-		Client:         client,
+		Client:         k8sClient,
 		AgentImage:     agentImage,
 		AgentNamespace: namespace,
 	}
@@ -374,6 +374,7 @@ func (m *Manager) findTargetNode(hsmDevice *hsmv1alpha1.HSMDevice) string {
 	if hsmDevice.Spec.NodeSelector != nil {
 		// This would need more sophisticated logic to map selectors to actual nodes
 		// For now, return empty to indicate no target found
+		return ""
 	}
 
 	return ""

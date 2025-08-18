@@ -99,15 +99,15 @@ func (s *Server) setupRouter() {
 	v1 := s.router.Group("/api/v1")
 	{
 		// HSM operations
-		hsm := v1.Group("/hsm")
+		hsmGroup := v1.Group("/hsm")
 		{
-			hsm.GET("/info", s.handleGetInfo)
-			hsm.GET("/secrets/:path", s.handleReadSecret)
-			hsm.POST("/secrets/:path", s.handleWriteSecret)
-			hsm.PUT("/secrets/:path", s.handleWriteSecret)
-			hsm.DELETE("/secrets/:path", s.handleDeleteSecret)
-			hsm.GET("/secrets", s.handleListSecrets)
-			hsm.GET("/checksum/:path", s.handleGetChecksum)
+			hsmGroup.GET("/info", s.handleGetInfo)
+			hsmGroup.GET("/secrets/:path", s.handleReadSecret)
+			hsmGroup.POST("/secrets/:path", s.handleWriteSecret)
+			hsmGroup.PUT("/secrets/:path", s.handleWriteSecret)
+			hsmGroup.DELETE("/secrets/:path", s.handleDeleteSecret)
+			hsmGroup.GET("/secrets", s.handleListSecrets)
+			hsmGroup.GET("/checksum/:path", s.handleGetChecksum)
 		}
 	}
 
@@ -153,8 +153,12 @@ func (s *Server) Start(ctx context.Context) error {
 		defer cancel()
 
 		s.logger.Info("Shutting down servers")
-		healthServer.Shutdown(shutdownCtx)
-		server.Shutdown(shutdownCtx)
+		if err := healthServer.Shutdown(shutdownCtx); err != nil {
+			s.logger.Error(err, "Failed to shutdown health server")
+		}
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			s.logger.Error(err, "Failed to shutdown main server")
+		}
 	}()
 
 	s.logger.Info("Starting HSM agent server", "port", s.port, "device", s.deviceName)
@@ -283,7 +287,7 @@ func (s *Server) handleWriteSecret(c *gin.Context) {
 		"checksum": checksum,
 	}
 
-	s.sendResponse(c, http.StatusOK, "Secret written successfully", response)
+	s.sendResponse(c, http.StatusCreated, "Secret written successfully", response)
 }
 
 // handleDeleteSecret handles secret deletion requests
@@ -398,8 +402,10 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	// Simple JSON encoding without external dependencies
-	fmt.Fprintf(w, `{"status":"%s","deviceName":"%s","hsmConnected":%t,"timestamp":"%s"}`,
-		status.Status, status.DeviceName, status.HSMConnected, status.Timestamp.Format(time.RFC3339))
+	if _, err := fmt.Fprintf(w, `{"status":"%s","deviceName":"%s","hsmConnected":%t,"timestamp":"%s"}`,
+		status.Status, status.DeviceName, status.HSMConnected, status.Timestamp.Format(time.RFC3339)); err != nil {
+		s.logger.Error(err, "Failed to write health response")
+	}
 }
 
 // handleReadyz handles readiness probe requests
@@ -408,13 +414,17 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	if s.hsmClient == nil || !s.hsmClient.IsConnected() {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"not_ready","reason":"hsm_not_connected"}`)
+		if _, err := fmt.Fprintf(w, `{"status":"not_ready","reason":"hsm_not_connected"}`); err != nil {
+			s.logger.Error(err, "Failed to write readiness response")
+		}
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"status":"ready"}`)
+	if _, err := fmt.Fprintf(w, `{"status":"ready"}`); err != nil {
+		s.logger.Error(err, "Failed to write readiness response")
+	}
 }
 
 // sendResponse sends a successful API response
