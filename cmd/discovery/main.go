@@ -51,8 +51,11 @@ func init() {
 func main() {
 	var nodeName string
 	var syncInterval time.Duration
+	var detectionMethod string
 	flag.StringVar(&nodeName, "node-name", "", "The name of the node this discovery agent is running on")
 	flag.DurationVar(&syncInterval, "sync-interval", 30*time.Second, "Interval for device discovery sync")
+	flag.StringVar(&detectionMethod, "detection-method", "auto",
+		"USB detection method: 'sysfs' (native), 'legacy' (privileged), or 'auto'")
 
 	opts := zap.Options{
 		Development: true,
@@ -73,7 +76,8 @@ func main() {
 		}
 	}
 
-	setupLog.Info("Starting HSM device discovery agent", "node", nodeName, "sync-interval", syncInterval)
+	setupLog.Info("Starting HSM device discovery agent",
+		"node", nodeName, "sync-interval", syncInterval, "detection-method", detectionMethod)
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:         scheme,
@@ -87,8 +91,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize USB discoverer
-	usbDiscoverer := discovery.NewUSBDiscoverer()
+	// Initialize USB discoverer with detection method preference
+	usbDiscoverer := discovery.NewUSBDiscovererWithMethod(detectionMethod)
 
 	// Initialize mirroring manager for cross-node HSM device synchronization
 	mirroringManager := discovery.NewMirroringManager(mgr.GetClient(), nodeName)

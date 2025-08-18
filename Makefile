@@ -177,7 +177,7 @@ docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
 
 .PHONY: docker-build-discovery
-docker-build-discovery: ## Build docker image for the discovery agent.
+docker-build-discovery: ## Build docker image for the discovery agent (native sysfs, distroless).
 	$(CONTAINER_TOOL) build -f Dockerfile.discovery -t ${DISCOVERY_IMG} .
 
 .PHONY: docker-push-discovery

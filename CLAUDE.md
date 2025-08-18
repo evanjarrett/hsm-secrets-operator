@@ -2,72 +2,146 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Development Commands
+
+### Building and Testing
+```bash
+# Build both binaries
+make build                    # Builds bin/manager and bin/discovery
+
+# Build specific components
+go build -o bin/manager cmd/manager/main.go
+go build -o bin/discovery cmd/discovery/main.go
+
+# Run tests
+make test                     # Run unit tests with coverage
+make test-e2e                 # Run end-to-end tests (requires Kind cluster)
+make setup-test-e2e          # Set up Kind cluster for e2e testing
+make cleanup-test-e2e        # Tear down Kind cluster
+
+# Run specific test package
+go test ./internal/controller -v
+go test ./internal/hsm -v
+
+# Code quality
+make fmt                      # Format code
+make vet                      # Run go vet
+make lint                     # Run golangci-lint (if configured)
+```
+
+### Docker Images
+```bash
+# Manager image (full HSM libraries)
+make docker-build IMG=hsm-secrets-operator:latest
+
+# Discovery image (native sysfs, distroless, no external dependencies)
+make docker-build-discovery DISCOVERY_IMG=hsm-discovery:latest
+
+# Build both manager and discovery images
+make docker-build-all
+
+# Push images
+make docker-push IMG=<registry>/hsm-secrets-operator:tag
+make docker-push-discovery DISCOVERY_IMG=<registry>/hsm-discovery:tag
+```
+
+### Deployment
+```bash
+# Install CRDs
+make install
+
+# Deploy manager (handles HSMSecret CRDs)
+make deploy IMG=<registry>/hsm-secrets-operator:tag
+
+# Deploy discovery DaemonSet (handles HSMDevice CRDs - non-privileged by default)
+kubectl apply -f config/samples/daemonset.yaml
+
+# Test with samples
+kubectl apply -f config/samples/
+
+# Clean up
+make uninstall
+make undeploy
+```
+
+### Development Iteration
+```bash
+# Local development cycle
+make manifests generate fmt vet  # Generate and validate code
+make run                         # Run manager locally
+
+# For discovery development
+go run cmd/discovery/main.go --node-name=local-test --detection-method=sysfs
+go run cmd/discovery/main.go --node-name=local-test --detection-method=legacy  
+go run cmd/discovery/main.go --node-name=local-test --detection-method=auto
+```
+
 ## Project Overview
 
 A Kubernetes operator that bridges Pico HSM binary data storage with Kubernetes Secrets, providing true secret portability through hardware-based storage. The operator implements a controller pattern that watches HSMSecret Custom Resource Definitions (CRDs) and maintains bidirectional synchronization between HSM binary data files and Kubernetes Secret objects.
 
-## Development Commands
-
-### Operator SDK Commands
-```bash
-# Initialize operator project (if not already done)
-operator-sdk init --domain=j5t.io --repo=github.com/evanjarrett/hsm-secrets-operator
-
-# Create new APIs/CRDs
-operator-sdk create api --group=hsm --version=v1alpha1 --kind=HSMSecret
-
-# Generate manifests and code
-make generate
-make manifests
-
-# Build and test
-make build
-make test
-
-# Docker operations
-make docker-build IMG=<registry>/hsm-secrets-operator:latest
-make docker-push IMG=<registry>/hsm-secrets-operator:latest
-
-# Deploy to cluster
-make deploy IMG=<registry>/hsm-secrets-operator:latest
-make undeploy
-```
-
-### Development Workflow
-```bash
-# Run operator locally for development
-make install    # Install CRDs
-make run        # Run controller locally
-
-# Test with sample resources
-kubectl apply -f config/samples/
-
-# View logs
-kubectl logs -f deployment/hsm-secrets-operator-controller-manager -n hsm-secrets-operator-system
-```
 
 ## Architecture
 
-### Core Components
+### Binary Architecture (Manager/Discovery Split)
 
-1. **HSMSecret CRD**: Custom resource definition that represents a secret stored on the Pico HSM
-2. **HSMSecret Controller**: Watches HSMSecret resources and manages synchronization
-3. **HSM Client**: PKCS#11 interface wrapper for Pico HSM communication
-4. **Secret Manager**: Handles Kubernetes Secret object lifecycle
+The operator uses a **dual-binary architecture** for optimal security and resource usage:
 
-### Data Flow
+1. **Manager Binary** (`cmd/manager/main.go`)
+   - Handles **HSMSecret CRDs** and secret synchronization
+   - Includes PKCS#11 HSM libraries and API server
+   - Runs as regular deployment (unprivileged)
+   - Heavy image with full HSM library dependencies
 
-```
-Pico HSM (binary files) <-> HSMSecret CRD <-> Kubernetes Secret
-    secrets/appnamespace/appname-secret  ->  appnamespace/appname-secret
-```
+2. **Discovery Binary** (`cmd/discovery/main.go`) 
+   - Handles **HSMDevice CRDs** and USB device discovery
+   - **USB Detection Methods**:
+     - **Native sysfs** (default): Reads `/sys/bus/usb/devices` directly like `lsusb` does internally
+     - **Legacy sysfs**: Privileged scanning (backward compatibility only)
+   - **Ultra-lightweight**: Distroless image (~2MB, no external dependencies)
+   - **Security**: Runs non-privileged on Talos Linux with maximum hardening
 
 ### Controller Pattern
 
-The operator follows the standard Kubernetes controller pattern:
-- **Watch**: Monitor HSMSecret CRDs and HSM file changes
-- **Reconcile**: Ensure desired state matches actual state
-- **Update**: Sync changes bidirectionally between HSM and K8s Secrets
+Each binary runs specific controllers:
+
+- **HSMSecret Controller** (manager): `internal/controller/hsmsecret_controller.go`
+  - Bidirectional sync between HSM and Kubernetes Secrets
+  - Mock and PKCS#11 HSM client implementations
+  - Owner reference management and finalizers
+
+- **HSMDevice Controller** (discovery): `internal/controller/hsmdevice_controller.go` 
+  - USB device discovery via sysfs scanning
+  - **CRITICAL**: Fixed status update loops (see fixes section)
+  - Host path support for Talos Linux (`/host/sys`, `/host/dev`)
+  - Well-known device specifications (Pico HSM, SmartCard-HSM)
+
+### Data Flow & Reconciliation
+
+```
+HSM Storage ←→ HSMSecret CRD ←→ Kubernetes Secret
+USB Device  ←→ HSMDevice CRD ←→ Device Discovery
+
+Manager:    HSMPath ←→ PKCS#11 Client ←→ K8s Secret (owner refs)
+Discovery:  /sys/bus/usb ←→ Device Status ←→ HSMDevice CRD
+```
+
+### Key Architectural Patterns
+
+1. **Status-Driven Reconciliation**: Controllers use comprehensive status fields to track state
+   - `LastDiscoveryTime`, `LastSyncTime` 
+   - Checksums for change detection (SHA256)
+   - Kubernetes conditions for status reporting
+
+2. **Client Abstraction**: `internal/hsm/client.go` interface supports multiple implementations
+   - `MockClient` for testing with pre-populated secrets
+   - `PKCS11Client` for production Pico HSM integration
+   - Pluggable architecture for different HSM types
+
+3. **Host System Integration**: Discovery requires privileged access
+   - DaemonSet pattern for node-level USB scanning
+   - Host path mounting (`/host/sys`, `/host/dev`, `/host/proc/bus/usb`)
+   - Talos Linux compatibility with immutable filesystem
 
 ## Goals
 

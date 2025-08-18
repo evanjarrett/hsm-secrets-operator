@@ -348,7 +348,7 @@ func (r *HSMDeviceReconciler) updateStatus(ctx context.Context, hsmDevice *hsmv1
 
 	// Check if condition needs updating
 	shouldUpdateCondition := false
-	var existingConditionIndex int = -1
+	existingConditionIndex := -1
 	for i, cond := range hsmDevice.Status.Conditions {
 		if cond.Type == conditionType {
 			existingConditionIndex = i

@@ -9,7 +9,9 @@
       "Bash(kubectl exec:*)",
       "Bash(grep:*)",
       "Bash(kubectl logs:*)",
-      "Bash(make:*)"
+      "Bash(make:*)",
+      "Bash(gofmt:*)",
+      "Bash(golangci-lint run:*)"
     ],
     "deny": [],
     "ask": []
