@@ -16,6 +16,8 @@ make build                    # Builds bin/manager and bin/discovery
 # Build specific components
 go build -o bin/manager cmd/manager/main.go
 go build -o bin/discovery cmd/discovery/main.go
+go build -o bin/agent cmd/agent/main.go
+go build -o bin/test-hsm cmd/test-hsm/main.go
 
 # Run tests
 make test                     # Run unit tests with coverage
@@ -146,12 +148,13 @@ A Kubernetes operator that bridges Pico HSM binary data storage with Kubernetes 
 
 ## Architecture
 
-### Three-Binary Architecture (Manager/Agent/Discovery Split)
+### Four-Binary Architecture (Manager/Agent/Discovery Split + Race-Free HSMPool)
 
-The operator uses a **three-binary architecture** for optimal security, resource usage, and deployment flexibility:
+The operator uses a **four-binary architecture** with race-condition-free coordination for optimal security, resource usage, and deployment flexibility:
 
 1. **Manager Binary** (`cmd/manager/main.go`)
-   - Handles **HSMSecret CRDs** and secret synchronization
+   - Handles **HSMSecret CRDs** and secret synchronization  
+   - Handles **HSMPool CRDs** for aggregating device discovery results
    - Uses **MockClient** by default (no PKCS#11 dependencies)
    - Includes REST API server for secret management
    - Runs as regular deployment (unprivileged)
@@ -161,16 +164,22 @@ The operator uses a **three-binary architecture** for optimal security, resource
    - Handles actual **HSM communication** via PKCS#11
    - Uses **real PKCS#11Client** for production HSM devices
    - Can fallback to **MockClient** for testing
-   - Deployed close to HSM hardware (DaemonSet pattern)
+   - Deployed close to HSM hardware (DaemonSet pattern)  
    - Heavy image with full PKCS#11 library dependencies
+   - Serves HSM operations via API for manager requests
 
 3. **Discovery Binary** (`cmd/discovery/main.go`) 
-   - Handles **HSMDevice CRDs** and USB device discovery
+   - Handles **HSMDevice CRDs** (readonly specs) and USB device discovery
    - **USB Detection Methods**:
      - **Native sysfs** (default): Reads `/sys/bus/usb/devices` directly like `lsusb` does internally
      - **Legacy sysfs**: Privileged scanning (backward compatibility only)
+   - **Race-Free Coordination**: Reports via pod annotations instead of CRD status
    - **Ultra-lightweight**: No CGO, no external dependencies
    - **Security**: Runs non-privileged on Talos Linux with maximum hardening
+
+4. **Test HSM Binary** (`cmd/test-hsm/main.go`)
+   - Testing utility for HSM operations and debugging
+   - Standalone tool for development and troubleshooting
 
 ### Controller Pattern
 
@@ -181,21 +190,43 @@ Each binary runs specific controllers:
   - Mock and PKCS#11 HSM client implementations
   - Owner reference management and finalizers
 
+- **HSMPool Controller** (manager): `internal/controller/hsmpool_controller.go`
+  - **NEW**: Aggregates device discovery reports from all discovery pods
+  - **Race-Free**: Uses pod annotations for coordination instead of CRD status updates
+  - Grace period handling for pod outages (default: 5 minutes)
+  - Creates HSMPool CRDs automatically when HSMDevice CRDs are created
+
+- **HSMPool Agent Controller** (manager): `internal/controller/hsmpool_agent_controller.go`
+  - **NEW**: Manages agent deployment for HSM pools  
+  - Coordinates agent pod lifecycle with discovered devices
+
 - **HSMDevice Controller** (discovery): `internal/controller/hsmdevice_controller.go` 
   - USB device discovery via sysfs scanning
   - **CRITICAL**: Fixed status update loops (see fixes section)
+  - **NEW**: Reports discoveries via pod annotations instead of CRD status
   - Host path support for Talos Linux (`/host/sys`, `/host/dev`)
   - Well-known device specifications (Pico HSM, SmartCard-HSM)
 
 ### Data Flow & Reconciliation
 
+**New Race-Free Architecture:**
 ```
 HSM Storage ←→ HSMSecret CRD ←→ Kubernetes Secret
-USB Device  ←→ HSMDevice CRD ←→ Device Discovery
+USB Device  ←→ HSMDevice CRD (readonly spec) ←→ Pod Annotations ←→ HSMPool CRD (aggregated status)
 
-Manager:    HSMPath ←→ PKCS#11 Client ←→ K8s Secret (owner refs)
-Discovery:  /sys/bus/usb ←→ Device Status ←→ HSMDevice CRD
+Manager:    HSMPath ←→ Agent API ←→ PKCS#11 Client ←→ K8s Secret (owner refs)
+            HSMDevice ←→ HSMPool (auto-created with owner refs)
+            Pod Annotations ←→ HSMPool Status (aggregated discovery results)
+            
+Discovery:  /sys/bus/usb ←→ Pod Annotations (ephemeral reports)
+Agent:      PKCS#11 Library ←→ HSM Device ←→ API Server
 ```
+
+**Key Benefits:**
+- ✅ **No Race Conditions**: Each resource has single owner
+- ✅ **Automatic Cleanup**: Pod dies → annotations disappear → no stale data  
+- ✅ **Grace Periods**: 5-minute buffer prevents agent churn during outages
+- ✅ **Kubernetes Native**: Standard patterns (annotations, owner refs, watches)
 
 ### Key Architectural Patterns
 
@@ -230,6 +261,49 @@ Discovery:  /sys/bus/usb ←→ Device Status ←→ HSMDevice CRD
 
 ## CRD Structures
 
+### HSMPool CRD Structure (NEW - Race-Free Device Aggregation)
+
+```yaml
+apiVersion: hsm.j5t.io/v1alpha1
+kind: HSMPool
+metadata:
+  name: pico-hsm-pool
+  ownerReferences:
+    - kind: HSMDevice
+      name: pico-hsm
+spec:
+  hsmDeviceRefs: ["pico-hsm"]          # References to HSMDevice specs
+  gracePeriod: "5m"                    # Grace period for stale pod reports
+  mirroring:                           # Optional mirroring configuration
+    enabled: true
+    primaryRole: "primary"
+status:
+  phase: "Ready"                       # Pending|Aggregating|Ready|Partial|Error
+  totalDevices: 2
+  availableDevices: 2
+  expectedPods: 2                      # Expected discovery pods
+  reportingPods:                       # Pods currently reporting
+    - podName: "discovery-node1"
+      nodeName: "worker-1"
+      devicesFound: 1
+      lastReportTime: "2025-08-19T10:00:00Z"
+      discoveryStatus: "completed"
+      fresh: true
+    - podName: "discovery-node2"
+      nodeName: "worker-2"
+      devicesFound: 1
+      lastReportTime: "2025-08-19T10:00:00Z"  
+      discoveryStatus: "completed"
+      fresh: true
+  aggregatedDevices:                   # All discovered devices across cluster
+    - devicePath: "/dev/bus/usb/001/015"
+      nodeName: "worker-1"
+      serialNumber: "DC6A33145E23A42A"
+      available: true
+      lastSeen: "2025-08-19T10:00:00Z"
+  lastAggregationTime: "2025-08-19T10:00:00Z"
+```
+
 ### HSMSecret CRD Structure
 
 ```yaml
@@ -256,7 +330,7 @@ status:
     namespace: "appnamespace"
 ```
 
-### HSMDevice CRD Structure (New Per-Device Configuration)
+### HSMDevice CRD Structure (Readonly Spec - No Status Updates)
 
 ```yaml
 apiVersion: hsm.j5t.io/v1alpha1
@@ -295,16 +369,33 @@ spec:
     hsm-type: "pico"
   
   maxDevices: 1
+# NOTE: No status field - HSMDevice is readonly spec only!
+# Discovery results are reported via HSMPool CRD and pod annotations
+```
 
-status:
-  totalDevices: 1
-  availableDevices: 1
-  phase: "Ready"
-  discoveredDevices:
-    - devicePath: "/dev/ttyUSB0"
-      nodeName: "worker-1"
-      available: true
-      lastSeen: "2025-01-15T10:30:00Z"
+### Pod Annotation Structure (Ephemeral Discovery Reports)
+
+```yaml
+# Discovery pods report their findings via annotations
+apiVersion: v1
+kind: Pod
+metadata:
+  name: discovery-node1
+  annotations:
+    hsm.j5t.io/device-report: |
+      {
+        "hsmDeviceName": "my-pico-hsm",
+        "reportingNode": "worker-1",
+        "discoveredDevices": [
+          {
+            "devicePath": "/dev/bus/usb/001/015",
+            "serialNumber": "DC6A33145E23A42A",
+            "lastSeen": "2025-08-19T10:00:00Z"
+          }
+        ],
+        "lastReportTime": "2025-08-19T10:00:00Z",
+        "discoveryStatus": "completed"
+      }
 ```
 
 ## Implementation Strategy
@@ -344,7 +435,20 @@ status:
 
 ## 🚨 Critical Fixes Applied
 
-### Status Update Loop Fix ✅ RESOLVED
+### Race Condition Elimination ✅ RESOLVED
+**Problem**: Multiple discovery pods were fighting over HSMDevice CRD status updates, causing race conditions and reconciliation loops.
+
+**Root Cause**: Multiple controllers updating the same CRD status simultaneously created race conditions and complex coordination.
+
+**Solution Applied - New Architecture**: 
+- **HSMDevice CRDs**: Now readonly specs only (no status field)
+- **Pod Annotations**: Discovery pods report via their own annotations  
+- **HSMPool CRDs**: Manager aggregates all pod reports into pool status
+- **Owner References**: HSMPool is auto-created and owned by HSMDevice
+- **Grace Periods**: 5-minute buffer prevents agent churn during outages
+- **Result**: Zero race conditions, automatic cleanup, Kubernetes-native patterns
+
+### Status Update Loop Fix ✅ RESOLVED  
 **Problem**: HSMDevice controller was causing rapid reconciliation loops (spamming every millisecond) due to status updates triggering immediate re-reconciliation.
 
 **Root Cause**: `LastDiscoveryTime` was updated with `metav1.Now()` on every reconcile, causing Kubernetes to detect resource changes and immediately schedule new reconciliation.
@@ -354,6 +458,7 @@ status:
 - **Logic**: Only update status when there are actual changes (device count, phase, etc.)
 - **Time Updates**: Only update `LastDiscoveryTime` when significant changes occur or every 5+ minutes
 - **Result**: Proper 30-second intervals instead of continuous loops
+- **SUPERSEDED**: New architecture eliminates status updates entirely
 
 ### Architecture Separation ✅ COMPLETED
 **Manager vs Discovery Split**:
@@ -642,23 +747,35 @@ The Dockerfile builds an Alpine-based environment with:
 kubectl get hsmsecret
 kubectl get hsmsec  # Using short name
 
-# View HSMDevice status with custom columns  
+# View HSMDevice specifications (readonly)  
 kubectl get hsmdevice
 kubectl get hsmdev  # Using short name
+
+# View HSMPool aggregated status (NEW)
+kubectl get hsmpool
+kubectl get hsmpool -o wide
 
 # Describe for detailed information
 kubectl describe hsmsecret database-credentials
 kubectl describe hsmdevice pico-hsm-discovery
+kubectl describe hsmpool pico-hsm-discovery-pool
 
 # Check created secrets
 kubectl get secrets -l managed-by=hsm-secrets-operator
 
 # Monitor sync and discovery status
 kubectl get hsmsecret database-credentials -o jsonpath='{.status.syncStatus}'
-kubectl get hsmdevice pico-hsm-discovery -o jsonpath='{.status.phase}'
+kubectl get hsmpool pico-hsm-discovery-pool -o jsonpath='{.status.phase}'
 
-# View discovered devices
-kubectl get hsmdevice pico-hsm-discovery -o jsonpath='{.status.discoveredDevices[*].devicePath}'
+# View discovered devices (from HSMPool)
+kubectl get hsmpool pico-hsm-discovery-pool -o jsonpath='{.status.aggregatedDevices[*].devicePath}'
+
+# Monitor pod discovery reports (NEW)
+kubectl get pods -l app.kubernetes.io/component=discovery \
+  -o jsonpath='{range .items[*]}{.metadata.name}: {.metadata.annotations.hsm\.j5t\.io/device-report}{"\n"}{end}'
+
+# Check pod reporting status in HSMPool
+kubectl get hsmpool pico-hsm-discovery-pool -o jsonpath='{.status.reportingPods[*].podName}'
 ```
 
 This operator design provides a secure, hardware-backed secret management solution that integrates seamlessly with Kubernetes while maintaining the security benefits of HSM-based storage.
