@@ -316,14 +316,14 @@ func (c *PKCS11Client) ReadSecret(ctx context.Context, path string) (SecretData,
 		}
 
 		label := string(labelAttr[0].Value)
-		
+
 		// Check if this object matches our path
 		if !strings.HasPrefix(label, path) {
 			continue // Skip objects that don't match our path
 		}
-		
+
 		matchingObjects++
-		
+
 		// Extract key name from label (remove path prefix)
 		key := strings.TrimPrefix(label, path)
 		key = strings.TrimPrefix(key, "/")
@@ -348,7 +348,7 @@ func (c *PKCS11Client) ReadSecret(ctx context.Context, path string) (SecretData,
 	if matchingObjects == 0 {
 		return nil, fmt.Errorf("secret not found at path: %s", path)
 	}
-	
+
 	if len(data) == 0 {
 		return nil, fmt.Errorf("no valid secret data found at path: %s (found %d objects but no data)", path, matchingObjects)
 	}
@@ -449,7 +449,7 @@ func (c *PKCS11Client) deleteSecretObjects(path string) error {
 		if !strings.HasPrefix(label, path) {
 			continue
 		}
-		
+
 		if err := c.ctx.DestroyObject(c.session, obj); err != nil {
 			c.logger.V(1).Info("Failed to delete object", "object", obj, "error", err)
 			continue

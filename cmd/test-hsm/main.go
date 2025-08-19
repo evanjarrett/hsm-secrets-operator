@@ -27,6 +27,7 @@ import (
 	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
 )
 
+// nolint:gocyclo
 func main() {
 	var (
 		libraryPath = flag.String("library", "", "Path to PKCS#11 library (required)")
@@ -43,7 +44,7 @@ func main() {
 		fmt.Println("ERROR: -library is required")
 		fmt.Println("\nCommon PKCS#11 libraries:")
 		fmt.Println("  OpenSC: /usr/lib/pkcs11/opensc-pkcs11.so")
-		fmt.Println("  SoftHSM: /usr/lib/softhsm/libsofthsm2.so") 
+		fmt.Println("  SoftHSM: /usr/lib/softhsm/libsofthsm2.so")
 		fmt.Println("  Pico HSM: /usr/local/lib/libsc-hsm-pkcs11.so")
 		os.Exit(1)
 	}
@@ -55,7 +56,11 @@ func main() {
 
 	// Create PKCS#11 client
 	client := hsm.NewPKCS11Client()
-	defer client.Close()
+	defer func() {
+		if err := client.Close(); err != nil {
+			log.Printf("Failed to close HSM client: %v", err)
+		}
+	}()
 
 	// Configure HSM
 	config := hsm.Config{
