@@ -180,9 +180,18 @@ func (s *Server) findAvailableAgent(ctx context.Context, namespace string) (stri
 		return "", fmt.Errorf("failed to list HSM devices: %w", err)
 	}
 
-	// Look for ready devices with available agents
+	// Look for devices with associated HSMPools that have available agents
 	for _, device := range hsmDeviceList.Items {
-		if device.Status.Phase == hsmv1alpha1.HSMDevicePhaseReady && len(device.Status.DiscoveredDevices) > 0 {
+		// Check the HSMPool for this device
+		poolName := device.Name + "-pool"
+		pool := &hsmv1alpha1.HSMPool{}
+
+		err := s.client.Get(ctx, client.ObjectKey{
+			Name:      poolName,
+			Namespace: device.Namespace,
+		}, pool)
+
+		if err == nil && pool.Status.Phase == hsmv1alpha1.HSMPoolPhaseReady && len(pool.Status.AggregatedDevices) > 0 {
 			// Generate agent endpoint
 			agentName := fmt.Sprintf("hsm-agent-%s", device.Name)
 			agentEndpoint := fmt.Sprintf("http://%s.%s.svc.cluster.local:8092", agentName, namespace)

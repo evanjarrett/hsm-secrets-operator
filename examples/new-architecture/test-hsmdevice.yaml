@@ -1,0 +1,16 @@
+apiVersion: hsm.j5t.io/v1alpha1
+kind: HSMDevice
+metadata:
+  name: pico-hsm-test
+  namespace: secrets
+spec:
+  deviceType: "PicoHSM"
+  discovery:
+    autoDiscovery: true
+  pkcs11:
+    libraryPath: "/usr/lib/libsc-hsm-pkcs11.so"
+    slotId: 0
+    pinSecret:
+      name: "pico-hsm-pin"
+      key: "pin"
+    tokenLabel: "PicoHSM"

@@ -397,10 +397,19 @@ func (r *HSMSecretReconciler) findHSMDeviceForSecret(ctx context.Context, hsmSec
 		return nil, fmt.Errorf("failed to list HSM devices: %w", err)
 	}
 
-	// Look for devices that are in a ready state with available devices
+	// Look for devices with associated HSMPools that are ready with available devices
 	for _, device := range hsmDeviceList.Items {
-		if device.Status.Phase == hsmv1alpha1.HSMDevicePhaseReady &&
-			len(device.Status.DiscoveredDevices) > 0 {
+		// Check the HSMPool for this device
+		poolName := device.Name + "-pool"
+		pool := &hsmv1alpha1.HSMPool{}
+
+		err := r.Get(ctx, client.ObjectKey{
+			Name:      poolName,
+			Namespace: device.Namespace,
+		}, pool)
+
+		if err == nil && pool.Status.Phase == hsmv1alpha1.HSMPoolPhaseReady &&
+			len(pool.Status.AggregatedDevices) > 0 {
 
 			// This is a suitable device for HSM operations
 			return &device, nil

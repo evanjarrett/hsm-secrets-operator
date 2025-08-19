@@ -19,7 +19,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -30,47 +29,60 @@ import (
 	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
 )
 
-// HSMDeviceAgentReconciler watches HSMDevices and ensures agents are deployed when devices are ready
-type HSMDeviceAgentReconciler struct {
+// HSMPoolAgentReconciler watches HSMPools and ensures agents are deployed when pools become ready
+type HSMPoolAgentReconciler struct {
 	client.Client
 	Scheme       *runtime.Scheme
 	AgentManager *agent.Manager
 }
 
+// +kubebuilder:rbac:groups=hsm.j5t.io,resources=hsmpools,verbs=get;list;watch
+// +kubebuilder:rbac:groups=hsm.j5t.io,resources=hsmpools/status,verbs=get
 // +kubebuilder:rbac:groups=hsm.j5t.io,resources=hsmdevices,verbs=get;list;watch
-// +kubebuilder:rbac:groups=hsm.j5t.io,resources=hsmdevices/status,verbs=get
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 
-// Reconcile ensures HSM agents are deployed for ready devices
-func (r *HSMDeviceAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+// Reconcile ensures HSM agents are deployed for ready pools
+func (r *HSMPoolAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	// Fetch the HSMDevice instance
-	var hsmDevice hsmv1alpha1.HSMDevice
-	if err := r.Get(ctx, req.NamespacedName, &hsmDevice); err != nil {
+	// Fetch the HSMPool instance
+	var hsmPool hsmv1alpha1.HSMPool
+	if err := r.Get(ctx, req.NamespacedName, &hsmPool); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	logger.Info("Reconciling HSM agent deployment", "device", hsmDevice.Name, "phase", hsmDevice.Status.Phase)
+	logger.Info("Reconciling HSM agent deployment for pool", "pool", hsmPool.Name, "phase", hsmPool.Status.Phase)
 
-	// Only deploy agents for ready devices with discovered hardware
-	if hsmDevice.Status.Phase == hsmv1alpha1.HSMDevicePhaseReady && len(hsmDevice.Status.DiscoveredDevices) > 0 {
-		if err := r.ensureHSMAgent(ctx, &hsmDevice); err != nil {
-			logger.Error(err, "Failed to ensure HSM agent")
-			return ctrl.Result{RequeueAfter: time.Minute * 2}, nil
+	// Only deploy agents for ready pools with discovered hardware
+	if hsmPool.Status.Phase == hsmv1alpha1.HSMPoolPhaseReady && len(hsmPool.Status.AggregatedDevices) > 0 {
+		// For each HSMDevice referenced by this pool, ensure an agent exists
+		for _, deviceRef := range hsmPool.Spec.HSMDeviceRefs {
+			// Get the HSMDevice to pass to agent manager
+			var hsmDevice hsmv1alpha1.HSMDevice
+			if err := r.Get(ctx, client.ObjectKey{
+				Name:      deviceRef,
+				Namespace: hsmPool.Namespace,
+			}, &hsmDevice); err != nil {
+				logger.Error(err, "Failed to get referenced HSMDevice", "device", deviceRef)
+				continue
+			}
+
+			if err := r.ensureHSMAgent(ctx, &hsmDevice); err != nil {
+				logger.Error(err, "Failed to ensure HSM agent", "device", deviceRef)
+			}
 		}
 	} else {
-		logger.V(1).Info("HSMDevice not ready for agent deployment",
-			"phase", hsmDevice.Status.Phase,
-			"devices", len(hsmDevice.Status.DiscoveredDevices))
+		logger.V(1).Info("HSMPool not ready for agent deployment",
+			"phase", hsmPool.Status.Phase,
+			"devices", len(hsmPool.Status.AggregatedDevices))
 	}
 
 	return ctrl.Result{}, nil
 }
 
 // ensureHSMAgent ensures an HSM agent pod is running for the given device
-func (r *HSMDeviceAgentReconciler) ensureHSMAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice) error {
+func (r *HSMPoolAgentReconciler) ensureHSMAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice) error {
 	logger := log.FromContext(ctx)
 
 	if r.AgentManager == nil {
@@ -88,9 +100,9 @@ func (r *HSMDeviceAgentReconciler) ensureHSMAgent(ctx context.Context, hsmDevice
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *HSMDeviceAgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *HSMPoolAgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&hsmv1alpha1.HSMDevice{}).
-		Named("hsmdevice-agent").
+		For(&hsmv1alpha1.HSMPool{}).
+		Named("hsmpool-agent").
 		Complete(r)
 }

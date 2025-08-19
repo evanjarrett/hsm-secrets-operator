@@ -1,0 +1,338 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: hsmpools.hsm.j5t.io
+spec:
+  group: hsm.j5t.io
+  names:
+    kind: HSMPool
+    listKind: HSMPoolList
+    plural: hsmpools
+    shortNames:
+    - hsmpool
+    singular: hsmpool
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.hsmDeviceRefs
+      name: HSMDevices
+      type: string
+    - jsonPath: .status.totalDevices
+      name: Total
+      type: integer
+    - jsonPath: .status.availableDevices
+      name: Available
+      type: integer
+    - jsonPath: .status.reportingPods[*].podName
+      name: Reporting
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.lastAggregationTime
+      name: Last Aggregation
+      type: date
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: HSMPool is the Schema for the hsmpools API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: HSMPoolSpec defines the desired state of HSMPool
+            properties:
+              gracePeriod:
+                default: 5m
+                description: GracePeriod defines how long to wait before considering
+                  a pod's report stale
+                type: string
+              hsmDeviceRefs:
+                description: HSMDeviceRefs references the HSMDevice specifications
+                  this pool aggregates
+                items:
+                  type: string
+                type: array
+              mirroring:
+                description: Mirroring defines device mirroring configuration for
+                  this pool
+                properties:
+                  autoFailover:
+                    default: true
+                    description: AutoFailover enables automatic failover to healthy
+                      nodes
+                    type: boolean
+                  policy:
+                    default: None
+                    description: Policy specifies the mirroring strategy
+                    type: string
+                  primaryNode:
+                    description: PrimaryNode specifies the preferred primary node
+                      for write operations
+                    type: string
+                  syncInterval:
+                    default: 60
+                    description: SyncInterval defines how often to sync device data
+                      across nodes (in seconds)
+                    format: int32
+                    type: integer
+                  targetNodes:
+                    description: |-
+                      TargetNodes specifies nodes that should have mirrored access
+                      If empty, mirrors to all nodes with the device
+                    items:
+                      type: string
+                    type: array
+                type: object
+            required:
+            - hsmDeviceRefs
+            type: object
+          status:
+            description: HSMPoolStatus defines the observed state of HSMPool
+            properties:
+              aggregatedDevices:
+                description: AggregatedDevices lists all devices found across all
+                  reporting pods
+                items:
+                  description: DiscoveredDevice represents a discovered HSM device
+                    instance
+                  properties:
+                    available:
+                      description: Available indicates if the device is currently
+                        available for use
+                      type: boolean
+                    deviceInfo:
+                      additionalProperties:
+                        type: string
+                      description: DeviceInfo contains additional device information
+                      type: object
+                    devicePath:
+                      description: DevicePath is the system path to the discovered
+                        device
+                      type: string
+                    health:
+                      description: Health represents the health status of the device
+                      type: string
+                    lastSeen:
+                      description: LastSeen is the timestamp when the device was last
+                        detected
+                      format: date-time
+                      type: string
+                    lastSyncTime:
+                      description: LastSyncTime is when this device was last synchronized
+                      format: date-time
+                      type: string
+                    mirroredFrom:
+                      description: MirroredFrom indicates the primary device this
+                        is mirrored from
+                      type: string
+                    nodeName:
+                      description: NodeName is the name of the node where the device
+                        was discovered
+                      type: string
+                    resourceName:
+                      description: ResourceName is the Kubernetes resource name for
+                        this device
+                      type: string
+                    role:
+                      description: Role indicates the role of this device in a mirrored
+                        setup
+                      type: string
+                    serialNumber:
+                      description: SerialNumber is the serial number of the device
+                        (if available)
+                      type: string
+                  required:
+                  - available
+                  - devicePath
+                  - lastSeen
+                  - nodeName
+                  type: object
+                type: array
+              availableDevices:
+                description: AvailableDevices is the number of currently available
+                  devices
+                format: int32
+                type: integer
+              conditions:
+                description: Conditions represent the latest available observations
+                  of the pool state
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              expectedPods:
+                description: ExpectedPods is the number of pods expected to report
+                  (from DaemonSet)
+                format: int32
+                type: integer
+              lastAggregationTime:
+                description: LastAggregationTime is when the pool was last updated
+                  from pod reports
+                format: date-time
+                type: string
+              mirroring:
+                description: Mirroring represents the status of device mirroring for
+                  this pool
+                properties:
+                  enabled:
+                    description: Enabled indicates if mirroring is currently active
+                    type: boolean
+                  failoverCount:
+                    description: FailoverCount tracks the number of failovers that
+                      have occurred
+                    format: int32
+                    type: integer
+                  lastSyncTime:
+                    description: LastSyncTime is when devices were last synchronized
+                    format: date-time
+                    type: string
+                  mirroredNodes:
+                    description: MirroredNodes lists nodes with mirrored access
+                    items:
+                      type: string
+                    type: array
+                  primaryNode:
+                    description: PrimaryNode is the current primary node
+                    type: string
+                  syncErrors:
+                    description: SyncErrors tracks synchronization errors
+                    items:
+                      type: string
+                    type: array
+                required:
+                - enabled
+                - failoverCount
+                type: object
+              phase:
+                description: Phase represents the current phase of device aggregation
+                type: string
+              reportingPods:
+                description: ReportingPods tracks which pods have provided discovery
+                  reports
+                items:
+                  description: PodReport represents a discovery report from a specific
+                    pod
+                  properties:
+                    devicesFound:
+                      description: DevicesFound is the number of devices found by
+                        this pod
+                      format: int32
+                      type: integer
+                    discoveryStatus:
+                      description: DiscoveryStatus is the status of discovery from
+                        this pod
+                      type: string
+                    error:
+                      description: Error message if discovery failed
+                      type: string
+                    fresh:
+                      description: Fresh indicates if this report is within the grace
+                        period
+                      type: boolean
+                    lastReportTime:
+                      description: LastReportTime is when this pod last reported via
+                        annotations
+                      format: date-time
+                      type: string
+                    nodeName:
+                      description: NodeName is the node where the pod is running
+                      type: string
+                    podName:
+                      description: PodName is the name of the reporting pod
+                      type: string
+                  required:
+                  - devicesFound
+                  - discoveryStatus
+                  - fresh
+                  - lastReportTime
+                  - nodeName
+                  - podName
+                  type: object
+                type: array
+              totalDevices:
+                description: TotalDevices is the total number of unique devices found
+                format: int32
+                type: integer
+            required:
+            - availableDevices
+            - expectedPods
+            - totalDevices
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

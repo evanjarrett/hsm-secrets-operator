@@ -258,57 +258,11 @@ type MirroringStatus struct {
 	SyncErrors []string `json:"syncErrors,omitempty"`
 }
 
-// HSMDeviceStatus defines the observed state of HSMDevice.
-type HSMDeviceStatus struct {
-	// DiscoveredDevices lists all discovered devices matching the spec
-	// +optional
-	DiscoveredDevices []DiscoveredDevice `json:"discoveredDevices,omitempty"`
-
-	// TotalDevices is the total number of discovered devices
-	TotalDevices int32 `json:"totalDevices"`
-
-	// AvailableDevices is the number of currently available devices
-	AvailableDevices int32 `json:"availableDevices"`
-
-	// LastDiscoveryTime is the timestamp of the last discovery scan
-	// +optional
-	LastDiscoveryTime *metav1.Time `json:"lastDiscoveryTime,omitempty"`
-
-	// Conditions represent the latest available observations of the device state
-	// +optional
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
-
-	// Phase represents the current phase of device discovery
-	// +optional
-	Phase HSMDevicePhase `json:"phase,omitempty"`
-
-	// Mirroring represents the status of device mirroring
-	// +optional
-	Mirroring *MirroringStatus `json:"mirroring,omitempty"`
-}
-
-// HSMDevicePhase represents the current phase of device discovery
-type HSMDevicePhase string
-
-const (
-	// HSMDevicePhasePending indicates discovery is not yet started
-	HSMDevicePhasePending HSMDevicePhase = "Pending"
-	// HSMDevicePhaseDiscovering indicates discovery is in progress
-	HSMDevicePhaseDiscovering HSMDevicePhase = "Discovering"
-	// HSMDevicePhaseReady indicates devices have been discovered and are ready
-	HSMDevicePhaseReady HSMDevicePhase = "Ready"
-	// HSMDevicePhaseError indicates an error occurred during discovery
-	HSMDevicePhaseError HSMDevicePhase = "Error"
-)
-
 // +kubebuilder:object:root=true
-// +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=hsmdev
 // +kubebuilder:printcolumn:name="Type",type=string,JSONPath=`.spec.deviceType`
-// +kubebuilder:printcolumn:name="Total",type=integer,JSONPath=`.status.totalDevices`
-// +kubebuilder:printcolumn:name="Available",type=integer,JSONPath=`.status.availableDevices`
-// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
-// +kubebuilder:printcolumn:name="Last Discovery",type=date,JSONPath=`.status.lastDiscoveryTime`
+// +kubebuilder:printcolumn:name="Discovery",type=string,JSONPath=`.spec.discovery.autoDiscovery`
+// +kubebuilder:printcolumn:name="Max Devices",type=integer,JSONPath=`.spec.maxDevices`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // HSMDevice is the Schema for the hsmdevices API.
@@ -316,8 +270,7 @@ type HSMDevice struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   HSMDeviceSpec   `json:"spec,omitempty"`
-	Status HSMDeviceStatus `json:"status,omitempty"`
+	Spec HSMDeviceSpec `json:"spec,omitempty"`
 }
 
 // +kubebuilder:object:root=true

@@ -369,10 +369,30 @@ func (m *Manager) createAgentService(ctx context.Context, hsmDevice *hsmv1alpha1
 	return m.Create(ctx, service)
 }
 
-// findTargetNode finds the node where the HSM device is located
+// findTargetNode finds the node where the HSM device is located by checking the HSMPool
 func (m *Manager) findTargetNode(hsmDevice *hsmv1alpha1.HSMDevice) string {
-	// Look for discovered devices in the status
-	for _, device := range hsmDevice.Status.DiscoveredDevices {
+	// Find the HSMPool for this device
+	poolName := hsmDevice.Name + "-pool"
+	pool := &hsmv1alpha1.HSMPool{}
+
+	ctx := context.Background()
+	err := m.Client.Get(ctx, types.NamespacedName{
+		Name:      poolName,
+		Namespace: hsmDevice.Namespace,
+	}, pool)
+
+	if err != nil {
+		// Fallback: if no pool found, use node selector if present
+		if hsmDevice.Spec.NodeSelector != nil {
+			// This would need more sophisticated logic to map selectors to actual nodes
+			// For now, return empty to indicate no target found
+			return ""
+		}
+		return ""
+	}
+
+	// Look for discovered devices in the pool status
+	for _, device := range pool.Status.AggregatedDevices {
 		if device.Available && device.NodeName != "" {
 			return device.NodeName
 		}
@@ -460,14 +480,25 @@ func (m *Manager) buildAgentVolumeMounts(hsmDevice *hsmv1alpha1.HSMDevice) []cor
 		},
 	}
 
-	// Add device mounts if needed
-	for _, device := range hsmDevice.Status.DiscoveredDevices {
-		if device.DevicePath != "" {
-			mounts = append(mounts, corev1.VolumeMount{
-				Name:      "hsm-device",
-				MountPath: "/dev/hsm",
-			})
-			break // Only need one mount point
+	// Add device mounts if needed - get from HSMPool
+	poolName := hsmDevice.Name + "-pool"
+	pool := &hsmv1alpha1.HSMPool{}
+
+	ctx := context.Background()
+	err := m.Client.Get(ctx, types.NamespacedName{
+		Name:      poolName,
+		Namespace: hsmDevice.Namespace,
+	}, pool)
+
+	if err == nil {
+		for _, device := range pool.Status.AggregatedDevices {
+			if device.DevicePath != "" {
+				mounts = append(mounts, corev1.VolumeMount{
+					Name:      "hsm-device",
+					MountPath: "/dev/hsm",
+				})
+				break // Only need one mount point
+			}
 		}
 	}
 
@@ -485,19 +516,30 @@ func (m *Manager) buildAgentVolumes(hsmDevice *hsmv1alpha1.HSMDevice) []corev1.V
 		},
 	}
 
-	// Add device volumes if needed
-	for _, device := range hsmDevice.Status.DiscoveredDevices {
-		if device.DevicePath != "" {
-			volumes = append(volumes, corev1.Volume{
-				Name: "hsm-device",
-				VolumeSource: corev1.VolumeSource{
-					HostPath: &corev1.HostPathVolumeSource{
-						Path: device.DevicePath,
-						Type: hostPathTypePtr(corev1.HostPathCharDev),
+	// Add device volumes if needed - get from HSMPool
+	poolName := hsmDevice.Name + "-pool"
+	pool := &hsmv1alpha1.HSMPool{}
+
+	ctx := context.Background()
+	err := m.Client.Get(ctx, types.NamespacedName{
+		Name:      poolName,
+		Namespace: hsmDevice.Namespace,
+	}, pool)
+
+	if err == nil {
+		for _, device := range pool.Status.AggregatedDevices {
+			if device.DevicePath != "" {
+				volumes = append(volumes, corev1.Volume{
+					Name: "hsm-device",
+					VolumeSource: corev1.VolumeSource{
+						HostPath: &corev1.HostPathVolumeSource{
+							Path: device.DevicePath,
+							Type: hostPathTypePtr(corev1.HostPathCharDev),
+						},
 					},
-				},
-			})
-			break // Only need one volume
+				})
+				break // Only need one volume
+			}
 		}
 	}
 
