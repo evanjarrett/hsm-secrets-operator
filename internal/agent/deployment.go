@@ -376,7 +376,7 @@ func (m *Manager) findTargetNode(hsmDevice *hsmv1alpha1.HSMDevice) string {
 	pool := &hsmv1alpha1.HSMPool{}
 
 	ctx := context.Background()
-	err := m.Client.Get(ctx, types.NamespacedName{
+	err := m.Get(ctx, types.NamespacedName{
 		Name:      poolName,
 		Namespace: hsmDevice.Namespace,
 	}, pool)
@@ -485,7 +485,7 @@ func (m *Manager) buildAgentVolumeMounts(hsmDevice *hsmv1alpha1.HSMDevice) []cor
 	pool := &hsmv1alpha1.HSMPool{}
 
 	ctx := context.Background()
-	err := m.Client.Get(ctx, types.NamespacedName{
+	err := m.Get(ctx, types.NamespacedName{
 		Name:      poolName,
 		Namespace: hsmDevice.Namespace,
 	}, pool)
@@ -521,7 +521,7 @@ func (m *Manager) buildAgentVolumes(hsmDevice *hsmv1alpha1.HSMDevice) []corev1.V
 	pool := &hsmv1alpha1.HSMPool{}
 
 	ctx := context.Background()
-	err := m.Client.Get(ctx, types.NamespacedName{
+	err := m.Get(ctx, types.NamespacedName{
 		Name:      poolName,
 		Namespace: hsmDevice.Namespace,
 	}, pool)

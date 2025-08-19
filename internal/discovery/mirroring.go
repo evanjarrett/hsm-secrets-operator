@@ -85,22 +85,10 @@ func (m *MirroringManager) SyncDevices(ctx context.Context, hsmDevice *hsmv1alph
 	return fmt.Errorf("device sync functionality needs to be redesigned for HSMPool architecture")
 }
 
-// determineMirrorTopology determines which nodes should be primary vs mirrors
-// TODO: Redesign for HSMPool architecture
-func (m *MirroringManager) determineMirrorTopology(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice) (string, []string, error) {
-	m.logger.Info("Mirror topology determination needs redesign for HSMPool architecture", "device", hsmDevice.Name)
-	return "", nil, fmt.Errorf("mirror topology functionality needs to be redesigned for HSMPool architecture")
-}
-
-// syncFromPrimary synchronizes secrets from the primary node to mirrors
-// TODO: Redesign for HSMPool architecture
-func (m *MirroringManager) syncFromPrimary(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, primaryNode string, mirrorNodes []string) error {
-	m.logger.Info("Primary sync needs redesign for HSMPool architecture",
-		"device", hsmDevice.Name,
-		"primaryNode", primaryNode,
-		"mirrorNodes", mirrorNodes)
-	return fmt.Errorf("primary sync functionality needs to be redesigned for HSMPool architecture")
-}
+// TODO: The following functions will be redesigned for HSMPool architecture:
+// - determineMirrorTopology
+// - syncFromPrimary
+// - updateMirroringStatus
 
 // GetReadOnlyAccess provides read-only access to HSM data during failover scenarios
 // TODO: Redesign for HSMPool architecture
@@ -116,16 +104,6 @@ func (m *MirroringManager) GetReadOnlyAccess(ctx context.Context, secretPath str
 func (m *MirroringManager) HandleFailover(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice) error {
 	m.logger.Info("Failover handling needs redesign for HSMPool architecture", "device", hsmDevice.Name)
 	return fmt.Errorf("failover functionality needs to be redesigned for HSMPool architecture")
-}
-
-// updateMirroringStatus updates the mirroring status
-// TODO: Redesign for HSMPool architecture - should update HSMPool status instead
-func (m *MirroringManager) updateMirroringStatus(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, primaryNode string, mirrorNodes []string) {
-	m.logger.Info("Mirroring status update needs redesign for HSMPool architecture",
-		"device", hsmDevice.Name,
-		"primaryNode", primaryNode,
-		"mirrorNodes", mirrorNodes)
-	// TODO: Update HSMPool status instead of HSMDevice status
 }
 
 // SetupWithManager sets up the mirroring manager with the controller manager
