@@ -275,10 +275,9 @@ func (c *PKCS11Client) ReadSecret(ctx context.Context, path string) (SecretData,
 
 	c.logger.V(1).Info("Reading secret from HSM", "path", path)
 
-	// Find data objects with the path as label prefix
+	// Find all data objects (we'll filter by label after)
 	template := []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_DATA),
-		pkcs11.NewAttribute(pkcs11.CKA_LABEL, path+"*"), // Use wildcard for prefix search
 	}
 
 	if err := c.ctx.FindObjectsInit(c.session, template); err != nil {
@@ -296,15 +295,13 @@ func (c *PKCS11Client) ReadSecret(ctx context.Context, path string) (SecretData,
 		return nil, fmt.Errorf("failed to find objects: %w", err)
 	}
 
-	if len(objs) == 0 {
-		return nil, fmt.Errorf("secret not found at path: %s", path)
-	}
-
 	data := make(SecretData)
+	// Track if we found any objects for this path
+	matchingObjects := 0
 
-	// Read each data object
+	// Read each data object and filter by path
 	for _, obj := range objs {
-		// Get the label to determine the key name
+		// Get the label to determine if this object matches our path
 		labelAttr, err := c.ctx.GetAttributeValue(c.session, obj, []*pkcs11.Attribute{
 			pkcs11.NewAttribute(pkcs11.CKA_LABEL, nil),
 		})
@@ -319,6 +316,14 @@ func (c *PKCS11Client) ReadSecret(ctx context.Context, path string) (SecretData,
 		}
 
 		label := string(labelAttr[0].Value)
+		
+		// Check if this object matches our path
+		if !strings.HasPrefix(label, path) {
+			continue // Skip objects that don't match our path
+		}
+		
+		matchingObjects++
+		
 		// Extract key name from label (remove path prefix)
 		key := strings.TrimPrefix(label, path)
 		key = strings.TrimPrefix(key, "/")
@@ -340,8 +345,12 @@ func (c *PKCS11Client) ReadSecret(ctx context.Context, path string) (SecretData,
 		}
 	}
 
+	if matchingObjects == 0 {
+		return nil, fmt.Errorf("secret not found at path: %s", path)
+	}
+	
 	if len(data) == 0 {
-		return nil, fmt.Errorf("no valid secret data found at path: %s", path)
+		return nil, fmt.Errorf("no valid secret data found at path: %s (found %d objects but no data)", path, matchingObjects)
 	}
 
 	c.logger.V(1).Info("Successfully read secret from HSM",
@@ -400,10 +409,9 @@ func (c *PKCS11Client) WriteSecret(ctx context.Context, path string, data Secret
 
 // deleteSecretObjects removes all data objects matching the given path prefix
 func (c *PKCS11Client) deleteSecretObjects(path string) error {
-	// Find data objects with the path as label prefix
+	// Find all data objects (we'll filter by label after)
 	template := []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_DATA),
-		pkcs11.NewAttribute(pkcs11.CKA_LABEL, path+"*"), // Use wildcard for prefix search
 	}
 
 	if err := c.ctx.FindObjectsInit(c.session, template); err != nil {
@@ -421,8 +429,27 @@ func (c *PKCS11Client) deleteSecretObjects(path string) error {
 		return fmt.Errorf("failed to find objects: %w", err)
 	}
 
-	// Delete each object
+	// Delete each object that matches our path
 	for _, obj := range objs {
+		// Get the label to check if this object matches our path
+		labelAttr, err := c.ctx.GetAttributeValue(c.session, obj, []*pkcs11.Attribute{
+			pkcs11.NewAttribute(pkcs11.CKA_LABEL, nil),
+		})
+		if err != nil {
+			c.logger.V(1).Info("Failed to get object label for deletion", "error", err)
+			continue
+		}
+
+		if len(labelAttr) == 0 || len(labelAttr[0].Value) == 0 {
+			continue
+		}
+
+		label := string(labelAttr[0].Value)
+		// Only delete objects that match our path
+		if !strings.HasPrefix(label, path) {
+			continue
+		}
+		
 		if err := c.ctx.DestroyObject(c.session, obj); err != nil {
 			c.logger.V(1).Info("Failed to delete object", "object", obj, "error", err)
 			continue
@@ -470,14 +497,9 @@ func (c *PKCS11Client) ListSecrets(ctx context.Context, prefix string) ([]string
 
 	c.logger.V(1).Info("Listing secrets from HSM", "prefix", prefix)
 
-	// Find data objects with the prefix as label prefix
+	// Find all data objects (we'll filter by prefix after)
 	template := []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_DATA),
-	}
-
-	// Add prefix filter if specified
-	if prefix != "" {
-		template = append(template, pkcs11.NewAttribute(pkcs11.CKA_LABEL, prefix+"*"))
 	}
 
 	if err := c.ctx.FindObjectsInit(c.session, template); err != nil {
@@ -518,13 +540,9 @@ func (c *PKCS11Client) ListSecrets(ctx context.Context, prefix string) ([]string
 		if strings.Contains(label, "/") {
 			parts := strings.Split(label, "/")
 			if len(parts) > 1 {
-				// Check if the last part looks like a key name
-				lastPart := parts[len(parts)-1]
-				// If it's a common key name, use the parent path
-				if lastPart == defaultKeyName || lastPart == "username" || lastPart == "password" ||
-					lastPart == "api-key" || lastPart == "api-secret" || lastPart == "token" {
-					path = strings.Join(parts[:len(parts)-1], "/")
-				}
+				// For data objects, the last part is usually the key name
+				// So we extract the parent path as the secret path
+				path = strings.Join(parts[:len(parts)-1], "/")
 			}
 		}
 
