@@ -117,7 +117,7 @@ func (s *Server) handleHealth(c *gin.Context) {
 // All HSM operations are now proxied to agents - no direct handlers needed
 
 // sendResponse sends a successful API response
-func (s *Server) sendResponse(c *gin.Context, statusCode int, message string, data interface{}) {
+func (s *Server) sendResponse(c *gin.Context, statusCode int, message string, data any) {
 	response := APIResponse{
 		Success: true,
 		Message: message,
@@ -127,7 +127,7 @@ func (s *Server) sendResponse(c *gin.Context, statusCode int, message string, da
 }
 
 // sendError sends an error API response
-func (s *Server) sendError(c *gin.Context, statusCode int, code, message string, details map[string]interface{}) {
+func (s *Server) sendError(c *gin.Context, statusCode int, code, message string, details map[string]any) {
 	response := APIResponse{
 		Success: false,
 		Error: &APIError{
@@ -235,7 +235,7 @@ func (s *Server) proxyToAgent(c *gin.Context, agentEndpoint, path string) {
 	// Make request to agent
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		s.sendError(c, http.StatusBadGateway, "agent_error", "Failed to connect to HSM agent", map[string]interface{}{
+		s.sendError(c, http.StatusBadGateway, "agent_error", "Failed to connect to HSM agent", map[string]any{
 			"error": err.Error(),
 		})
 		return

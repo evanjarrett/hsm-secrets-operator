@@ -42,23 +42,23 @@ type Server struct {
 
 // AgentRequest represents a generic HSM operation request
 type AgentRequest struct {
-	Path string                 `json:"path" validate:"required"`
-	Data map[string]interface{} `json:"data,omitempty"`
+	Path string         `json:"path" validate:"required"`
+	Data map[string]any `json:"data,omitempty"`
 }
 
 // AgentResponse represents a generic HSM operation response
 type AgentResponse struct {
 	Success bool        `json:"success"`
 	Message string      `json:"message,omitempty"`
-	Data    interface{} `json:"data,omitempty"`
+	Data    any         `json:"data,omitempty"`
 	Error   *AgentError `json:"error,omitempty"`
 }
 
 // AgentError represents an error response
 type AgentError struct {
-	Code    string                 `json:"code"`
-	Message string                 `json:"message"`
-	Details map[string]interface{} `json:"details,omitempty"`
+	Code    string         `json:"code"`
+	Message string         `json:"message"`
+	Details map[string]any `json:"details,omitempty"`
 }
 
 // HealthStatus represents the health status of the agent
@@ -177,7 +177,7 @@ func (s *Server) handleGetInfo(c *gin.Context) {
 	info, err := s.hsmClient.GetInfo(ctx)
 	if err != nil {
 		s.logger.Error(err, "Failed to get HSM info")
-		s.sendError(c, http.StatusInternalServerError, "hsm_error", "Failed to get HSM info", map[string]interface{}{
+		s.sendError(c, http.StatusInternalServerError, "hsm_error", "Failed to get HSM info", map[string]any{
 			"error": err.Error(),
 		})
 		return
@@ -204,7 +204,7 @@ func (s *Server) handleReadSecret(c *gin.Context) {
 	data, err := s.hsmClient.ReadSecret(ctx, path)
 	if err != nil {
 		s.logger.Error(err, "Failed to read secret", "path", path)
-		s.sendError(c, http.StatusInternalServerError, "read_error", "Failed to read secret", map[string]interface{}{
+		s.sendError(c, http.StatusInternalServerError, "read_error", "Failed to read secret", map[string]any{
 			"path":  path,
 			"error": err.Error(),
 		})
@@ -214,7 +214,7 @@ func (s *Server) handleReadSecret(c *gin.Context) {
 	// Calculate checksum
 	checksum := hsm.CalculateChecksum(data)
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"path":     path,
 		"data":     data,
 		"checksum": checksum,
@@ -235,7 +235,7 @@ func (s *Server) handleWriteSecret(c *gin.Context) {
 
 	var req AgentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		s.sendError(c, http.StatusBadRequest, "invalid_request", "Invalid JSON payload", map[string]interface{}{
+		s.sendError(c, http.StatusBadRequest, "invalid_request", "Invalid JSON payload", map[string]any{
 			"error": err.Error(),
 		})
 		return
@@ -245,7 +245,7 @@ func (s *Server) handleWriteSecret(c *gin.Context) {
 	req.Path = path
 
 	if err := s.validator.Struct(&req); err != nil {
-		s.sendError(c, http.StatusBadRequest, "validation_failed", "Request validation failed", map[string]interface{}{
+		s.sendError(c, http.StatusBadRequest, "validation_failed", "Request validation failed", map[string]any{
 			"error": err.Error(),
 		})
 		return
@@ -266,13 +266,13 @@ func (s *Server) handleWriteSecret(c *gin.Context) {
 			hsmData[key] = v
 		default:
 			// Convert to string as fallback
-			hsmData[key] = []byte(fmt.Sprintf("%v", v))
+			hsmData[key] = fmt.Appendf(nil, "%v", v)
 		}
 	}
 
 	if err := s.hsmClient.WriteSecret(ctx, req.Path, hsmData); err != nil {
 		s.logger.Error(err, "Failed to write secret", "path", req.Path)
-		s.sendError(c, http.StatusInternalServerError, "write_error", "Failed to write secret", map[string]interface{}{
+		s.sendError(c, http.StatusInternalServerError, "write_error", "Failed to write secret", map[string]any{
 			"path":  req.Path,
 			"error": err.Error(),
 		})
@@ -282,7 +282,7 @@ func (s *Server) handleWriteSecret(c *gin.Context) {
 	// Calculate checksum for response
 	checksum := hsm.CalculateChecksum(hsmData)
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"path":     req.Path,
 		"checksum": checksum,
 	}
@@ -307,14 +307,14 @@ func (s *Server) handleDeleteSecret(c *gin.Context) {
 
 	if err := s.hsmClient.DeleteSecret(ctx, path); err != nil {
 		s.logger.Error(err, "Failed to delete secret", "path", path)
-		s.sendError(c, http.StatusInternalServerError, "delete_error", "Failed to delete secret", map[string]interface{}{
+		s.sendError(c, http.StatusInternalServerError, "delete_error", "Failed to delete secret", map[string]any{
 			"path":  path,
 			"error": err.Error(),
 		})
 		return
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"path": path,
 	}
 
@@ -334,14 +334,14 @@ func (s *Server) handleListSecrets(c *gin.Context) {
 	paths, err := s.hsmClient.ListSecrets(ctx, prefix)
 	if err != nil {
 		s.logger.Error(err, "Failed to list secrets", "prefix", prefix)
-		s.sendError(c, http.StatusInternalServerError, "list_error", "Failed to list secrets", map[string]interface{}{
+		s.sendError(c, http.StatusInternalServerError, "list_error", "Failed to list secrets", map[string]any{
 			"prefix": prefix,
 			"error":  err.Error(),
 		})
 		return
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"prefix": prefix,
 		"paths":  paths,
 		"count":  len(paths),
@@ -368,14 +368,14 @@ func (s *Server) handleGetChecksum(c *gin.Context) {
 	checksum, err := s.hsmClient.GetChecksum(ctx, path)
 	if err != nil {
 		s.logger.Error(err, "Failed to get checksum", "path", path)
-		s.sendError(c, http.StatusInternalServerError, "checksum_error", "Failed to get checksum", map[string]interface{}{
+		s.sendError(c, http.StatusInternalServerError, "checksum_error", "Failed to get checksum", map[string]any{
 			"path":  path,
 			"error": err.Error(),
 		})
 		return
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"path":     path,
 		"checksum": checksum,
 	}
@@ -428,7 +428,7 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 }
 
 // sendResponse sends a successful API response
-func (s *Server) sendResponse(c *gin.Context, statusCode int, message string, data interface{}) {
+func (s *Server) sendResponse(c *gin.Context, statusCode int, message string, data any) {
 	response := AgentResponse{
 		Success: true,
 		Message: message,
@@ -438,7 +438,7 @@ func (s *Server) sendResponse(c *gin.Context, statusCode int, message string, da
 }
 
 // sendError sends an error API response
-func (s *Server) sendError(c *gin.Context, statusCode int, code, message string, details map[string]interface{}) {
+func (s *Server) sendError(c *gin.Context, statusCode int, code, message string, details map[string]any) {
 	response := AgentResponse{
 		Success: false,
 		Error: &AgentError{

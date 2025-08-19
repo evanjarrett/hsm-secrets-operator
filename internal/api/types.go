@@ -44,7 +44,7 @@ type CreateSecretRequest struct {
 	Format SecretFormat `json:"format" validate:"required,oneof=json binary text"`
 
 	// Data contains the actual secret data
-	Data map[string]interface{} `json:"data" validate:"required"`
+	Data map[string]any `json:"data" validate:"required"`
 
 	// Description is an optional description of the secret
 	Description string `json:"description,omitempty" validate:"max=1000"`
@@ -56,7 +56,7 @@ type CreateSecretRequest struct {
 // UpdateSecretRequest represents a request to update an existing secret
 type UpdateSecretRequest struct {
 	// Data contains the updated secret data
-	Data map[string]interface{} `json:"data" validate:"required"`
+	Data map[string]any `json:"data" validate:"required"`
 
 	// Description is an optional updated description
 	Description string `json:"description,omitempty" validate:"max=1000"`
@@ -125,7 +125,7 @@ type SecretInfo struct {
 // SecretData represents the actual secret data
 type SecretData struct {
 	// Data contains the secret key-value pairs
-	Data map[string]interface{} `json:"data"`
+	Data map[string]any `json:"data"`
 
 	// Metadata contains additional information about the secret
 	Metadata SecretInfo `json:"metadata"`
@@ -155,7 +155,7 @@ type APIResponse struct {
 	Message string `json:"message,omitempty"`
 
 	// Data contains the response data
-	Data interface{} `json:"data,omitempty"`
+	Data any `json:"data,omitempty"`
 
 	// Error contains error details if the operation failed
 	Error *APIError `json:"error,omitempty"`
@@ -170,7 +170,7 @@ type APIError struct {
 	Message string `json:"message"`
 
 	// Details contains additional error details
-	Details map[string]interface{} `json:"details,omitempty"`
+	Details map[string]any `json:"details,omitempty"`
 }
 
 // HealthStatus represents the health status of the API server

@@ -87,7 +87,7 @@ func (c *Client) GetInfo(ctx context.Context) (*hsm.HSMInfo, error) {
 	}
 
 	// Convert response data to HSMInfo
-	data, ok := response.Data.(map[string]interface{})
+	data, ok := response.Data.(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("invalid response data format")
 	}
@@ -127,12 +127,12 @@ func (c *Client) ReadSecret(ctx context.Context, path string) (hsm.SecretData, e
 	}
 
 	// Convert response data to SecretData
-	responseData, ok := response.Data.(map[string]interface{})
+	responseData, ok := response.Data.(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("invalid response data format")
 	}
 
-	secretDataRaw, ok := responseData["data"].(map[string]interface{})
+	secretDataRaw, ok := responseData["data"].(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("invalid secret data format")
 	}
@@ -144,7 +144,7 @@ func (c *Client) ReadSecret(ctx context.Context, path string) (hsm.SecretData, e
 			secretData[key] = []byte(v)
 		case []byte:
 			secretData[key] = v
-		case []interface{}:
+		case []any:
 			// Handle JSON array (byte array)
 			byteArray := make([]byte, len(v))
 			for i, b := range v {
@@ -168,7 +168,7 @@ func (c *Client) WriteSecret(ctx context.Context, path string, data hsm.SecretDa
 	endpoint := fmt.Sprintf("/api/v1/hsm/secrets/%s", escapedPath)
 
 	// Convert SecretData to request format
-	requestData := make(map[string]interface{})
+	requestData := make(map[string]any)
 	for key, value := range data {
 		requestData[key] = string(value)
 	}
@@ -224,12 +224,12 @@ func (c *Client) ListSecrets(ctx context.Context, prefix string) ([]string, erro
 	}
 
 	// Convert response data to string slice
-	responseData, ok := response.Data.(map[string]interface{})
+	responseData, ok := response.Data.(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("invalid response data format")
 	}
 
-	pathsRaw, ok := responseData["paths"].([]interface{})
+	pathsRaw, ok := responseData["paths"].([]any)
 	if !ok {
 		return nil, fmt.Errorf("invalid paths data format")
 	}
@@ -259,7 +259,7 @@ func (c *Client) GetChecksum(ctx context.Context, path string) (string, error) {
 	}
 
 	// Extract checksum from response
-	responseData, ok := response.Data.(map[string]interface{})
+	responseData, ok := response.Data.(map[string]any)
 	if !ok {
 		return "", fmt.Errorf("invalid response data format")
 	}
@@ -282,7 +282,7 @@ func (c *Client) IsConnected() bool {
 }
 
 // doRequest performs an HTTP request with retry logic
-func (c *Client) doRequest(ctx context.Context, method, endpoint string, requestBody interface{}, responseBody interface{}) error {
+func (c *Client) doRequest(ctx context.Context, method, endpoint string, requestBody any, responseBody any) error {
 	url := c.baseURL + endpoint
 
 	var reqBodyReader io.Reader

@@ -33,7 +33,7 @@ func (s *Server) handleProxyRequest(c *gin.Context) {
 	// Find available agent and proxy the request
 	agentEndpoint, err := s.findAvailableAgent(c.Request.Context(), namespace)
 	if err != nil {
-		s.sendError(c, http.StatusServiceUnavailable, "no_agent", "No HSM agents available", map[string]interface{}{
+		s.sendError(c, http.StatusServiceUnavailable, "no_agent", "No HSM agents available", map[string]any{
 			"error": err.Error(),
 		})
 		return
@@ -76,7 +76,7 @@ func (s *Server) setupProxyRoutes() {
 
 // handleInfo provides information about the API proxy
 func (s *Server) handleInfo(c *gin.Context) {
-	info := map[string]interface{}{
+	info := map[string]any{
 		"service":     "HSM Secrets Operator API",
 		"version":     "v1alpha1",
 		"mode":        "proxy",

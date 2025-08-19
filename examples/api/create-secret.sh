@@ -15,24 +15,22 @@ echo "Secret ID: $SECRET_ID"
 echo "API Base URL: $API_BASE_URL"
 echo ""
 
-# Create the JSON payload
+# Create the JSON payload for agent API (path-based)
+# The agent expects the path in the URL and data directly in the request body
 payload=$(cat <<EOF
 {
-  "label": "$SECRET_NAME",
-  "id": $SECRET_ID,
-  "format": "json",
-  "description": "Secret created via API on $(date)",
-  "tags": {
-    "created_by": "api-script",
-    "environment": "development",
-    "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  },
   "data": {
     "api_key": "sk_test_$(openssl rand -hex 16)",
     "webhook_secret": "whsec_$(openssl rand -hex 20)",
     "database_url": "postgresql://user:$(openssl rand -hex 12)@localhost:5432/testdb",
     "redis_url": "redis://localhost:6379/0",
-    "created_timestamp": "$(date +%s)"
+    "created_timestamp": "$(date +%s)",
+    "label": "$SECRET_NAME",
+    "id": "$SECRET_ID",
+    "description": "Secret created via API on $(date)",
+    "created_by": "api-script",
+    "environment": "development",
+    "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   }
 }
 EOF
@@ -42,12 +40,15 @@ echo "📝 Request Payload:"
 echo "$payload" | jq '.'
 echo ""
 
-# Make the API call
-echo "📤 Sending create request..."
+# Create HSM path from secret name (just use the secret name as path)
+HSM_PATH="$SECRET_NAME"
+
+# Make the API call - using path-based endpoint
+echo "📤 Sending create request to path: $HSM_PATH"
 response=$(curl -s -X POST \
   -H "Content-Type: application/json" \
   -d "$payload" \
-  "$API_BASE_URL/api/v1/hsm/secrets")
+  "$API_BASE_URL/api/v1/hsm/secrets/$HSM_PATH")
 
 echo "📥 Response:"
 echo "$response" | jq '.'
@@ -58,23 +59,25 @@ if [ "$success" = "true" ]; then
     echo ""
     echo "✅ Secret created successfully!"
     
-    # Extract created secret info
-    label=$(echo "$response" | jq -r '.data.label')
-    id=$(echo "$response" | jq -r '.data.id')
-    path=$(echo "$response" | jq -r '.data.path')
+    # Extract created secret info from agent response
+    checksum=$(echo "$response" | jq -r '.data.checksum // "unknown"')
+    path=$(echo "$response" | jq -r '.data.path // "unknown"')
     
-    echo "   Label: $label"
-    echo "   ID: $id"
-    echo "   HSM Path: $path"
+    echo "   Secret Name: $SECRET_NAME"
+    echo "   HSM Path: $HSM_PATH"
+    echo "   Checksum: ${checksum:0:16}..."
     
     echo ""
     echo "🔍 To retrieve this secret:"
-    echo "   curl $API_BASE_URL/api/v1/hsm/secrets/$label"
+    echo "   curl $API_BASE_URL/api/v1/hsm/secrets/$HSM_PATH"
     
     echo ""
-    echo "📋 To check Kubernetes Secret:"
-    echo "   kubectl get secret $label"
-    echo "   kubectl describe secret $label"
+    echo "📋 To list all secrets:"
+    echo "   curl $API_BASE_URL/api/v1/hsm/secrets"
+    
+    echo ""
+    echo "🗑️  To delete this secret:"
+    echo "   curl -X DELETE $API_BASE_URL/api/v1/hsm/secrets/$HSM_PATH"
     
 else
     echo ""
