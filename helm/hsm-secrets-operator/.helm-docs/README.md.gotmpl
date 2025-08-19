@@ -54,11 +54,8 @@ helm install {{ template "chart.name" . }} hsm-secrets-operator/{{ template "cha
 # Create HSM PIN secret first
 kubectl create secret generic hsm-pin --from-literal=pin=your-hsm-pin
 
-# Install with PKCS#11 configuration
-helm install {{ template "chart.name" . }} hsm-secrets-operator/{{ template "chart.name" . }} \
-  --set hsm.clientType=pkcs11 \
-  --set hsm.pkcs11.library=/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so \
-  --set hsm.pkcs11.slotId=0
+# Install operator (HSM configuration is now per-device via HSMDevice CRDs)
+helm install {{ template "chart.name" . }} hsm-secrets-operator/{{ template "chart.name" . }}
 ```
 
 ### Installation with Resources

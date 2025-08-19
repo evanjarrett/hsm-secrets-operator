@@ -53,7 +53,6 @@ The following table lists the configurable parameters of the HSM Secrets Operato
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `hsm.clientType` | HSM client type (`mock` or `pkcs11`) | `mock` |
 | `hsm.pkcs11.library` | PKCS#11 library path | `/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so` |
 | `hsm.pkcs11.slotId` | HSM slot ID | `0` |
 | `hsm.pkcs11.pinSecret.name` | Secret name containing HSM PIN | `hsm-pin` |
@@ -126,11 +125,8 @@ helm install hsm-secrets-operator ./helm/hsm-secrets-operator
 # Create HSM PIN secret first
 kubectl create secret generic hsm-pin --from-literal=pin=your-hsm-pin
 
-# Install with PKCS#11 configuration
-helm install hsm-secrets-operator ./helm/hsm-secrets-operator \
-  --set hsm.clientType=pkcs11 \
-  --set hsm.pkcs11.library=/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so \
-  --set hsm.pkcs11.slotId=0
+# Install operator (HSM configuration is now per-device via HSMDevice CRDs)
+helm install hsm-secrets-operator ./helm/hsm-secrets-operator
 ```
 
 ### Installation with Resources

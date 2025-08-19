@@ -84,9 +84,8 @@ affinity: {}
 
 # Global HSM configuration (fallback defaults)
 hsm:
-  # Default HSM client type: "mock" for testing, "pkcs11" for production
-  # Individual HSMDevice resources can override this
-  clientType: "mock"
+  # HSM configuration is now handled per-device via HSMDevice CRDs
+  # No global client type needed with agent architecture
 
 # Device discovery configuration
 discovery:

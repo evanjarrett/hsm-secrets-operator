@@ -17,10 +17,8 @@ limitations under the License.
 package main
 
 import (
-	"context"
 	"crypto/tls"
 	"flag"
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -44,7 +42,6 @@ import (
 	"github.com/evanjarrett/hsm-secrets-operator/internal/api"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/controller"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/discovery"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -215,49 +212,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize HSM client based on HSM_CLIENT_TYPE environment variable
-	clientType := os.Getenv("HSM_CLIENT_TYPE")
-	if clientType == "" {
-		clientType = "mock" // Default to mock if not specified
-	}
-
-	var hsmClient hsm.Client
-	switch clientType {
-	case "mock":
-		hsmClient = hsm.NewMockClient()
-		setupLog.Info("Using mock HSM client")
-	case "pkcs11":
-		hsmClient = hsm.NewPKCS11Client()
-		setupLog.Info("Using PKCS#11 HSM client")
-	default:
-		setupLog.Error(fmt.Errorf("invalid client type: %s", clientType), "supported types: mock, pkcs11")
-		os.Exit(1)
-	}
-	hsmConfig := hsm.DefaultConfig()
-	// TODO: Load HSM config from environment variables or config file
-
-	ctx := context.Background()
-	if err := hsmClient.Initialize(ctx, hsmConfig); err != nil {
-		setupLog.Error(err, "unable to initialize HSM client")
-		os.Exit(1)
-	}
-
-	// Get node name for HSMSecret controller
-	nodeName := os.Getenv("NODE_NAME")
-	if nodeName == "" {
-		if hostname, err := os.Hostname(); err == nil {
-			nodeName = hostname
-		} else {
-			nodeName = "unknown"
-		}
-	}
-
 	// Initialize mirroring manager for HSMSecret controller device failover
 	// Note: Device discovery is handled by separate discovery daemon
 	mirroringManager := discovery.NewMirroringManager(mgr.GetClient(), setupLog)
 
-	// Register the HSM client with the mirroring manager for this node
-	mirroringManager.RegisterHSMClient(nodeName, hsmClient)
+	// HSM client registration removed - now handled by agent architecture
 
 	// Create agent manager
 	agentImage := os.Getenv("AGENT_IMAGE")
@@ -290,7 +249,6 @@ func main() {
 	if err := (&controller.HSMSecretReconciler{
 		Client:           mgr.GetClient(),
 		Scheme:           mgr.GetScheme(),
-		HSMClient:        hsmClient,
 		MirroringManager: mirroringManager,
 		AgentManager:     agentManager,
 	}).SetupWithManager(mgr); err != nil {

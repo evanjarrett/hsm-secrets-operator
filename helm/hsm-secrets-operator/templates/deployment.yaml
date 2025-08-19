@@ -56,8 +56,6 @@ spec:
         - --health-probe-bind-address=:{{ .Values.health.port }}
         {{- end }}
         env:
-        - name: HSM_CLIENT_TYPE
-          value: {{ .Values.hsm.clientType | quote }}
         # PKCS#11 configuration is now per-device via HSMDevice CRDs
         # No global HSM configuration environment variables needed
         - name: DEFAULT_SYNC_INTERVAL
@@ -106,7 +104,7 @@ spec:
           {{- toYaml .Values.controllerManager.resources | nindent 12 }}
         securityContext:
           {{- toYaml .Values.controllerManager.securityContext | nindent 12 }}
-        {{- if or (eq .Values.hsm.clientType "pkcs11") .Values.discovery.enabled }}
+        {{- if or .Values.discovery.enabled .Values.webhook.enabled }}
         volumeMounts:
         {{- if .Values.discovery.enabled }}
         - name: dev
@@ -122,7 +120,7 @@ spec:
           readOnly: true
         {{- end }}
         {{- end }}
-      {{- if or (eq .Values.hsm.clientType "pkcs11") .Values.discovery.enabled .Values.webhook.enabled }}
+      {{- if or .Values.discovery.enabled .Values.webhook.enabled }}
       volumes:
       {{- if .Values.discovery.enabled }}
       - name: dev

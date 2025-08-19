@@ -51,7 +51,6 @@ const (
 type HSMSecretReconciler struct {
 	client.Client
 	Scheme           *runtime.Scheme
-	HSMClient        hsm.Client
 	MirroringManager *discovery.MirroringManager
 	AgentManager     *agent.Manager
 }
