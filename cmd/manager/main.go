@@ -255,17 +255,6 @@ func main() {
 	// Agent manager will detect the current namespace automatically
 	agentManager := agent.NewManager(mgr.GetClient(), agentImage, "")
 
-	if err := (&controller.HSMSecretReconciler{
-		Client:           mgr.GetClient(),
-		Scheme:           mgr.GetScheme(),
-		HSMClient:        hsmClient,
-		MirroringManager: mirroringManager,
-		AgentManager:     agentManager,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "HSMSecret")
-		os.Exit(1)
-	}
-
 	// Set up HSMPool controller to aggregate discovery reports from pod annotations
 	if err := (&controller.HSMPoolReconciler{
 		Client: mgr.GetClient(),
@@ -284,6 +273,18 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "HSMPoolAgent")
 		os.Exit(1)
 	}
+
+	if err := (&controller.HSMSecretReconciler{
+		Client:           mgr.GetClient(),
+		Scheme:           mgr.GetScheme(),
+		HSMClient:        hsmClient,
+		MirroringManager: mirroringManager,
+		AgentManager:     agentManager,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "HSMSecret")
+		os.Exit(1)
+	}
+
 	// +kubebuilder:scaffold:builder
 
 	if metricsCertWatcher != nil {
