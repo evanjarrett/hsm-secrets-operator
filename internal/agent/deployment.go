@@ -233,10 +233,9 @@ func (m *Manager) createAgentDeployment(ctx context.Context, hsmDevice *hsmv1alp
 						},
 					},
 					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot: boolPtr(true),
-						SeccompProfile: &corev1.SeccompProfile{
-							Type: corev1.SeccompProfileTypeRuntimeDefault,
-						},
+						RunAsUser:    int64Ptr(0),
+						RunAsGroup:   int64Ptr(0),
+						RunAsNonRoot: boolPtr(false),
 					},
 					ServiceAccountName: "hsm-secrets-operator",
 					Containers: []corev1.Container{
@@ -296,13 +295,17 @@ func (m *Manager) createAgentDeployment(ctx context.Context, hsmDevice *hsmv1alp
 								},
 							},
 							SecurityContext: &corev1.SecurityContext{
-								AllowPrivilegeEscalation: boolPtr(false),
+								Privileged:               boolPtr(true),
+								AllowPrivilegeEscalation: boolPtr(true),
 								Capabilities: &corev1.Capabilities{
-									Drop: []corev1.Capability{"ALL"},
+									Drop: []corev1.Capability{},
+									Add: []corev1.Capability{
+										"SYS_ADMIN",
+									},
 								},
-								ReadOnlyRootFilesystem: boolPtr(true),
-								RunAsNonRoot:           boolPtr(true),
-								RunAsUser:              int64Ptr(65532),
+								ReadOnlyRootFilesystem: boolPtr(false),
+								RunAsNonRoot:           boolPtr(false),
+								RunAsUser:              int64Ptr(0),
 							},
 							VolumeMounts: m.buildAgentVolumeMounts(hsmDevice),
 						},
