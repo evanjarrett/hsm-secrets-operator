@@ -52,8 +52,11 @@ make helm-sync                # Sync generated CRDs to Helm crds/ directory
 
 ### Docker Images
 ```bash
-# Manager image (full HSM libraries)
+# Production image (agent has PKCS#11 support, manager/discovery use mock clients)
 make docker-build IMG=hsm-secrets-operator:latest
+
+# Testing image (all binaries without CGO, uses mock clients only)
+make docker-build-testing IMG=hsm-secrets-operator:latest
 
 # Discovery image (native sysfs, distroless, no external dependencies)
 make docker-build-discovery DISCOVERY_IMG=hsm-discovery:latest
@@ -61,6 +64,24 @@ make docker-build-discovery DISCOVERY_IMG=hsm-discovery:latest
 # Build both manager and discovery images
 make docker-build-all
 ```
+
+### PKCS#11 Build Architecture
+
+The project uses conditional compilation to support both production HSM environments and testing/CI:
+
+**Production Build (`Dockerfile`):**
+- **Manager**: CGO disabled, uses MockClient by default
+- **Agent**: CGO enabled, includes real PKCS#11Client for HSM communication  
+- **Discovery**: CGO disabled, native sysfs scanning only
+
+**Testing Build (`Dockerfile.testing`):**
+- **All binaries**: CGO disabled, uses MockClient stubs for PKCS#11
+- **Benefits**: Faster builds, no C library dependencies, works in CI/testing
+
+**Key Files:**
+- `internal/hsm/pkcs11_client.go` - Real PKCS#11 implementation (requires CGO)
+- `internal/hsm/pkcs11_client_nocgo.go` - Stub implementation (CGO disabled)
+- Build tags automatically select the correct implementation
 
 ### CRD Management
 ```bash
@@ -125,22 +146,30 @@ A Kubernetes operator that bridges Pico HSM binary data storage with Kubernetes 
 
 ## Architecture
 
-### Binary Architecture (Manager/Discovery Split)
+### Three-Binary Architecture (Manager/Agent/Discovery Split)
 
-The operator uses a **dual-binary architecture** for optimal security and resource usage:
+The operator uses a **three-binary architecture** for optimal security, resource usage, and deployment flexibility:
 
 1. **Manager Binary** (`cmd/manager/main.go`)
    - Handles **HSMSecret CRDs** and secret synchronization
-   - Includes PKCS#11 HSM libraries and API server
+   - Uses **MockClient** by default (no PKCS#11 dependencies)
+   - Includes REST API server for secret management
    - Runs as regular deployment (unprivileged)
-   - Heavy image with full HSM library dependencies
+   - Lightweight image, no HSM library dependencies
 
-2. **Discovery Binary** (`cmd/discovery/main.go`) 
+2. **Agent Binary** (`cmd/agent/main.go`)
+   - Handles actual **HSM communication** via PKCS#11
+   - Uses **real PKCS#11Client** for production HSM devices
+   - Can fallback to **MockClient** for testing
+   - Deployed close to HSM hardware (DaemonSet pattern)
+   - Heavy image with full PKCS#11 library dependencies
+
+3. **Discovery Binary** (`cmd/discovery/main.go`) 
    - Handles **HSMDevice CRDs** and USB device discovery
    - **USB Detection Methods**:
      - **Native sysfs** (default): Reads `/sys/bus/usb/devices` directly like `lsusb` does internally
      - **Legacy sysfs**: Privileged scanning (backward compatibility only)
-   - **Ultra-lightweight**: Distroless image (~2MB, no external dependencies)
+   - **Ultra-lightweight**: No CGO, no external dependencies
    - **Security**: Runs non-privileged on Talos Linux with maximum hardening
 
 ### Controller Pattern
