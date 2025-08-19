@@ -5,7 +5,7 @@
    
 2. The operator is running with the following configuration:
    
-   🔧 Default HSM Client: {{ .Values.hsm.defaultClientType }}
+   🔧 Default HSM Client: {{ .Values.hsm.clientType }}
    
    {{- if .Values.discovery.enabled }}
    🔍 Device Discovery: Enabled (DaemonSet deployed)

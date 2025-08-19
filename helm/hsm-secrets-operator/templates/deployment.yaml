@@ -56,8 +56,8 @@ spec:
         - --health-probe-bind-address=:{{ .Values.health.port }}
         {{- end }}
         env:
-        - name: HSM_DEFAULT_CLIENT_TYPE
-          value: {{ .Values.hsm.defaultClientType | quote }}
+        - name: HSM_CLIENT_TYPE
+          value: {{ .Values.hsm.clientType | quote }}
         # PKCS#11 configuration is now per-device via HSMDevice CRDs
         # No global HSM configuration environment variables needed
         - name: DEFAULT_SYNC_INTERVAL

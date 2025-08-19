@@ -23,20 +23,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -97,6 +93,7 @@ func main() {
 		"Enable the REST API server for HSM secret management")
 	flag.IntVar(&apiPort, "api-port", 8090,
 		"Port for the REST API server")
+
 	opts := zap.Options{
 		Development: true,
 	}
@@ -218,8 +215,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize HSM client
-	hsmClient := hsm.NewMockClient() // Use mock client for now
+	// Initialize HSM client based on HSM_CLIENT_TYPE environment variable
+	clientType := os.Getenv("HSM_CLIENT_TYPE")
+	if clientType == "" {
+		clientType = "mock" // Default to mock if not specified
+	}
+
+	var hsmClient hsm.Client
+	switch clientType {
+	case "mock":
+		hsmClient = hsm.NewMockClient()
+		setupLog.Info("Using mock HSM client")
+	case "pkcs11":
+		hsmClient = hsm.NewPKCS11Client()
+		setupLog.Info("Using PKCS#11 HSM client")
+	default:
+		setupLog.Error(fmt.Errorf("invalid client type: %s", clientType), "supported types: mock, pkcs11")
+		os.Exit(1)
+	}
 	hsmConfig := hsm.DefaultConfig()
 	// TODO: Load HSM config from environment variables or config file
 
@@ -325,129 +338,9 @@ func main() {
 		}()
 	}
 
-	// Get current namespace
-	currentNamespace := getCurrentNamespace()
-
-	// Initialize HSMPool for all HSMDevices in this namespace before starting
-	if err := initializeHSMPool(mgr.GetClient(), currentNamespace); err != nil {
-		setupLog.Error(err, "failed to initialize HSMPool")
-		os.Exit(1)
-	}
-
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
-}
-
-// initializeHSMPool creates or updates the HSMPool for all HSMDevices in the given namespace
-func initializeHSMPool(k8sClient client.Client, namespace string) error {
-	ctx := context.Background()
-	log := ctrl.Log.WithName("pool-init")
-
-	// List all HSMDevice resources in the current namespace
-	var hsmDeviceList hsmv1alpha1.HSMDeviceList
-	if err := k8sClient.List(ctx, &hsmDeviceList, client.InNamespace(namespace)); err != nil {
-		return fmt.Errorf("failed to list HSMDevice resources: %w", err)
-	}
-
-	if len(hsmDeviceList.Items) == 0 {
-		log.Info("No HSMDevice resources found in namespace", "namespace", namespace)
-		return nil
-	}
-
-	// Collect all HSMDevice names
-	deviceRefs := make([]string, 0, len(hsmDeviceList.Items))
-	for _, device := range hsmDeviceList.Items {
-		deviceRefs = append(deviceRefs, device.Name)
-	}
-
-	log.Info("Found HSMDevice resources", "devices", deviceRefs, "namespace", namespace)
-
-	// Create or update the HSMPool for this namespace
-	poolName := "hsm-pool" // Fixed name per namespace
-	pool := &hsmv1alpha1.HSMPool{}
-
-	err := k8sClient.Get(ctx, client.ObjectKey{
-		Name:      poolName,
-		Namespace: namespace,
-	}, pool)
-
-	if apierrors.IsNotFound(err) {
-		// Create new HSMPool
-		pool = &hsmv1alpha1.HSMPool{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      poolName,
-				Namespace: namespace,
-				Labels: map[string]string{
-					"app.kubernetes.io/name":      "hsm-secrets-operator",
-					"app.kubernetes.io/component": "pool",
-				},
-			},
-			Spec: hsmv1alpha1.HSMPoolSpec{
-				HSMDeviceRefs: deviceRefs,
-				GracePeriod:   &metav1.Duration{Duration: 5 * time.Minute},
-			},
-		}
-
-		if err := k8sClient.Create(ctx, pool); err != nil {
-			return fmt.Errorf("failed to create HSMPool: %w", err)
-		}
-
-		log.Info("Created HSMPool", "pool", poolName, "devices", deviceRefs)
-	} else if err != nil {
-		return fmt.Errorf("failed to get HSMPool: %w", err)
-	} else {
-		// Update existing pool if device references have changed
-		if !equalStringSlices(pool.Spec.HSMDeviceRefs, deviceRefs) {
-			pool.Spec.HSMDeviceRefs = deviceRefs
-			if err := k8sClient.Update(ctx, pool); err != nil {
-				return fmt.Errorf("failed to update HSMPool: %w", err)
-			}
-			log.Info("Updated HSMPool", "pool", poolName, "devices", deviceRefs)
-		} else {
-			log.Info("HSMPool already exists and is up to date", "pool", poolName)
-		}
-	}
-
-	return nil
-}
-
-// equalStringSlices compares two string slices for equality
-func equalStringSlices(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-
-	// Create maps for comparison
-	aMap := make(map[string]bool)
-	for _, v := range a {
-		aMap[v] = true
-	}
-
-	for _, v := range b {
-		if !aMap[v] {
-			return false
-		}
-	}
-
-	return true
-}
-
-// getCurrentNamespace returns the current namespace where the manager is running
-func getCurrentNamespace() string {
-	// First try to get from environment variable (set by Kubernetes)
-	if namespace := os.Getenv("POD_NAMESPACE"); namespace != "" {
-		return namespace
-	}
-
-	// Try to read from service account namespace file
-	const namespacePath = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
-	if data, err := os.ReadFile(namespacePath); err == nil {
-		return string(data)
-	}
-
-	// Fallback to default namespace
-	return "default"
 }

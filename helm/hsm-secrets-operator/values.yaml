@@ -86,7 +86,7 @@ affinity: {}
 hsm:
   # Default HSM client type: "mock" for testing, "pkcs11" for production
   # Individual HSMDevice resources can override this
-  defaultClientType: "mock"
+  clientType: "mock"
 
 # Device discovery configuration
 discovery:
