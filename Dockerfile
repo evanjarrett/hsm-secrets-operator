@@ -19,13 +19,14 @@ RUN apk add --no-cache \
   automake \
   libtool
 
-WORKDIR /workspace
-
 # Build sc-hsm-embedded library
 RUN cd / && git clone https://github.com/CardContact/sc-hsm-embedded.git 
 WORKDIR /sc-hsm-embedded
 RUN autoreconf -fi && ./configure
 RUN make && make install
+
+# Return to workspace for Go builds
+WORKDIR /workspace
 
 # Copy the Go Modules manifests
 COPY go.mod go.mod
