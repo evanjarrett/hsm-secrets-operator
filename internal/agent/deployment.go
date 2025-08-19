@@ -66,10 +66,8 @@ func NewManager(k8sClient client.Client, agentImage, namespace string) *Manager 
 		AgentNamespace: namespace,
 	}
 
-	// If no namespace provided, we'll detect it on first use
-	if namespace == "" {
-		m.AgentNamespace = m.getCurrentNamespace()
-	}
+	// If no namespace provided, agents will be deployed in the same namespace as their HSMDevice
+	// AgentNamespace is only used as a fallback now
 
 	return m
 }
@@ -78,16 +76,19 @@ func NewManager(k8sClient client.Client, agentImage, namespace string) *Manager 
 func (m *Manager) EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, hsmSecret *hsmv1alpha1.HSMSecret) (string, error) {
 	agentName := m.generateAgentName(hsmDevice)
 
+	// Deploy agent in the same namespace as the HSMDevice
+	agentNamespace := hsmDevice.Namespace
+
 	// Check if deployment exists
 	var deployment appsv1.Deployment
 	err := m.Get(ctx, types.NamespacedName{
 		Name:      agentName,
-		Namespace: m.AgentNamespace,
+		Namespace: agentNamespace,
 	}, &deployment)
 
 	if err == nil {
 		// Agent exists, ensure it's running and return endpoint
-		return m.getAgentEndpoint(agentName), nil
+		return m.getAgentEndpoint(agentName, agentNamespace), nil
 	}
 
 	if !errors.IsNotFound(err) {
@@ -95,16 +96,16 @@ func (m *Manager) EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDev
 	}
 
 	// Create agent deployment
-	if err := m.createAgentDeployment(ctx, hsmDevice, hsmSecret); err != nil {
+	if err := m.createAgentDeployment(ctx, hsmDevice, hsmSecret, agentNamespace); err != nil {
 		return "", fmt.Errorf("failed to create agent deployment: %w", err)
 	}
 
 	// Create agent service
-	if err := m.createAgentService(ctx, hsmDevice); err != nil {
+	if err := m.createAgentService(ctx, hsmDevice, agentNamespace); err != nil {
 		return "", fmt.Errorf("failed to create agent service: %w", err)
 	}
 
-	return m.getAgentEndpoint(agentName), nil
+	return m.getAgentEndpoint(agentName, agentNamespace), nil
 }
 
 // CleanupAgent removes the HSM agent for the given device when no longer needed
@@ -134,7 +135,7 @@ func (m *Manager) CleanupAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDe
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      agentName,
-			Namespace: m.AgentNamespace,
+			Namespace: hsmDevice.Namespace,
 		},
 	}
 	if err := m.Delete(ctx, service); err != nil && !errors.IsNotFound(err) {
@@ -145,7 +146,7 @@ func (m *Manager) CleanupAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDe
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      agentName,
-			Namespace: m.AgentNamespace,
+			Namespace: hsmDevice.Namespace,
 		},
 	}
 	if err := m.Delete(ctx, deployment); err != nil && !errors.IsNotFound(err) {
@@ -161,12 +162,12 @@ func (m *Manager) generateAgentName(hsmDevice *hsmv1alpha1.HSMDevice) string {
 }
 
 // getAgentEndpoint returns the HTTP endpoint for the agent
-func (m *Manager) getAgentEndpoint(agentName string) string {
-	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", agentName, m.AgentNamespace, AgentPort)
+func (m *Manager) getAgentEndpoint(agentName, namespace string) string {
+	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", agentName, namespace, AgentPort)
 }
 
 // createAgentDeployment creates the HSM agent deployment
-func (m *Manager) createAgentDeployment(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, hsmSecret *hsmv1alpha1.HSMSecret) error {
+func (m *Manager) createAgentDeployment(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, hsmSecret *hsmv1alpha1.HSMSecret, namespace string) error {
 	agentName := m.generateAgentName(hsmDevice)
 
 	// Find the node where the HSM device is located
@@ -178,7 +179,7 @@ func (m *Manager) createAgentDeployment(ctx context.Context, hsmDevice *hsmv1alp
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      agentName,
-			Namespace: m.AgentNamespace,
+			Namespace: namespace,
 			Labels: map[string]string{
 				"app":                         agentName,
 				"app.kubernetes.io/component": "hsm-agent",
@@ -323,13 +324,13 @@ func (m *Manager) createAgentDeployment(ctx context.Context, hsmDevice *hsmv1alp
 }
 
 // createAgentService creates the service for the HSM agent
-func (m *Manager) createAgentService(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice) error {
+func (m *Manager) createAgentService(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, namespace string) error {
 	agentName := m.generateAgentName(hsmDevice)
 
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      agentName,
-			Namespace: m.AgentNamespace,
+			Namespace: namespace,
 			Labels: map[string]string{
 				"app":                         agentName,
 				"app.kubernetes.io/component": "hsm-agent",
@@ -520,25 +521,4 @@ func hostPathTypePtr(t corev1.HostPathType) *corev1.HostPathType {
 func resourceQuantity(s string) resource.Quantity {
 	q, _ := resource.ParseQuantity(s)
 	return q
-}
-
-// getCurrentNamespace detects the namespace where the controller-manager is deployed
-func (m *Manager) getCurrentNamespace() string {
-	ctx := context.Background()
-
-	// Find the controller-manager deployment to determine our namespace
-	var deployments appsv1.DeploymentList
-	err := m.List(ctx, &deployments, client.MatchingLabels{
-		"control-plane": "controller-manager",
-	})
-
-	if err == nil {
-		for _, deployment := range deployments.Items {
-			// Found our controller-manager deployment
-			return deployment.Namespace
-		}
-	}
-
-	// Fallback: use default namespace
-	return "hsm-secrets-operator-system"
 }
