@@ -6,6 +6,7 @@ require (
 	github.com/gin-gonic/gin v1.10.1
 	github.com/go-logr/logr v1.4.2
 	github.com/go-playground/validator/v10 v10.27.0
+	github.com/miekg/pkcs11 v1.1.1
 	github.com/onsi/ginkgo/v2 v2.22.0
 	github.com/onsi/gomega v1.36.1
 	google.golang.org/grpc v1.68.1

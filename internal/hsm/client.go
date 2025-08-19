@@ -73,6 +73,9 @@ type Config struct {
 	// SlotID is the HSM slot identifier
 	SlotID uint
 
+	// UseSlotID indicates whether SlotID should be used (vs auto-discovery)
+	UseSlotID bool
+
 	// PIN is the user PIN for authentication
 	PIN string
 
