@@ -59,15 +59,19 @@ func NewManager(k8sClient client.Client, agentImage, namespace string) *Manager 
 	if agentImage == "" {
 		agentImage = AgentImage
 	}
-	if namespace == "" {
-		namespace = "hsm-secrets-operator-system"
-	}
-
-	return &Manager{
+	
+	m := &Manager{
 		Client:         k8sClient,
 		AgentImage:     agentImage,
 		AgentNamespace: namespace,
 	}
+	
+	// If no namespace provided, we'll detect it on first use
+	if namespace == "" {
+		m.AgentNamespace = m.getCurrentNamespace()
+	}
+	
+	return m
 }
 
 // EnsureAgent ensures an HSM agent pod exists for the given HSM device
@@ -516,4 +520,25 @@ func hostPathTypePtr(t corev1.HostPathType) *corev1.HostPathType {
 func resourceQuantity(s string) resource.Quantity {
 	q, _ := resource.ParseQuantity(s)
 	return q
+}
+
+// getCurrentNamespace detects the namespace where the controller-manager is deployed
+func (m *Manager) getCurrentNamespace() string {
+	ctx := context.Background()
+	
+	// Find the controller-manager deployment to determine our namespace
+	var deployments appsv1.DeploymentList
+	err := m.List(ctx, &deployments, client.MatchingLabels{
+		"control-plane": "controller-manager",
+	})
+	
+	if err == nil {
+		for _, deployment := range deployments.Items {
+			// Found our controller-manager deployment
+			return deployment.Namespace
+		}
+	}
+	
+	// Fallback: use default namespace
+	return "hsm-secrets-operator-system"
 }

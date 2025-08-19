@@ -1,18 +1,67 @@
 # hsm-secrets-operator
-// TODO(user): Add simple overview of use/purpose
+
+A Kubernetes operator that bridges Hardware Security Module (HSM) data storage with Kubernetes Secrets, providing true secret portability through hardware-based security.
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+
+The HSM Secrets Operator implements a controller pattern that maintains bidirectional synchronization between HSM binary data files and Kubernetes Secret objects. It uses a dual-binary architecture with automatic USB device discovery and dynamic agent deployment to provide secure, hardware-backed secret management in Kubernetes environments.
+
+### Key Features
+
+- **Hardware Security**: Leverages Pico HSM and other PKCS#11 compatible devices for tamper-resistant secret storage
+- **Bidirectional Sync**: Automatic synchronization between HSM storage and Kubernetes Secrets
+- **Device Discovery**: Automatic USB HSM device detection with support for multiple device types
+- **Agent Architecture**: Dynamic deployment of HSM agent pods with node affinity for direct hardware access
+- **Unified API**: Single REST API endpoint that routes operations to appropriate HSM agents
+- **Secret Portability**: Move secrets between clusters by carrying the HSM device
+- **Multi-Device Support**: Support for Pico HSM, SmartCard-HSM, YubiKey HSM, and custom devices
+
+### Architecture
+
+The operator consists of three main components:
+
+1. **Manager**: Orchestrates HSMSecret resources, deploys agents, and provides unified API proxy
+2. **Discovery**: DaemonSet that discovers USB HSM devices on cluster nodes
+3. **Agent**: Dynamically deployed pods that handle direct HSM communication on nodes with devices
+
+This architecture ensures that HSM operations only occur on nodes with physical device access while providing a centralized management interface.
 
 ## Getting Started
 
 ### Prerequisites
-- go version v1.24.0+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
+- Kubernetes v1.20+ cluster
+- Go 1.24+ (for building from source)
+- Docker 17.03+ (for building images)
+- kubectl with cluster-admin privileges
+- HSM device (Pico HSM, SmartCard-HSM, YubiKey HSM, or compatible PKCS#11 device)
 
-### To Deploy on the cluster
+### Deployment Options
+
+#### Option 1: Using Helm (Recommended)
+
+1. **Deploy with Helm:**
+```bash
+# Install from local chart
+helm install hsm-secrets-operator helm/hsm-secrets-operator \
+  --namespace hsm-secrets-operator-system \
+  --create-namespace
+```
+
+2. **Configure HSM Devices:**
+```bash
+# Apply HSMDevice configuration for your HSM type
+kubectl apply -f config/samples/hsm_v1alpha1_hsmdevice.yaml
+```
+
+3. **Create HSM Secrets:**
+```bash
+# Create HSMSecret resources to sync with Kubernetes Secrets
+kubectl apply -f config/samples/hsm_v1alpha1_hsmsecret.yaml
+```
+
+#### Option 2: Manual Deployment
+
+1. **Build and deploy images:**
 **Build and push your image to the location specified by `IMG`:**
 
 ```sh
@@ -47,23 +96,44 @@ kubectl apply -k config/samples/
 
 >**NOTE**: Ensure that the samples has default values to test it out.
 
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
+### Quick Start with API
 
-```sh
+Once deployed, the operator provides a unified API endpoint:
+
+```bash
+# Port forward to access the API
+kubectl port-forward -n hsm-secrets-operator-system svc/hsm-secrets-operator-api 8090:8090
+
+# Check API health
+curl http://localhost:8090/api/v1/health
+
+# List secrets
+curl http://localhost:8090/api/v1/hsm/secrets
+
+# Check discovered HSM devices
+kubectl get hsmdevices
+
+# Check agent pods (deployed automatically when devices are ready)
+kubectl get pods -l app=hsm-agent
+```
+
+### Uninstallation
+
+#### Using Helm:
+```bash
+helm uninstall hsm-secrets-operator -n hsm-secrets-operator-system
+```
+
+#### Manual cleanup:
+```bash
+# Delete sample resources
 kubectl delete -k config/samples/
-```
 
-**Delete the APIs(CRDs) from the cluster:**
-
-```sh
-make uninstall
-```
-
-**UnDeploy the controller from the cluster:**
-
-```sh
+# Delete operator
 make undeploy
+
+# Delete CRDs (optional - will remove all HSMSecret/HSMDevice resources)
+make uninstall
 ```
 
 ## Project Distribution
@@ -111,7 +181,48 @@ previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml
 is manually re-applied afterwards.
 
 ## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
+
+We welcome contributions! The HSM Secrets Operator follows standard Kubernetes operator development practices.
+
+### Development Setup
+
+1. **Clone and setup:**
+```bash
+git clone <repository-url>
+cd hsm-secrets-operator
+```
+
+2. **Run quality checks:**
+```bash
+# Format, vet, and lint code (REQUIRED before committing)
+make quality
+
+# Run tests
+make test
+```
+
+3. **Local development:**
+```bash
+# Generate manifests after CRD changes
+make manifests
+
+# Build binaries
+make build
+```
+
+### Code Quality Requirements
+
+**⚠️ CRITICAL: Always run before committing:**
+```bash
+make quality  # Runs format + vet + lint
+```
+
+### Architecture Notes
+
+- **Manager**: Handles HSMSecret CRDs and agent deployment
+- **Discovery**: DaemonSet for USB device discovery
+- **Agent**: Dynamic pods for direct HSM communication
+- **API**: Unified proxy that routes to agent pods
 
 **NOTE:** Run `make help` for more information on all potential `make` targets
 
@@ -132,11 +243,3 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-
-
-
-
-
-pkcs11-tool --module "/usr/local/lib/libsc-hsm-pkcs11.so" --token-label "Pico-HSM" --pin $BAO_HSM_PIN --keygen --key-type aes:32 --label "bao-root-key-aes" --id "02"
-
-pkcs11-tool --module "/usr/local/lib/libsc-hsm-pkcs11.so"  --token-label "Pico-HSM"  --list-mechanisms
