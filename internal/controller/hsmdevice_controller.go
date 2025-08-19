@@ -122,10 +122,21 @@ func (r *HSMDeviceReconciler) reconcileDeviceDiscovery(ctx context.Context, hsmD
 
 	logger.Info("Device discovery completed", "foundDevices", len(discoveredDevices))
 
-	// Update status with discovered devices - phase will be calculated in updateStatus based on merged devices
-	result, err := r.updateStatus(ctx, hsmDevice, hsmv1alpha1.HSMDevicePhaseReady, discoveredDevices, "")
-	if err != nil {
-		return result, err
+	// Only update status if we found devices OR if this node previously had devices that are now gone
+	shouldUpdate := len(discoveredDevices) > 0 || r.hadDevicesOnThisNode(hsmDevice)
+
+	var result ctrl.Result
+
+	if shouldUpdate {
+		// Update status with discovered devices - phase will be calculated in updateStatus based on merged devices
+		result, err = r.updateStatus(ctx, hsmDevice, hsmv1alpha1.HSMDevicePhaseReady, discoveredDevices, "")
+		if err != nil {
+			return result, err
+		}
+	} else {
+		// No devices found and none expected - just requeue for next discovery cycle
+		logger.V(1).Info("No devices found on this node, skipping status update")
+		result = ctrl.Result{RequeueAfter: RetryDiscoveryInterval}
 	}
 
 	// Handle device mirroring if configured
@@ -314,6 +325,20 @@ func (r *HSMDeviceReconciler) getNodeName() string {
 	}
 
 	return "unknown"
+}
+
+// hadDevicesOnThisNode checks if this node previously had devices for this HSMDevice
+func (r *HSMDeviceReconciler) hadDevicesOnThisNode(hsmDevice *hsmv1alpha1.HSMDevice) bool {
+	currentNodeName := r.getNodeName()
+
+	// Check if any existing discovered devices are from this node
+	for _, device := range hsmDevice.Status.DiscoveredDevices {
+		if device.NodeName == currentNodeName {
+			return true
+		}
+	}
+
+	return false
 }
 
 // updateStatus updates the HSMDevice status
