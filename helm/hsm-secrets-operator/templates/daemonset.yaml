@@ -58,6 +58,10 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
         # Discovery configuration is now per-device via HSMDevice CRDs
         # No global discovery environment variables needed
         resources:
