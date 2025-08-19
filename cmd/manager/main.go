@@ -246,7 +246,7 @@ func main() {
 	if agentImage == "" {
 		agentImage = "hsm-secrets-operator:latest" // Default to same image as manager
 	}
-	
+
 	// Agent manager will detect the current namespace automatically
 	agentManager := agent.NewManager(mgr.GetClient(), agentImage, "")
 
