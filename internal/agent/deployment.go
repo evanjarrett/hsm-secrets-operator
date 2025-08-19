@@ -238,7 +238,7 @@ func (m *Manager) createAgentDeployment(ctx context.Context, hsmDevice *hsmv1alp
 							Type: corev1.SeccompProfileTypeRuntimeDefault,
 						},
 					},
-					ServiceAccountName: "hsm-secrets-operator-controller-manager",
+					ServiceAccountName: "hsm-secrets-operator",
 					Containers: []corev1.Container{
 						{
 							Name:  "agent",
