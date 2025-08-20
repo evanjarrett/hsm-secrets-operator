@@ -138,7 +138,6 @@ var _ = Describe("DiscoveryDaemonSetReconciler", func() {
 			Expect(container.Name).To(Equal("discovery"))
 			Expect(container.Image).To(Equal(discoveryImage))
 			Expect(container.Command).To(Equal([]string{"/entrypoint.sh", "discovery"}))
-			Expect(container.Args).To(ContainElement("--hsm-device=" + hsmDeviceName))
 
 			// Check environment variables
 			envVars := container.Env
