@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -44,6 +45,8 @@ type DiscoveryDaemonSetReconciler struct {
 
 // +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups=hsm.j5t.io,resources=hsmpools,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=hsm.j5t.io,resources=hsmpools/status,verbs=get;update;patch
 
 func (r *DiscoveryDaemonSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -59,8 +62,100 @@ func (r *DiscoveryDaemonSetReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, err
 	}
 
+	// Ensure HSMPool exists for this HSMDevice
+	if err := r.ensureHSMPool(ctx, &hsmDevice); err != nil {
+		logger.Error(err, "Failed to ensure HSMPool for HSMDevice")
+		return ctrl.Result{}, err
+	}
+
 	// Create or update discovery DaemonSet for this HSMDevice
 	return r.ensureDiscoveryDaemonSet(ctx, &hsmDevice)
+}
+
+// ensureHSMPool creates or updates the HSMPool for an HSMDevice
+func (r *DiscoveryDaemonSetReconciler) ensureHSMPool(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice) error {
+	logger := log.FromContext(ctx)
+
+	poolName := fmt.Sprintf("%s-pool", hsmDevice.Name)
+
+	// Define the desired HSMPool
+	desired := &hsmv1alpha1.HSMPool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      poolName,
+			Namespace: hsmDevice.Namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":      "hsm-secrets-operator",
+				"app.kubernetes.io/component": "pool",
+				"hsm.j5t.io/device":           hsmDevice.Name,
+			},
+		},
+		Spec: hsmv1alpha1.HSMPoolSpec{
+			HSMDeviceRefs: []string{hsmDevice.Name},
+			GracePeriod:   &metav1.Duration{Duration: 5 * time.Minute}, // Default grace period
+		},
+	}
+
+	// Set the HSMDevice as the owner of the HSMPool
+	if err := controllerutil.SetControllerReference(hsmDevice, desired, r.Scheme); err != nil {
+		return fmt.Errorf("failed to set controller reference on HSMPool: %w", err)
+	}
+
+	// Check if HSMPool already exists
+	existing := &hsmv1alpha1.HSMPool{}
+	err := r.Get(ctx, types.NamespacedName{Name: poolName, Namespace: hsmDevice.Namespace}, existing)
+
+	if errors.IsNotFound(err) {
+		// Create new HSMPool
+		logger.Info("Creating HSMPool for HSMDevice", "device", hsmDevice.Name, "pool", poolName)
+		if err := r.Create(ctx, desired); err != nil {
+			return fmt.Errorf("failed to create HSMPool: %w", err)
+		}
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("failed to get HSMPool: %w", err)
+	}
+
+	// Update existing HSMPool if needed
+	needsUpdate := false
+
+	// Check if device reference needs updating
+	found := false
+	for _, deviceRef := range existing.Spec.HSMDeviceRefs {
+		if deviceRef == hsmDevice.Name {
+			found = true
+			break
+		}
+	}
+	if !found {
+		existing.Spec.HSMDeviceRefs = append(existing.Spec.HSMDeviceRefs, hsmDevice.Name)
+		needsUpdate = true
+	}
+
+	// Update grace period if it's nil
+	if existing.Spec.GracePeriod == nil {
+		existing.Spec.GracePeriod = &metav1.Duration{Duration: 5 * time.Minute}
+		needsUpdate = true
+	}
+
+	// Update labels if needed
+	if existing.Labels == nil {
+		existing.Labels = make(map[string]string)
+	}
+	for k, v := range desired.Labels {
+		if existing.Labels[k] != v {
+			existing.Labels[k] = v
+			needsUpdate = true
+		}
+	}
+
+	if needsUpdate {
+		logger.Info("Updating HSMPool for HSMDevice", "device", hsmDevice.Name, "pool", poolName)
+		if err := r.Update(ctx, existing); err != nil {
+			return fmt.Errorf("failed to update HSMPool: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // ensureDiscoveryDaemonSet creates or updates the discovery DaemonSet for an HSMDevice
@@ -313,6 +408,7 @@ func (r *DiscoveryDaemonSetReconciler) SetupWithManager(mgr ctrl.Manager) error 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&hsmv1alpha1.HSMDevice{}).
 		Owns(&appsv1.DaemonSet{}).
+		Owns(&hsmv1alpha1.HSMPool{}).
 		Named("discovery-daemonset").
 		Complete(r)
 }
