@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -28,8 +29,10 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"github.com/go-logr/logr"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -232,6 +235,12 @@ func (d *DiscoveryAgent) processHSMDevice(ctx context.Context, hsmDevice *hsmv1a
 		"node", d.nodeName,
 		"devicesFound", len(discoveredDevices))
 
+	// Update pod annotation with discovery results
+	if err := d.updatePodAnnotation(ctx, hsmDevice.Name, discoveredDevices); err != nil {
+		d.logger.Error(err, "Failed to update pod annotation", "device", hsmDevice.Name)
+		return err
+	}
+
 	return nil
 }
 
@@ -369,4 +378,58 @@ func (d *DiscoveryAgent) shouldDiscoverOnNode(hsmDevice *hsmv1alpha1.HSMDevice) 
 	}
 
 	return false
+}
+
+// updatePodAnnotation updates the pod's annotation with discovery results
+func (d *DiscoveryAgent) updatePodAnnotation(
+	ctx context.Context, hsmDeviceName string, discoveredDevices []hsmv1alpha1.DiscoveredDevice,
+) error {
+	// Create discovery report
+	report := PodDiscoveryReport{
+		HSMDeviceName:     hsmDeviceName,
+		ReportingNode:     d.nodeName,
+		DiscoveredDevices: discoveredDevices,
+		LastReportTime:    metav1.Now(),
+		DiscoveryStatus:   "completed",
+	}
+
+	// Marshal report to JSON
+	reportJSON, err := json.Marshal(report)
+	if err != nil {
+		return fmt.Errorf("failed to marshal discovery report: %w", err)
+	}
+
+	// Get the current pod
+	pod := &corev1.Pod{}
+	podKey := types.NamespacedName{
+		Name:      d.podName,
+		Namespace: d.podNamespace,
+	}
+
+	if err := d.client.Get(ctx, podKey, pod); err != nil {
+		return fmt.Errorf("failed to get pod %s/%s: %w", d.podNamespace, d.podName, err)
+	}
+
+	// Create a copy for patching
+	podCopy := pod.DeepCopy()
+
+	// Initialize annotations if nil
+	if podCopy.Annotations == nil {
+		podCopy.Annotations = make(map[string]string)
+	}
+
+	// Update the annotation
+	podCopy.Annotations[DeviceReportAnnotation] = string(reportJSON)
+
+	// Patch the pod
+	if err := d.client.Patch(ctx, podCopy, client.MergeFrom(pod)); err != nil {
+		return fmt.Errorf("failed to update pod annotation: %w", err)
+	}
+
+	d.logger.V(1).Info("Updated pod annotation with discovery report",
+		"device", hsmDeviceName,
+		"devicesFound", len(discoveredDevices),
+		"pod", d.podName)
+
+	return nil
 }

@@ -96,7 +96,7 @@ func (r *HSMPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	// Find discovery pods and their annotations
-	podReports, expectedPods, err := r.collectPodReports(ctx, hsmDevices)
+	podReports, aggregatedDevices, expectedPods, err := r.collectPodReports(ctx, hsmDevices)
 	if err != nil {
 		logger.Error(err, "Failed to collect pod reports")
 		return r.updatePoolStatus(ctx, &hsmPool, hsmv1alpha1.HSMPoolPhaseError, nil, nil, expectedPods, err.Error())
@@ -105,16 +105,15 @@ func (r *HSMPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	// Aggregate devices from all pod reports
 	phase := r.aggregateDevices(podReports, expectedPods)
 
-	// Update pool status (TODO: implement device aggregation when needed)
-	var aggregatedDevices []hsmv1alpha1.DiscoveredDevice
 	return r.updatePoolStatus(ctx, &hsmPool, phase, aggregatedDevices, podReports, expectedPods, "")
 }
 
 // collectPodReports finds discovery DaemonSet pods owned by HSMDevices and queries their status
-func (r *HSMPoolReconciler) collectPodReports(ctx context.Context, hsmDevices []*hsmv1alpha1.HSMDevice) ([]hsmv1alpha1.PodReport, int32, error) {
+func (r *HSMPoolReconciler) collectPodReports(ctx context.Context, hsmDevices []*hsmv1alpha1.HSMDevice) ([]hsmv1alpha1.PodReport, []hsmv1alpha1.DiscoveredDevice, int32, error) {
 	logger := log.FromContext(ctx)
 
 	podReports := make([]hsmv1alpha1.PodReport, 0)
+	var allDevices []hsmv1alpha1.DiscoveredDevice
 	totalExpectedPods := int32(0)
 
 	// For each HSMDevice referenced by this pool, find its DaemonSet and pods
@@ -149,10 +148,10 @@ func (r *HSMPoolReconciler) collectPodReports(ctx context.Context, hsmDevices []
 		}
 
 		if err := r.List(ctx, pods, listOpts); err != nil {
-			return nil, totalExpectedPods, fmt.Errorf("failed to list DaemonSet pods for device %s: %w", hsmDevice.Name, err)
+			return nil, nil, totalExpectedPods, fmt.Errorf("failed to list DaemonSet pods for device %s: %w", hsmDevice.Name, err)
 		}
 
-		// Create pod reports from pod status (simplified - no annotation parsing needed)
+		// Create pod reports from pod annotations
 		for _, pod := range pods.Items {
 			podReport := hsmv1alpha1.PodReport{
 				PodName:         pod.Name,
@@ -162,19 +161,33 @@ func (r *HSMPoolReconciler) collectPodReports(ctx context.Context, hsmDevices []
 				Fresh:           r.isPodFresh(&pod),
 			}
 
-			// For now, assume 1 device found per pod if pod is ready
-			// TODO: In the future, discovery pods could report via status or configmap
-			if pod.Status.Phase == corev1.PodRunning {
-				podReport.DevicesFound = 1
-			} else {
-				podReport.DevicesFound = 0
+			podReport.DevicesFound = 0
+			// Parse device count from pod annotation if available
+			if devicesFound, status, reportTime := r.parseDeviceReportAnnotation(&pod); devicesFound >= 0 {
+				podReport.DevicesFound = devicesFound
+				if status != "" {
+					podReport.DiscoveryStatus = status
+				}
+				if !reportTime.IsZero() {
+					podReport.LastReportTime = reportTime
+				}
+
+				// Also collect the actual discovered devices from annotation
+				if pod.Annotations != nil {
+					if reportJSON, exists := pod.Annotations[deviceReportAnnotation]; exists {
+						var discoveryReport PodDiscoveryReport
+						if err := json.Unmarshal([]byte(reportJSON), &discoveryReport); err == nil {
+							allDevices = append(allDevices, discoveryReport.DiscoveredDevices...)
+						}
+					}
+				}
 			}
 
 			podReports = append(podReports, podReport)
 		}
 	}
 
-	return podReports, totalExpectedPods, nil
+	return podReports, allDevices, totalExpectedPods, nil
 }
 
 // getPodDiscoveryStatus determines the discovery status based on pod phase and conditions
@@ -201,6 +214,27 @@ func (r *HSMPoolReconciler) isPodFresh(pod *corev1.Pod) bool {
 	// For now, consider all running pods as fresh
 	// TODO: Could check pod start time or last transition time
 	return true
+}
+
+// parseDeviceReportAnnotation parses the device discovery report from pod annotation
+// Returns (devicesFound, discoveryStatus, lastReportTime) or (-1, "", time.Time{}) if not found/invalid
+func (r *HSMPoolReconciler) parseDeviceReportAnnotation(pod *corev1.Pod) (int32, string, metav1.Time) {
+	if pod.Annotations == nil {
+		return -1, "", metav1.Time{}
+	}
+
+	reportJSON, exists := pod.Annotations[deviceReportAnnotation]
+	if !exists {
+		return -1, "", metav1.Time{}
+	}
+
+	var report PodDiscoveryReport
+	if err := json.Unmarshal([]byte(reportJSON), &report); err != nil {
+		// Log error but don't fail - return fallback values
+		return -1, "", metav1.Time{}
+	}
+
+	return int32(len(report.DiscoveredDevices)), report.DiscoveryStatus, report.LastReportTime
 }
 
 // aggregateDevices determines the pool phase based on pod reports

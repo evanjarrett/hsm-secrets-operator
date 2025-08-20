@@ -266,7 +266,7 @@ var _ = Describe("HSMPoolReconciler with Manager-Owned DaemonSets", func() {
 			Expect(runningReport).NotTo(BeNil())
 			Expect(runningReport.NodeName).To(Equal("node-1"))
 			Expect(runningReport.DiscoveryStatus).To(Equal("completed"))
-			Expect(runningReport.DevicesFound).To(Equal(int32(1))) // Running pod reports 1 device
+			Expect(runningReport.DevicesFound).To(Equal(int32(0))) // Running pod without annotation reports 0 devices
 			Expect(runningReport.Fresh).To(BeTrue())
 
 			Expect(pendingReport).NotTo(BeNil())
@@ -460,6 +460,114 @@ var _ = Describe("HSMPoolReconciler with Manager-Owned DaemonSets", func() {
 				}, pool)
 				return pool.Status.ExpectedPods
 			}).Should(Equal(int32(3))) // 2 from first DaemonSet + 1 from second DaemonSet
+		})
+
+		It("Should read device count from pod annotations when available", func() {
+			By("Creating a discovery pod with annotation-based device report")
+			podWithAnnotation := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("%s-annotated-pod", hsmDeviceName),
+					Namespace: hsmPoolNamespace,
+					Labels: map[string]string{
+						"app.kubernetes.io/name":      "hsm-secrets-operator",
+						"app.kubernetes.io/component": "discovery",
+						"hsm.j5t.io/device":           hsmDeviceName,
+					},
+					Annotations: map[string]string{
+						"hsm.j5t.io/device-report": `{
+							"hsmDeviceName": "` + hsmDeviceName + `",
+							"reportingNode": "node-1",
+							"discoveredDevices": [
+								{
+									"devicePath": "/dev/bus/usb/001/015",
+									"serialNumber": "DC6A33145E23A42A",
+									"nodeName": "node-1",
+									"lastSeen": "2025-08-19T10:00:00Z",
+									"available": true
+								},
+								{
+									"devicePath": "/dev/bus/usb/001/016",
+									"serialNumber": "DC6A33145E23A42B",
+									"nodeName": "node-1",
+									"lastSeen": "2025-08-19T10:00:00Z",
+									"available": true
+								}
+							],
+							"lastReportTime": "2025-08-19T10:00:00Z",
+							"discoveryStatus": "completed"
+						}`,
+					},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: "node-1",
+					Containers: []corev1.Container{
+						{
+							Name:  "discovery",
+							Image: "test-discovery:latest",
+						},
+					},
+				},
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+				},
+			}
+			Expect(k8sClient.Create(ctx, podWithAnnotation)).To(Succeed())
+
+			// Update pod status separately (status is not created with the resource)
+			podWithAnnotation.Status = corev1.PodStatus{
+				Phase: corev1.PodRunning,
+			}
+			Expect(k8sClient.Status().Update(ctx, podWithAnnotation)).To(Succeed())
+
+			By("Reconciling the HSMPool")
+			reconciler := &HSMPoolReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      hsmPoolName,
+					Namespace: hsmPoolNamespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Checking that HSMPool reads device count from annotation")
+			pool := &hsmv1alpha1.HSMPool{}
+			Eventually(func() bool {
+				_ = k8sClient.Get(ctx, types.NamespacedName{
+					Name:      hsmPoolName,
+					Namespace: hsmPoolNamespace,
+				}, pool)
+
+				// Find the pod with annotation
+				for _, report := range pool.Status.ReportingPods {
+					if report.PodName == podWithAnnotation.Name {
+						return report.DevicesFound == 2 // Should read 2 devices from annotation
+					}
+				}
+				return false
+			}).Should(BeTrue())
+
+			// Verify the specific report details
+			var annotatedReport *hsmv1alpha1.PodReport
+			for i := range pool.Status.ReportingPods {
+				report := &pool.Status.ReportingPods[i]
+				if report.PodName == podWithAnnotation.Name {
+					annotatedReport = report
+					break
+				}
+			}
+
+			Expect(annotatedReport).NotTo(BeNil())
+			Expect(annotatedReport.DevicesFound).To(Equal(int32(2)))       // 2 devices from annotation
+			Expect(annotatedReport.DiscoveryStatus).To(Equal("completed")) // Status from annotation
+			Expect(annotatedReport.NodeName).To(Equal("node-1"))
+
+			// Verify that TotalDevices and AvailableDevices are correctly aggregated
+			Expect(pool.Status.TotalDevices).To(Equal(int32(2)))     // Should aggregate 2 devices total
+			Expect(pool.Status.AvailableDevices).To(Equal(int32(2))) // Both devices are available
 		})
 	})
 })
