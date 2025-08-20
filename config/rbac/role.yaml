@@ -18,8 +18,6 @@ rules:
   verbs:
   - get
   - list
-  - patch
-  - update
   - watch
 - apiGroups:
   - ""
@@ -38,13 +36,6 @@ rules:
   - apps
   resources:
   - daemonsets
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - apps
-  resources:
   - deployments
   verbs:
   - create
@@ -58,6 +49,13 @@ rules:
   - hsm.j5t.io
   resources:
   - hsmdevices
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - hsm.j5t.io
+  resources:
   - hsmpools
   - hsmsecrets
   verbs:
@@ -71,7 +69,6 @@ rules:
 - apiGroups:
   - hsm.j5t.io
   resources:
-  - hsmdevices/finalizers
   - hsmpools/finalizers
   - hsmsecrets/finalizers
   verbs:
@@ -79,7 +76,6 @@ rules:
 - apiGroups:
   - hsm.j5t.io
   resources:
-  - hsmdevices/status
   - hsmpools/status
   - hsmsecrets/status
   verbs:

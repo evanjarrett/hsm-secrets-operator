@@ -90,7 +90,7 @@ func (r *HSMPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			Namespace: hsmPool.Namespace,
 		}, hsmDevice); err != nil {
 			logger.Error(err, "Unable to fetch referenced HSMDevice", "hsmDevice", deviceRef)
-			return r.updatePoolStatus(ctx, &hsmPool, hsmv1alpha1.HSMPoolPhaseError, nil, 0, fmt.Sprintf("HSMDevice %s not found", deviceRef))
+			return r.updatePoolStatus(ctx, &hsmPool, hsmv1alpha1.HSMPoolPhaseError, nil, nil, 0, fmt.Sprintf("HSMDevice %s not found", deviceRef))
 		}
 		hsmDevices = append(hsmDevices, hsmDevice)
 	}
@@ -99,7 +99,7 @@ func (r *HSMPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	podReports, expectedPods, err := r.collectPodReports(ctx, hsmDevices)
 	if err != nil {
 		logger.Error(err, "Failed to collect pod reports")
-		return r.updatePoolStatus(ctx, &hsmPool, hsmv1alpha1.HSMPoolPhaseError, nil, expectedPods, err.Error())
+		return r.updatePoolStatus(ctx, &hsmPool, hsmv1alpha1.HSMPoolPhaseError, nil, nil, expectedPods, err.Error())
 	}
 
 	// Aggregate devices from all pod reports
@@ -107,7 +107,7 @@ func (r *HSMPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	// Update pool status (TODO: implement device aggregation when needed)
 	var aggregatedDevices []hsmv1alpha1.DiscoveredDevice
-	return r.updatePoolStatus(ctx, &hsmPool, phase, aggregatedDevices, expectedPods, "")
+	return r.updatePoolStatus(ctx, &hsmPool, phase, aggregatedDevices, podReports, expectedPods, "")
 }
 
 // collectPodReports finds discovery DaemonSet pods owned by HSMDevices and queries their status
@@ -238,13 +238,14 @@ func (r *HSMPoolReconciler) aggregateDevices(podReports []hsmv1alpha1.PodReport,
 }
 
 // updatePoolStatus updates the HSMPool status
-func (r *HSMPoolReconciler) updatePoolStatus(ctx context.Context, hsmPool *hsmv1alpha1.HSMPool, phase hsmv1alpha1.HSMPoolPhase, devices []hsmv1alpha1.DiscoveredDevice, expectedPods int32, errorMsg string) (ctrl.Result, error) {
+func (r *HSMPoolReconciler) updatePoolStatus(ctx context.Context, hsmPool *hsmv1alpha1.HSMPool, phase hsmv1alpha1.HSMPoolPhase, devices []hsmv1alpha1.DiscoveredDevice, podReports []hsmv1alpha1.PodReport, expectedPods int32, errorMsg string) (ctrl.Result, error) {
 	now := metav1.Now()
 
 	// Update basic status fields
 	hsmPool.Status.Phase = phase
 	hsmPool.Status.AggregatedDevices = devices
 	hsmPool.Status.TotalDevices = int32(len(devices))
+	hsmPool.Status.ReportingPods = podReports
 	hsmPool.Status.ExpectedPods = expectedPods
 	hsmPool.Status.LastAggregationTime = &now
 
