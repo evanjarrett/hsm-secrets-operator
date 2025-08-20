@@ -121,7 +121,6 @@ metadata:
   annotations:
     hsm.j5t.io/description: "HA database credentials with mirroring support"
 spec:
-  hsmPath: "secrets/ha/database-credentials"
   secretName: "ha-database-credentials"
   
   # Enable auto-sync for HA

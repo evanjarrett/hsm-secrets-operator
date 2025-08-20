@@ -26,10 +26,6 @@ import (
 
 // HSMSecretSpec defines the desired state of HSMSecret.
 type HSMSecretSpec struct {
-	// HSMPath is the path on the Pico HSM where the secret data is stored
-	// Example: "secrets/appnamespace/appname-secret"
-	HSMPath string `json:"hsmPath"`
-
 	// SecretName is the name of the Kubernetes Secret object to create/update
 	// Defaults to the HSMSecret name if not specified
 	// +optional
@@ -100,7 +96,6 @@ type HSMSecretStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=hsmsec
-// +kubebuilder:printcolumn:name="HSM Path",type=string,JSONPath=`.spec.hsmPath`
 // +kubebuilder:printcolumn:name="Secret Name",type=string,JSONPath=`.spec.secretName`
 // +kubebuilder:printcolumn:name="Sync Status",type=string,JSONPath=`.status.syncStatus`
 // +kubebuilder:printcolumn:name="Last Sync",type=date,JSONPath=`.status.lastSyncTime`

@@ -10,7 +10,6 @@ metadata:
     hsm.j5t.io/description: "TLS certificate and key for webapp.example.com"
 spec:
   # Path on the HSM where the TLS cert/key is stored
-  hsmPath: "secrets/tls/webapp-example-com"
   
   # Name of the TLS Secret to create
   secretName: "webapp-tls"

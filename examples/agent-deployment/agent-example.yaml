@@ -64,7 +64,6 @@ metadata:
     tier: database
 spec:
   # Path on HSM where secret is stored
-  hsmPath: "secrets/production/database/credentials"
   
   # Name of Kubernetes Secret to create/sync
   secretName: "database-credentials"

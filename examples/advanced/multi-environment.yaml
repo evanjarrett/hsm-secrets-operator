@@ -21,7 +21,6 @@ metadata:
     app: myapp
     environment: development
 spec:
-  hsmPath: "secrets/development/database-credentials"
   secretName: "database-credentials"
   autoSync: true
   syncInterval: 300  # 5 minutes - frequent sync for dev
@@ -46,7 +45,6 @@ metadata:
     app: myapp
     environment: staging
 spec:
-  hsmPath: "secrets/staging/database-credentials"
   secretName: "database-credentials"
   autoSync: true
   syncInterval: 600  # 10 minutes
@@ -75,7 +73,6 @@ metadata:
   annotations:
     hsm.j5t.io/description: "Production database credentials - HIGH SECURITY"
 spec:
-  hsmPath: "secrets/production/database-credentials"
   secretName: "database-credentials"
   autoSync: true
   syncInterval: 1800  # 30 minutes - less frequent for stability
@@ -101,7 +98,6 @@ metadata:
     type: tls
     scope: global
 spec:
-  hsmPath: "secrets/shared/wildcard-example-com-tls"
   secretName: "wildcard-tls"
   autoSync: true
   syncInterval: 86400  # Daily sync for certificates

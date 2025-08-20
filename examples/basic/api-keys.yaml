@@ -10,7 +10,6 @@ metadata:
     hsm.j5t.io/description: "API keys for external services (Stripe, AWS, etc.)"
 spec:
   # Path on the HSM where API keys are stored
-  hsmPath: "secrets/api-keys/external-services"
   
   # Name of the Secret containing API keys
   secretName: "external-api-keys"

@@ -310,10 +310,9 @@ status:
 apiVersion: hsm.j5t.io/v1alpha1
 kind: HSMSecret
 metadata:
-  name: appname-secret
+  name: appname-secret                            # HSM path automatically set to this name
   namespace: appnamespace
 spec:
-  hsmPath: "secrets/appnamespace/appname-secret"  # Path on Pico HSM
   secretName: "appname-secret"                    # Target K8s Secret name (optional)
   autoSync: true                                  # Enable bidirectional sync (default: true)
   secretType: "Opaque"                           # Kubernetes Secret type (default: Opaque)
@@ -658,6 +657,77 @@ kubectl logs -n hsm-secrets-operator-system -l app=hsm-device-discovery
 - Implement secure key storage and retrieval
 - Support HSM-specific error handling
 
+### PKCS#11 Library Compatibility
+
+**⚠️ Important: Use OpenSC Library for Pico HSM**
+
+The Pico HSM requires the **OpenSC PKCS#11 library** (`/usr/lib/opensc-pkcs11.so`) instead of the default CardContact library for proper data object support.
+
+**Library Configuration:**
+```yaml
+# HSMDevice CRD configuration
+spec:
+  pkcs11:
+    libraryPath: "/usr/lib/opensc-pkcs11.so"  # Use OpenSC instead of libsc-hsm-pkcs11.so
+    slotId: 0
+    pinSecret:
+      name: "hsm-pin"
+      key: "pin"
+```
+
+**Key Differences:**
+- **CardContact Library** (`libsc-hsm-pkcs11.so`): Cryptographic operations only, no data object support
+- **OpenSC Library** (`opensc-pkcs11.so`): Full PKCS#11 compliance with data object support
+
+### Manual HSM Access with pkcs11-tool
+
+**⚠️ Authentication Required**: HSM secrets created by the operator are marked as **private objects** and require PIN authentication to view.
+
+**Common Operations:**
+
+```bash
+# List all secrets (requires PIN authentication)
+pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" \
+  --login --pin="YOUR_PIN" \
+  --list-objects --type=data
+
+# List public objects only (no PIN required)
+pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" \
+  --list-objects --type=data
+
+# Read a specific secret component
+pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" \
+  --login --pin="YOUR_PIN" \
+  --read-object --type=data --label="secret-name/api_key"
+
+# Get HSM info
+pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" -I
+
+# List all object types
+pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" \
+  --login --pin="YOUR_PIN" \
+  --list-objects
+```
+
+**Secret Storage Structure:**
+- Each API secret becomes **multiple PKCS#11 data objects**
+- Object naming: `secret-name/key-name` (e.g., `user-credentials/api_key`)
+- Private objects: `flags: modifiable private` (require authentication)
+- Public objects: `flags: modifiable` (visible without authentication)
+
+**Emergency Access without Kubernetes:**
+```bash
+# Backup all secrets from pod
+kubectl exec HSM_AGENT_POD -- sh -c '
+  pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" \
+    --login --pin="$PKCS11_PIN" \
+    --list-objects --type=data > /tmp/hsm-backup.txt
+'
+
+# Copy backup file
+kubectl cp HSM_AGENT_POD:/tmp/hsm-backup.txt ./hsm-secrets-backup.txt
+```
+
 ### Kubernetes Integration
 - Standard Secret object management
 - RBAC for Secret read/write operations
@@ -779,3 +849,41 @@ kubectl get hsmpool pico-hsm-discovery-pool -o jsonpath='{.status.reportingPods[
 ```
 
 This operator design provides a secure, hardware-backed secret management solution that integrates seamlessly with Kubernetes while maintaining the security benefits of HSM-based storage.
+
+## Quick Reference: Pico HSM + OpenSC
+
+### API Testing (Recommended)
+```bash
+# Test API functionality with working HSM
+cd /home/data/hsm-secrets-operator/examples/api
+
+# Create a secret (HSM path = secret name)
+./create-secret.sh my-test-secret
+
+# List all secrets  
+./list-secrets.sh
+
+# Get specific secret via curl
+curl http://localhost:8090/api/v1/hsm/secrets/my-test-secret | jq '.'
+```
+
+### Direct PKCS#11 Access
+```bash
+# Get agent pod name
+AGENT_POD=$(kubectl get pods -l app.kubernetes.io/name=hsm-agent -o jsonpath='{.items[0].metadata.name}')
+
+# List all secrets (requires authentication)
+kubectl exec $AGENT_POD -- sh -c 'pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" --login --pin="$PKCS11_PIN" --list-objects --type=data'
+
+# Read specific secret component
+kubectl exec $AGENT_POD -- sh -c 'pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" --login --pin="$PKCS11_PIN" --read-object --type=data --label="my-test-secret/api_key"'
+
+# HSM device info
+kubectl exec $AGENT_POD -- pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" -I
+```
+
+### Troubleshooting
+- **API works, pkcs11-tool doesn't see objects**: Use `--login --pin` for private objects
+- **`CKR_DEVICE_REMOVED` errors**: Restart agent pod to reset PKCS#11 session
+- **`CKR_TEMPLATE_INCONSISTENT` errors**: Switch from CardContact to OpenSC library
+- **Agent crash loop**: Check library path and PIN secret configuration

@@ -251,7 +251,6 @@ hsmsecret:
   secrets:
     - name: "example-secret"
       namespace: "default"
-      hsmPath: "secrets/examples/example-secret"
       syncInterval: 300
 
 # Additional configuration

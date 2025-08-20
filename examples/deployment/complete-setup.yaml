@@ -48,7 +48,6 @@ metadata:
     type: database
     criticality: high
 spec:
-  hsmPath: "secrets/production/webapp-database"
   secretName: "webapp-database-credentials"
   autoSync: true
   syncInterval: 600  # 10 minutes
@@ -65,7 +64,6 @@ metadata:
     app: webapp
     type: tls
 spec:
-  hsmPath: "secrets/tls/webapp-example-com"
   secretName: "webapp-tls-cert"
   autoSync: true
   syncInterval: 3600  # 1 hour

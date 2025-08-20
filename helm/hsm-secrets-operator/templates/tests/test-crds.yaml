@@ -44,7 +44,6 @@ spec:
           name: test-secret
           namespace: {{ .Release.Namespace }}
         spec:
-          hsmPath: "secrets/test/test-secret"
           secretName: "test-secret"
           autoSync: true
           syncInterval: 300

@@ -167,7 +167,7 @@ func (r *HSMSecretReconciler) reconcileNormal(ctx context.Context, hsmSecret *hs
 	// Read secret from HSM with readonly fallback support
 	hsmData, err := r.readSecretWithFallback(ctx, hsmSecret, hsmClient)
 	if err != nil {
-		logger.Error(err, "Failed to read secret from HSM and mirrors", "path", hsmSecret.Spec.HSMPath)
+		logger.Error(err, "Failed to read secret from HSM and mirrors", "path", hsmSecret.Name)
 		return ctrl.Result{RequeueAfter: time.Minute * 2}, err
 	}
 
@@ -289,7 +289,7 @@ func (r *HSMSecretReconciler) buildSecret(hsmSecret *hsmv1alpha1.HSMSecret, secr
 			Namespace: hsmSecret.Namespace,
 			Labels: map[string]string{
 				"managed-by": "hsm-secrets-operator",
-				"hsm-path":   strings.ReplaceAll(hsmSecret.Spec.HSMPath, "/", "_"),
+				"hsm-path":   strings.ReplaceAll(hsmSecret.Name, "/", "_"),
 			},
 		},
 		Type: secretType,
@@ -361,9 +361,9 @@ func (r *HSMSecretReconciler) readSecretWithFallback(ctx context.Context, hsmSec
 
 	// Try to read from primary HSM first (via agent)
 	if hsmClient != nil && hsmClient.IsConnected() {
-		data, err := hsmClient.ReadSecret(ctx, hsmSecret.Spec.HSMPath)
+		data, err := hsmClient.ReadSecret(ctx, hsmSecret.Name)
 		if err == nil {
-			logger.V(1).Info("Successfully read secret from primary HSM", "path", hsmSecret.Spec.HSMPath)
+			logger.V(1).Info("Successfully read secret from primary HSM", "path", hsmSecret.Name)
 			return data, nil
 		}
 		logger.V(1).Info("Failed to read from primary HSM, attempting fallback", "error", err)
@@ -376,9 +376,9 @@ func (r *HSMSecretReconciler) readSecretWithFallback(ctx context.Context, hsmSec
 		if err != nil {
 			logger.Error(err, "Failed to find HSM device for readonly fallback")
 		} else if hsmDevice != nil {
-			data, err := r.MirroringManager.GetReadOnlyAccess(ctx, hsmSecret.Spec.HSMPath, hsmDevice)
+			data, err := r.MirroringManager.GetReadOnlyAccess(ctx, hsmSecret.Name, hsmDevice)
 			if err == nil {
-				logger.Info("Successfully read secret from readonly mirror", "path", hsmSecret.Spec.HSMPath)
+				logger.Info("Successfully read secret from readonly mirror", "path", hsmSecret.Name)
 				return data, nil
 			}
 			logger.V(1).Info("Failed to read from mirrors", "error", err)
