@@ -202,7 +202,6 @@ func (r *DiscoveryDaemonSetReconciler) ensureDiscoveryDaemonSet(ctx context.Cont
 							Image:   discoveryImage,
 							Command: []string{"/entrypoint.sh", "discovery"},
 							Args: []string{
-								"--hsm-device=" + hsmDevice.Name,
 								"--zap-log-level=info",
 							},
 							Env: []corev1.EnvVar{
