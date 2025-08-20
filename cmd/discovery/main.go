@@ -14,6 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;patch
+// +kubebuilder:rbac:groups=hsm.j5t.io,resources=hsmdevices,verbs=get;list;watch
+
 package main
 
 import (
