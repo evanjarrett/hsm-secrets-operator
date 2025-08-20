@@ -18,7 +18,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -29,10 +28,8 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"github.com/go-logr/logr"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -225,27 +222,17 @@ func (d *DiscoveryAgent) processHSMDevice(ctx context.Context, hsmDevice *hsmv1a
 
 	// Perform local discovery
 	discoveredDevices, err := d.discoverDevicesForSpec(ctx, hsmDevice)
-
-	status := "completed"
-	errorMsg := ""
 	if err != nil {
-		status = "error"
-		errorMsg = err.Error()
-		d.logger.Error(err, "Discovery failed for device", "device", hsmDevice.Name)
+		d.logger.Error(err, "Discovery failed for device", "device", hsmDevice.Name, "node", d.nodeName)
+		return err
 	}
 
-	// Create discovery report
-	report := PodDiscoveryReport{
-		HSMDeviceName:     hsmDevice.Name,
-		ReportingNode:     d.nodeName,
-		DiscoveredDevices: discoveredDevices,
-		LastReportTime:    metav1.Now(),
-		DiscoveryStatus:   status,
-		Error:             errorMsg,
-	}
+	d.logger.Info("Discovery completed",
+		"device", hsmDevice.Name,
+		"node", d.nodeName,
+		"devicesFound", len(discoveredDevices))
 
-	// Update pod annotations with discovery results
-	return d.updatePodAnnotations(ctx, hsmDevice.Name, report)
+	return nil
 }
 
 // discoverDevicesForSpec performs actual device discovery based on HSMDevice spec
@@ -382,42 +369,4 @@ func (d *DiscoveryAgent) shouldDiscoverOnNode(hsmDevice *hsmv1alpha1.HSMDevice) 
 	}
 
 	return false
-}
-
-// updatePodAnnotations updates this pod's annotations with discovery results
-func (d *DiscoveryAgent) updatePodAnnotations(ctx context.Context, deviceName string, report PodDiscoveryReport) error {
-	// Get current pod
-	pod := &corev1.Pod{}
-	if err := d.client.Get(ctx, types.NamespacedName{
-		Name:      d.podName,
-		Namespace: d.podNamespace,
-	}, pod); err != nil {
-		return fmt.Errorf("failed to get current pod: %w", err)
-	}
-
-	// Serialize report to JSON
-	reportJSON, err := json.Marshal(report)
-	if err != nil {
-		return fmt.Errorf("failed to marshal discovery report: %w", err)
-	}
-
-	// Update pod annotations
-	if pod.Annotations == nil {
-		pod.Annotations = make(map[string]string)
-	}
-
-	// Use device-specific annotation key to support multiple devices per pod
-	annotationKey := fmt.Sprintf("%s/%s", DeviceReportAnnotation, deviceName)
-	pod.Annotations[annotationKey] = string(reportJSON)
-
-	if err := d.client.Update(ctx, pod); err != nil {
-		return fmt.Errorf("failed to update pod annotations: %w", err)
-	}
-
-	d.logger.Info("Updated pod annotations with discovery report",
-		"device", deviceName,
-		"devicesFound", len(report.DiscoveredDevices),
-		"status", report.DiscoveryStatus)
-
-	return nil
 }

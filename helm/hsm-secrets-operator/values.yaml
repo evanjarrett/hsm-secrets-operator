@@ -88,18 +88,20 @@ hsm:
   # No global client type needed with agent architecture
 
 # Device discovery configuration
+# NOTE: Discovery DaemonSets are now created automatically by the manager
+# when HSMDevice CRDs are created. No static DaemonSet configuration needed.
 discovery:
-  # Enable device discovery (DaemonSet)
-  enabled: true
+  # Discovery DaemonSets are now managed dynamically per HSMDevice
+  # The following settings apply to all discovery pods created by the manager
   
   # Sync interval for device discovery (e.g., "30s", "1m", "5m")
   syncInterval: "30s"
 
-  # Security context for discovery pods (requires privilege to read USB devices)
+  # Security context for discovery pods (non-privileged in new architecture)
   podSecurityContext:
-    runAsUser: 0
-    runAsGroup: 0
-    runAsNonRoot: false
+    runAsUser: 65534
+    runAsGroup: 65534  
+    runAsNonRoot: true
 
   # Container security context for discovery pods
   securityContext:

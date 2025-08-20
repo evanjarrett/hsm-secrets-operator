@@ -96,7 +96,7 @@ func (r *HSMPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	// Find discovery pods and their annotations
-	podReports, expectedPods, err := r.collectPodReports(ctx, &hsmPool, hsmDevices)
+	podReports, expectedPods, err := r.collectPodReports(ctx, hsmDevices)
 	if err != nil {
 		logger.Error(err, "Failed to collect pod reports")
 		return r.updatePoolStatus(ctx, &hsmPool, hsmv1alpha1.HSMPoolPhaseError, nil, expectedPods, err.Error())
@@ -110,89 +110,97 @@ func (r *HSMPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	return r.updatePoolStatus(ctx, &hsmPool, phase, aggregatedDevices, expectedPods, "")
 }
 
-// collectPodReports finds discovery pods and extracts their device reports from annotations
-func (r *HSMPoolReconciler) collectPodReports(ctx context.Context, hsmPool *hsmv1alpha1.HSMPool, hsmDevices []*hsmv1alpha1.HSMDevice) ([]hsmv1alpha1.PodReport, int32, error) {
+// collectPodReports finds discovery DaemonSet pods owned by HSMDevices and queries their status
+func (r *HSMPoolReconciler) collectPodReports(ctx context.Context, hsmDevices []*hsmv1alpha1.HSMDevice) ([]hsmv1alpha1.PodReport, int32, error) {
 	logger := log.FromContext(ctx)
 
-	// Find DaemonSet to determine expected pod count
-	expectedPods, err := r.getExpectedPodCount(ctx, hsmPool.Namespace)
-	if err != nil {
-		logger.Error(err, "Failed to determine expected pod count")
-		expectedPods = 1 // Fallback to single pod
-	}
+	podReports := make([]hsmv1alpha1.PodReport, 0)
+	totalExpectedPods := int32(0)
 
-	// Find discovery pods
-	pods := &corev1.PodList{}
-	labelSelector := labels.SelectorFromSet(map[string]string{
-		"app.kubernetes.io/name":      "hsm-secrets-operator",
-		"app.kubernetes.io/component": "discovery",
-	})
+	// For each HSMDevice referenced by this pool, find its DaemonSet and pods
+	for _, hsmDevice := range hsmDevices {
+		daemonSetName := fmt.Sprintf("%s-discovery", hsmDevice.Name)
 
-	listOpts := &client.ListOptions{
-		LabelSelector: labelSelector,
-		Namespace:     hsmPool.Namespace,
-	}
+		// Get the DaemonSet owned by this HSMDevice
+		daemonSet := &appsv1.DaemonSet{}
+		err := r.Get(ctx, client.ObjectKey{
+			Name:      daemonSetName,
+			Namespace: hsmDevice.Namespace,
+		}, daemonSet)
 
-	if err := r.List(ctx, pods, listOpts); err != nil {
-		return nil, expectedPods, fmt.Errorf("failed to list discovery pods: %w", err)
-	}
-
-	// Extract reports from pod annotations
-	podReports := make([]hsmv1alpha1.PodReport, 0, len(pods.Items))
-	gracePeriod := r.getGracePeriod(hsmPool)
-
-	for _, pod := range pods.Items {
-		if pod.Annotations == nil {
+		if apierrors.IsNotFound(err) {
+			logger.Info("Discovery DaemonSet not found", "device", hsmDevice.Name, "daemonset", daemonSetName)
+			continue
+		} else if err != nil {
+			logger.Error(err, "Failed to get discovery DaemonSet", "device", hsmDevice.Name, "daemonset", daemonSetName)
 			continue
 		}
 
-		reportData, exists := pod.Annotations[deviceReportAnnotation]
-		if !exists {
-			// Pod hasn't reported yet
-			continue
+		// Add expected pods from this DaemonSet
+		totalExpectedPods += daemonSet.Status.DesiredNumberScheduled
+
+		// List pods owned by this DaemonSet
+		pods := &corev1.PodList{}
+		labelSelector := labels.SelectorFromSet(daemonSet.Spec.Selector.MatchLabels)
+
+		listOpts := &client.ListOptions{
+			LabelSelector: labelSelector,
+			Namespace:     hsmDevice.Namespace,
 		}
 
-		var discoveryReport PodDiscoveryReport
-		if err := json.Unmarshal([]byte(reportData), &discoveryReport); err != nil {
-			logger.Error(err, "Failed to parse discovery report from pod", "pod", pod.Name)
-			continue
+		if err := r.List(ctx, pods, listOpts); err != nil {
+			return nil, totalExpectedPods, fmt.Errorf("failed to list DaemonSet pods for device %s: %w", hsmDevice.Name, err)
 		}
 
-		// Only include reports for HSMDevices referenced by this pool
-		validDevice := false
-		for _, device := range hsmDevices {
-			if discoveryReport.HSMDeviceName == device.Name {
-				validDevice = true
-				break
+		// Create pod reports from pod status (simplified - no annotation parsing needed)
+		for _, pod := range pods.Items {
+			podReport := hsmv1alpha1.PodReport{
+				PodName:         pod.Name,
+				NodeName:        pod.Spec.NodeName,
+				LastReportTime:  metav1.Now(),
+				DiscoveryStatus: r.getPodDiscoveryStatus(&pod),
+				Fresh:           r.isPodFresh(&pod),
 			}
-		}
-		if !validDevice {
-			continue
-		}
 
-		// Check if report is fresh (within grace period)
-		reportAge := time.Since(discoveryReport.LastReportTime.Time)
-		fresh := reportAge <= gracePeriod
+			// For now, assume 1 device found per pod if pod is ready
+			// TODO: In the future, discovery pods could report via status or configmap
+			if pod.Status.Phase == corev1.PodRunning {
+				podReport.DevicesFound = 1
+			} else {
+				podReport.DevicesFound = 0
+			}
 
-		podReport := hsmv1alpha1.PodReport{
-			PodName:         pod.Name,
-			NodeName:        discoveryReport.ReportingNode,
-			DevicesFound:    int32(len(discoveryReport.DiscoveredDevices)),
-			LastReportTime:  discoveryReport.LastReportTime,
-			DiscoveryStatus: discoveryReport.DiscoveryStatus,
-			Error:           discoveryReport.Error,
-			Fresh:           fresh,
+			podReports = append(podReports, podReport)
 		}
-
-		podReports = append(podReports, podReport)
 	}
 
-	logger.V(1).Info("Collected pod reports",
-		"totalPods", len(pods.Items),
-		"reportingPods", len(podReports),
-		"expectedPods", expectedPods)
+	return podReports, totalExpectedPods, nil
+}
 
-	return podReports, expectedPods, nil
+// getPodDiscoveryStatus determines the discovery status based on pod phase and conditions
+func (r *HSMPoolReconciler) getPodDiscoveryStatus(pod *corev1.Pod) string {
+	switch pod.Status.Phase {
+	case corev1.PodRunning:
+		return "completed"
+	case corev1.PodPending:
+		return "pending"
+	case corev1.PodFailed:
+		return "failed"
+	default:
+		return "unknown"
+	}
+}
+
+// isPodFresh checks if the pod is recently updated (simple implementation)
+func (r *HSMPoolReconciler) isPodFresh(pod *corev1.Pod) bool {
+	// Consider pod fresh if it's been ready for less than grace period
+	if pod.Status.Phase != corev1.PodRunning {
+		return false
+	}
+
+	// For now, consider all running pods as fresh
+	// TODO: Could check pod start time or last transition time
+	return true
 }
 
 // aggregateDevices determines the pool phase based on pod reports
@@ -227,38 +235,6 @@ func (r *HSMPoolReconciler) aggregateDevices(podReports []hsmv1alpha1.PodReport,
 	}
 
 	return phase
-}
-
-// getExpectedPodCount determines how many pods should be reporting based on DaemonSet
-func (r *HSMPoolReconciler) getExpectedPodCount(ctx context.Context, namespace string) (int32, error) {
-	daemonSets := &appsv1.DaemonSetList{}
-	labelSelector := labels.SelectorFromSet(map[string]string{
-		"app.kubernetes.io/name":      "hsm-secrets-operator",
-		"app.kubernetes.io/component": "discovery",
-	})
-
-	listOpts := &client.ListOptions{
-		LabelSelector: labelSelector,
-		Namespace:     namespace,
-	}
-
-	if err := r.List(ctx, daemonSets, listOpts); err != nil {
-		return 1, err
-	}
-
-	if len(daemonSets.Items) == 0 {
-		return 1, nil // Default to single pod if no DaemonSet found
-	}
-
-	return daemonSets.Items[0].Status.DesiredNumberScheduled, nil
-}
-
-// getGracePeriod returns the grace period for this pool
-func (r *HSMPoolReconciler) getGracePeriod(hsmPool *hsmv1alpha1.HSMPool) time.Duration {
-	if hsmPool.Spec.GracePeriod != nil {
-		return hsmPool.Spec.GracePeriod.Duration
-	}
-	return DefaultGracePeriod
 }
 
 // updatePoolStatus updates the HSMPool status

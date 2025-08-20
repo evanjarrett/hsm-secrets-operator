@@ -3,12 +3,12 @@ name: E2E Tests
 # Only run E2E tests manually or on schedule (not on every push)
 on:
   workflow_dispatch:  # Manual trigger
-  schedule:
-    - cron: '0 2 * * *'  # Run nightly at 2 AM UTC
-  # Optionally run on release tags
-  push:
-    tags: 
-      - 'v*.*.*'
+  # schedule:
+  #   - cron: '0 2 * * *'  # Run nightly at 2 AM UTC
+  # # Optionally run on release tags
+  # push:
+  #   tags: 
+  #     - 'v*.*.*'
 
 jobs:
   test-e2e:

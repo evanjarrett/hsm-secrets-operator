@@ -104,39 +104,19 @@ spec:
           {{- toYaml .Values.controllerManager.resources | nindent 12 }}
         securityContext:
           {{- toYaml .Values.controllerManager.securityContext | nindent 12 }}
-        {{- if or .Values.discovery.enabled .Values.webhook.enabled }}
+        {{- if .Values.webhook.enabled }}
         volumeMounts:
-        {{- if .Values.discovery.enabled }}
-        - name: dev
-          mountPath: /dev
-          readOnly: true
-        - name: sys
-          mountPath: /sys
-          readOnly: true
-        {{- end }}
         {{- if .Values.webhook.enabled }}
         - name: webhook-certs
           mountPath: /tmp/k8s-webhook-server/serving-certs
           readOnly: true
         {{- end }}
         {{- end }}
-      {{- if or .Values.discovery.enabled .Values.webhook.enabled }}
-      volumes:
-      {{- if .Values.discovery.enabled }}
-      - name: dev
-        hostPath:
-          path: /dev
-          type: Directory
-      - name: sys
-        hostPath:
-          path: /sys
-          type: Directory
-      {{- end }}
       {{- if .Values.webhook.enabled }}
+      volumes:
       - name: webhook-certs
         secret:
           secretName: {{ .Values.webhook.secret.name }}
-      {{- end }}
       {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

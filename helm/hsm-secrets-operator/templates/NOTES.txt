@@ -5,12 +5,8 @@
    
 2. The operator is running with the following configuration:
    
-   {{- if .Values.discovery.enabled }}
-   🔍 Device Discovery: Enabled (DaemonSet deployed)
+   🔍 Device Discovery: Automatic (managed per HSMDevice CRD)
    📋 Configuration: Per-device via HSMDevice CRDs
-   {{- else }}
-   🔍 Device Discovery: Disabled
-   {{- end }}
    
    {{- if .Values.hsmdevice.enabled }}
    📱 HSMDevice Resources: {{ len .Values.hsmdevice.devices }} configured
@@ -88,13 +84,13 @@
    Then access: https://localhost:8443/metrics
 {{- end }}
 
-{{- if .Values.discovery.enabled }}
-
-8. Device discovery is running. Check discovered devices:
+8. Device discovery runs automatically per HSMDevice. Check discovered devices:
    
    kubectl get hsmdevices --all-namespaces
-   kubectl logs daemonset/{{ include "hsm-secrets-operator.fullname" . }}-discovery -n {{ .Release.Namespace }}
-{{- end }}
+   kubectl get hsmpools --all-namespaces
+   
+   # To check discovery logs for a specific HSMDevice named "my-device":
+   kubectl logs -l hsm.j5t.io/device=my-device
 
 {{- if .Values.hsmsecret.enabled }}
 

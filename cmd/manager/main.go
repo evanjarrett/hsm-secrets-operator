@@ -256,6 +256,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Set up discovery DaemonSet controller (manager-owned)
+	if err := (&controller.DiscoveryDaemonSetReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "DiscoveryDaemonSet")
+		os.Exit(1)
+	}
+
 	// +kubebuilder:scaffold:builder
 
 	if metricsCertWatcher != nil {

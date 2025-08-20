@@ -1,0 +1,273 @@
+/*
+Copyright 2025.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"context"
+	"fmt"
+	"os"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
+)
+
+// DiscoveryDaemonSetReconciler manages discovery DaemonSets for HSMDevice resources
+type DiscoveryDaemonSetReconciler struct {
+	client.Client
+	Scheme *runtime.Scheme
+}
+
+// +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+
+func (r *DiscoveryDaemonSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	// Get the HSMDevice
+	var hsmDevice hsmv1alpha1.HSMDevice
+	if err := r.Get(ctx, req.NamespacedName, &hsmDevice); err != nil {
+		if errors.IsNotFound(err) {
+			// HSMDevice deleted, clean up discovery DaemonSet
+			return r.cleanupDiscoveryDaemonSet(ctx, req.NamespacedName)
+		}
+		logger.Error(err, "Failed to get HSMDevice")
+		return ctrl.Result{}, err
+	}
+
+	// Create or update discovery DaemonSet for this HSMDevice
+	return r.ensureDiscoveryDaemonSet(ctx, &hsmDevice)
+}
+
+// ensureDiscoveryDaemonSet creates or updates the discovery DaemonSet for an HSMDevice
+func (r *DiscoveryDaemonSetReconciler) ensureDiscoveryDaemonSet(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	daemonSetName := fmt.Sprintf("%s-discovery", hsmDevice.Name)
+
+	// Get discovery image from environment or use default
+	discoveryImage := os.Getenv("DISCOVERY_IMAGE")
+	if discoveryImage == "" {
+		discoveryImage = "hsm-discovery:latest"
+	}
+
+	// Define the desired DaemonSet
+	desired := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      daemonSetName,
+			Namespace: hsmDevice.Namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":      "hsm-secrets-operator",
+				"app.kubernetes.io/component": "discovery",
+				"hsm.j5t.io/device":           hsmDevice.Name,
+			},
+		},
+		Spec: appsv1.DaemonSetSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app.kubernetes.io/name":      "hsm-secrets-operator",
+					"app.kubernetes.io/component": "discovery",
+					"hsm.j5t.io/device":           hsmDevice.Name,
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app.kubernetes.io/name":      "hsm-secrets-operator",
+						"app.kubernetes.io/component": "discovery",
+						"hsm.j5t.io/device":           hsmDevice.Name,
+					},
+				},
+				Spec: corev1.PodSpec{
+					ServiceAccountName: "hsm-secrets-operator", // Use same SA as manager
+					Containers: []corev1.Container{
+						{
+							Name:    "discovery",
+							Image:   discoveryImage,
+							Command: []string{"/entrypoint.sh", "discovery"},
+							Args: []string{
+								"--hsm-device=" + hsmDevice.Name,
+								"--zap-log-level=info",
+							},
+							Env: []corev1.EnvVar{
+								{
+									Name: "NODE_NAME",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: "spec.nodeName",
+										},
+									},
+								},
+								{
+									Name: "POD_NAMESPACE",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: "metadata.namespace",
+										},
+									},
+								},
+								{
+									Name: "POD_NAME",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: "metadata.name",
+										},
+									},
+								},
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      "dev",
+									MountPath: "/dev",
+									ReadOnly:  true,
+								},
+								{
+									Name:      "sys",
+									MountPath: "/sys",
+									ReadOnly:  true,
+								},
+							},
+							SecurityContext: &corev1.SecurityContext{
+								RunAsNonRoot:             &[]bool{true}[0],
+								AllowPrivilegeEscalation: &[]bool{false}[0],
+								ReadOnlyRootFilesystem:   &[]bool{true}[0],
+								Capabilities: &corev1.Capabilities{
+									Drop: []corev1.Capability{"ALL"},
+								},
+							},
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "dev",
+							VolumeSource: corev1.VolumeSource{
+								HostPath: &corev1.HostPathVolumeSource{
+									Path: "/dev",
+									Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
+								},
+							},
+						},
+						{
+							Name: "sys",
+							VolumeSource: corev1.VolumeSource{
+								HostPath: &corev1.HostPathVolumeSource{
+									Path: "/sys",
+									Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
+								},
+							},
+						},
+					},
+					// Apply node selector from HSMDevice spec if specified
+					NodeSelector: hsmDevice.Spec.NodeSelector,
+					// Apply tolerations if needed for HSM nodes
+					Tolerations: []corev1.Toleration{
+						{
+							Key:      "hsm-node",
+							Operator: corev1.TolerationOpExists,
+							Effect:   corev1.TaintEffectNoSchedule,
+						},
+					},
+					SecurityContext: &corev1.PodSecurityContext{
+						RunAsNonRoot: &[]bool{true}[0],
+						RunAsUser:    &[]int64{65534}[0], // nobody user
+						RunAsGroup:   &[]int64{65534}[0], // nobody group
+						FSGroup:      &[]int64{65534}[0],
+					},
+				},
+			},
+			UpdateStrategy: appsv1.DaemonSetUpdateStrategy{
+				Type: appsv1.RollingUpdateDaemonSetStrategyType,
+				RollingUpdate: &appsv1.RollingUpdateDaemonSet{
+					MaxUnavailable: &intstr.IntOrString{Type: intstr.Int, IntVal: 1},
+				},
+			},
+		},
+	}
+
+	// Set the HSMDevice as the owner of the DaemonSet
+	if err := controllerutil.SetControllerReference(hsmDevice, desired, r.Scheme); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to set controller reference: %w", err)
+	}
+
+	// Check if DaemonSet already exists
+	existing := &appsv1.DaemonSet{}
+	err := r.Get(ctx, types.NamespacedName{Name: daemonSetName, Namespace: hsmDevice.Namespace}, existing)
+
+	if errors.IsNotFound(err) {
+		// Create new DaemonSet
+		logger.Info("Creating discovery DaemonSet", "device", hsmDevice.Name, "daemonset", daemonSetName)
+		if err := r.Create(ctx, desired); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to create discovery DaemonSet: %w", err)
+		}
+		return ctrl.Result{}, nil
+	} else if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to get discovery DaemonSet: %w", err)
+	}
+
+	// Update existing DaemonSet if needed
+	existing.Spec = desired.Spec
+	existing.Labels = desired.Labels
+
+	logger.Info("Updating discovery DaemonSet", "device", hsmDevice.Name, "daemonset", daemonSetName)
+	if err := r.Update(ctx, existing); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to update discovery DaemonSet: %w", err)
+	}
+
+	return ctrl.Result{}, nil
+}
+
+// cleanupDiscoveryDaemonSet removes the discovery DaemonSet when HSMDevice is deleted
+func (r *DiscoveryDaemonSetReconciler) cleanupDiscoveryDaemonSet(ctx context.Context, deviceKey types.NamespacedName) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	daemonSetName := fmt.Sprintf("%s-discovery", deviceKey.Name)
+	daemonSet := &appsv1.DaemonSet{}
+
+	err := r.Get(ctx, types.NamespacedName{Name: daemonSetName, Namespace: deviceKey.Namespace}, daemonSet)
+	if errors.IsNotFound(err) {
+		// Already deleted
+		return ctrl.Result{}, nil
+	} else if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to get discovery DaemonSet for cleanup: %w", err)
+	}
+
+	logger.Info("Cleaning up discovery DaemonSet", "device", deviceKey.Name, "daemonset", daemonSetName)
+	if err := r.Delete(ctx, daemonSet); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to delete discovery DaemonSet: %w", err)
+	}
+
+	return ctrl.Result{}, nil
+}
+
+// SetupWithManager sets up the controller with the Manager
+func (r *DiscoveryDaemonSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&hsmv1alpha1.HSMDevice{}).
+		Owns(&appsv1.DaemonSet{}).
+		Named("discovery-daemonset").
+		Complete(r)
+}
