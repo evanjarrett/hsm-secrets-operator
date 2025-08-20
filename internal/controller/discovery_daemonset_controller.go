@@ -69,11 +69,8 @@ func (r *DiscoveryDaemonSetReconciler) ensureDiscoveryDaemonSet(ctx context.Cont
 
 	daemonSetName := fmt.Sprintf("%s-discovery", hsmDevice.Name)
 
-	// Get discovery image from environment or use default
-	discoveryImage := os.Getenv("DISCOVERY_IMAGE")
-	if discoveryImage == "" {
-		discoveryImage = "hsm-discovery:latest"
-	}
+	// Get discovery image from environment, manager image, or use default
+	discoveryImage := r.getDiscoveryImage(ctx)
 
 	// Define the desired DaemonSet
 	desired := &appsv1.DaemonSet{
@@ -261,6 +258,54 @@ func (r *DiscoveryDaemonSetReconciler) cleanupDiscoveryDaemonSet(ctx context.Con
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// getDiscoveryImage determines the discovery image to use
+func (r *DiscoveryDaemonSetReconciler) getDiscoveryImage(ctx context.Context) string {
+	// Try environment variable first
+	if discoveryImage := os.Getenv("DISCOVERY_IMAGE"); discoveryImage != "" {
+		return discoveryImage
+	}
+
+	// Try to detect the manager's running image as fallback
+	if managerImage := r.getManagerImage(ctx); managerImage != "" {
+		return managerImage
+	}
+
+	// Last resort: use default
+	return "hsm-discovery:latest"
+}
+
+// getManagerImage attempts to detect the manager's running image
+func (r *DiscoveryDaemonSetReconciler) getManagerImage(ctx context.Context) string {
+	logger := log.FromContext(ctx)
+
+	// Get manager deployment by looking for deployments with manager labels
+	deployments := &appsv1.DeploymentList{}
+	listOpts := []client.ListOption{
+		client.MatchingLabels{
+			"app.kubernetes.io/name":      "hsm-secrets-operator",
+			"app.kubernetes.io/component": "manager",
+		},
+	}
+
+	if err := r.List(ctx, deployments, listOpts...); err != nil {
+		logger.V(1).Info("Failed to list manager deployments for image detection", "error", err)
+		return ""
+	}
+
+	// Find the manager container and extract its image
+	for _, deployment := range deployments.Items {
+		for _, container := range deployment.Spec.Template.Spec.Containers {
+			if container.Name == "manager" {
+				logger.V(1).Info("Detected manager image for discovery DaemonSet", "image", container.Image)
+				return container.Image
+			}
+		}
+	}
+
+	logger.V(1).Info("Could not detect manager image")
+	return ""
 }
 
 // SetupWithManager sets up the controller with the Manager

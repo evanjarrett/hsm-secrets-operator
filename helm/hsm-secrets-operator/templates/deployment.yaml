@@ -65,6 +65,9 @@ spec:
         # Agent image configuration for dynamic agent pod deployment
         - name: AGENT_IMAGE
           value: {{ include "hsm-secrets-operator.agentImage" . }}
+        # Discovery image configuration for dynamic discovery DaemonSet deployment
+        - name: DISCOVERY_IMAGE
+          value: {{ include "hsm-secrets-operator.discoveryImage" . }}
         ports:
         {{- if .Values.metrics.enabled }}
         - name: metrics
