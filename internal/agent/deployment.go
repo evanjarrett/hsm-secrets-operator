@@ -33,6 +33,14 @@ import (
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
 )
 
+// ManagerInterface defines the interface for HSM agent management
+// This allows for easier testing with mocks
+type ManagerInterface interface {
+	EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, hsmSecret *hsmv1alpha1.HSMSecret) (string, error)
+	CleanupAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice) error
+	GetAgentEndpoint(hsmDevice *hsmv1alpha1.HSMDevice) string
+}
+
 const (
 	// AgentNamePrefix is the prefix for HSM agent deployment names
 	AgentNamePrefix = "hsm-agent"
@@ -87,8 +95,22 @@ func (m *Manager) EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDev
 	}, &deployment)
 
 	if err == nil {
-		// Agent exists, ensure it's running and return endpoint
-		return m.getAgentEndpoint(agentName, agentNamespace), nil
+		// Agent exists, but check if volume mounts need updating due to device path changes
+		needsUpdate, err := m.agentNeedsUpdate(ctx, &deployment, hsmDevice)
+		if err != nil {
+			return "", fmt.Errorf("failed to check if agent needs update: %w", err)
+		}
+
+		if needsUpdate {
+			// Delete existing deployment to trigger recreation with new volume mounts
+			if err := m.Delete(ctx, &deployment); err != nil {
+				return "", fmt.Errorf("failed to delete outdated agent deployment: %w", err)
+			}
+			// Continue to create new deployment below
+		} else {
+			// Agent exists and is up to date, return endpoint
+			return m.getAgentEndpoint(agentName, agentNamespace), nil
+		}
 	}
 
 	if !errors.IsNotFound(err) {
@@ -164,6 +186,17 @@ func (m *Manager) generateAgentName(hsmDevice *hsmv1alpha1.HSMDevice) string {
 // getAgentEndpoint returns the HTTP endpoint for the agent
 func (m *Manager) getAgentEndpoint(agentName, namespace string) string {
 	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", agentName, namespace, AgentPort)
+}
+
+// GetAgentEndpoint returns the HTTP endpoint for the agent for a given HSM device
+// This implements the ManagerInterface
+func (m *Manager) GetAgentEndpoint(hsmDevice *hsmv1alpha1.HSMDevice) string {
+	agentName := m.generateAgentName(hsmDevice)
+	namespace := hsmDevice.Namespace
+	if namespace == "" {
+		namespace = m.AgentNamespace
+	}
+	return m.getAgentEndpoint(agentName, namespace)
 }
 
 // createAgentDeployment creates the HSM agent deployment
@@ -412,6 +445,8 @@ func (m *Manager) findTargetNode(hsmDevice *hsmv1alpha1.HSMDevice) string {
 func (m *Manager) secretReferencesDevice(hsmSecret *hsmv1alpha1.HSMSecret, hsmDevice *hsmv1alpha1.HSMDevice) bool {
 	// This is a simplified check - in practice, you might want more sophisticated logic
 	// to determine which device an HSMSecret should use based on path, device type, etc.
+	_ = hsmSecret // TODO: Use for device preference checks
+	_ = hsmDevice // TODO: Use for device type compatibility
 
 	// For now, assume any HSMSecret could use any available device of the right type
 	// A more sophisticated implementation might check:
@@ -544,6 +579,79 @@ func (m *Manager) buildAgentVolumes(hsmDevice *hsmv1alpha1.HSMDevice) []corev1.V
 	}
 
 	return volumes
+}
+
+// agentNeedsUpdate checks if the agent deployment needs to be updated due to device path changes
+func (m *Manager) agentNeedsUpdate(ctx context.Context, deployment *appsv1.Deployment, hsmDevice *hsmv1alpha1.HSMDevice) (bool, error) {
+	// Get current HSMPool to check for updated device paths
+	poolName := hsmDevice.Name + "-pool"
+	pool := &hsmv1alpha1.HSMPool{}
+
+	if err := m.Get(ctx, types.NamespacedName{
+		Name:      poolName,
+		Namespace: hsmDevice.Namespace,
+	}, pool); err != nil {
+		// If pool doesn't exist, no devices are available, so agent doesn't need update
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get HSMPool %s: %w", poolName, err)
+	}
+
+	// Extract current volume mounts from deployment
+	if len(deployment.Spec.Template.Spec.Containers) == 0 {
+		return false, fmt.Errorf("deployment has no containers")
+	}
+
+	container := deployment.Spec.Template.Spec.Containers[0]
+	currentDeviceMounts := make(map[string]string) // mount name -> device path
+
+	for _, mount := range container.VolumeMounts {
+		if mount.Name == "hsm-device" {
+			// Find corresponding volume
+			for _, vol := range deployment.Spec.Template.Spec.Volumes {
+				if vol.Name == mount.Name && vol.HostPath != nil {
+					currentDeviceMounts[mount.Name] = vol.HostPath.Path
+					break
+				}
+			}
+		}
+	}
+
+	// Check if any device paths in the pool differ from current mounts
+	for _, device := range pool.Status.AggregatedDevices {
+		if device.DevicePath != "" && device.Available {
+			// Check if this device path is already mounted
+			found := false
+			for _, path := range currentDeviceMounts {
+				if path == device.DevicePath {
+					found = true
+					break
+				}
+			}
+			if !found {
+				// New device path found that's not in current deployment
+				return true, nil
+			}
+		}
+	}
+
+	// Check for stale device paths (mounted paths that are no longer in aggregated devices)
+	for _, currentPath := range currentDeviceMounts {
+		found := false
+		for _, device := range pool.Status.AggregatedDevices {
+			if device.DevicePath == currentPath && device.Available {
+				found = true
+				break
+			}
+		}
+		if !found {
+			// Current mount points to a device path that's no longer available
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // Helper functions

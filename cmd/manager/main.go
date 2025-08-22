@@ -21,6 +21,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -238,9 +239,10 @@ func main() {
 
 	// Set up HSMPool agent controller to deploy agents when pools are ready
 	if err := (&controller.HSMPoolAgentReconciler{
-		Client:       mgr.GetClient(),
-		Scheme:       mgr.GetScheme(),
-		AgentManager: agentManager,
+		Client:               mgr.GetClient(),
+		Scheme:               mgr.GetScheme(),
+		AgentManager:         agentManager,
+		DeviceAbsenceTimeout: 10 * time.Minute, // Default: cleanup agents after 10 minutes of device absence
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "HSMPoolAgent")
 		os.Exit(1)

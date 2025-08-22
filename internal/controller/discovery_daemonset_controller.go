@@ -32,7 +32,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
 )
@@ -402,12 +404,78 @@ func (r *DiscoveryDaemonSetReconciler) getManagerImage(ctx context.Context) stri
 	return ""
 }
 
+// findDevicesForDaemonSet maps discovery DaemonSets back to HSMDevices for reconciliation
+func (r *DiscoveryDaemonSetReconciler) findDevicesForDaemonSet(ctx context.Context, obj client.Object) []reconcile.Request {
+	daemonSet, ok := obj.(*appsv1.DaemonSet)
+	if !ok {
+		return nil
+	}
+
+	// Check if this is a discovery DaemonSet
+	deviceName, exists := daemonSet.Labels["hsm.j5t.io/device"]
+	if !exists {
+		return nil
+	}
+
+	// Check if this has the discovery component label
+	component, exists := daemonSet.Labels["app.kubernetes.io/component"]
+	if !exists || component != "discovery" {
+		return nil
+	}
+
+	// Return reconcile request for the corresponding HSMDevice
+	return []reconcile.Request{
+		{
+			NamespacedName: types.NamespacedName{
+				Name:      deviceName,
+				Namespace: daemonSet.Namespace,
+			},
+		},
+	}
+}
+
+// findDevicesForHSMPool maps HSMPools back to HSMDevices for reconciliation
+func (r *DiscoveryDaemonSetReconciler) findDevicesForHSMPool(ctx context.Context, obj client.Object) []reconcile.Request {
+	hsmPool, ok := obj.(*hsmv1alpha1.HSMPool)
+	if !ok {
+		return nil
+	}
+
+	// Check if this is a pool managed by this controller
+	deviceName, exists := hsmPool.Labels["hsm.j5t.io/device"]
+	if !exists {
+		return nil
+	}
+
+	// Check if this has the pool component label
+	component, exists := hsmPool.Labels["app.kubernetes.io/component"]
+	if !exists || component != "pool" {
+		return nil
+	}
+
+	// Return reconcile request for the corresponding HSMDevice
+	return []reconcile.Request{
+		{
+			NamespacedName: types.NamespacedName{
+				Name:      deviceName,
+				Namespace: hsmPool.Namespace,
+			},
+		},
+	}
+}
+
 // SetupWithManager sets up the controller with the Manager
 func (r *DiscoveryDaemonSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&hsmv1alpha1.HSMDevice{}).
-		Owns(&appsv1.DaemonSet{}).
-		Owns(&hsmv1alpha1.HSMPool{}).
+		Watches(
+			&appsv1.DaemonSet{},
+			handler.EnqueueRequestsFromMapFunc(r.findDevicesForDaemonSet),
+		).
+		Watches(
+			&hsmv1alpha1.HSMPool{},
+			handler.EnqueueRequestsFromMapFunc(r.findDevicesForHSMPool),
+		).
 		Named("discovery-daemonset").
 		Complete(r)
 }

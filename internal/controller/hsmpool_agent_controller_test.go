@@ -19,14 +19,20 @@ package controller
 import (
 	"context"
 	"fmt"
+	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
@@ -439,3 +445,266 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 		})
 	})
 })
+
+// MockAgentManager implements the agent.ManagerInterface for testing cleanup functionality
+type MockAgentManager struct {
+	CleanupCalls []string // Track which devices were cleaned up
+}
+
+func (m *MockAgentManager) EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, hsmSecret *hsmv1alpha1.HSMSecret) (string, error) {
+	return "mock-endpoint", nil
+}
+
+func (m *MockAgentManager) CleanupAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice) error {
+	m.CleanupCalls = append(m.CleanupCalls, hsmDevice.Name)
+	return nil
+}
+
+func (m *MockAgentManager) GetAgentEndpoint(hsmDevice *hsmv1alpha1.HSMDevice) string {
+	return "mock-endpoint"
+}
+
+func TestCleanupStaleAgents(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, hsmv1alpha1.AddToScheme(scheme))
+
+	now := time.Now()
+	tenMinutesAgo := now.Add(-10 * time.Minute)
+	fiveMinutesAgo := now.Add(-5 * time.Minute)
+
+	tests := []struct {
+		name             string
+		hsmPool          *hsmv1alpha1.HSMPool
+		hsmDevices       []*hsmv1alpha1.HSMDevice
+		absenceTimeout   time.Duration
+		expectedCleanups []string
+		description      string
+	}{
+		{
+			name: "cleanup device absent for too long",
+			hsmPool: &hsmv1alpha1.HSMPool{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pool",
+					Namespace: "default",
+				},
+				Spec: hsmv1alpha1.HSMPoolSpec{
+					HSMDeviceRefs: []string{"absent-device"},
+					GracePeriod:   &metav1.Duration{Duration: 5 * time.Minute},
+				},
+				Status: hsmv1alpha1.HSMPoolStatus{
+					AggregatedDevices: []hsmv1alpha1.DiscoveredDevice{
+						{
+							DevicePath: "/dev/bus/usb/001/015",
+							LastSeen:   metav1.NewTime(tenMinutesAgo), // 10 minutes ago
+							Available:  false,                         // Device is unavailable
+						},
+					},
+				},
+			},
+			hsmDevices: []*hsmv1alpha1.HSMDevice{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "absent-device",
+						Namespace: "default",
+					},
+				},
+			},
+			absenceTimeout:   8 * time.Minute, // Cleanup after 8 minutes
+			expectedCleanups: []string{"absent-device"},
+			description:      "Device last seen 10 minutes ago, should be cleaned up (timeout: 8 min)",
+		},
+		{
+			name: "no cleanup for recently seen device",
+			hsmPool: &hsmv1alpha1.HSMPool{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pool",
+					Namespace: "default",
+				},
+				Spec: hsmv1alpha1.HSMPoolSpec{
+					HSMDeviceRefs: []string{"recent-device"},
+					GracePeriod:   &metav1.Duration{Duration: 5 * time.Minute},
+				},
+				Status: hsmv1alpha1.HSMPoolStatus{
+					AggregatedDevices: []hsmv1alpha1.DiscoveredDevice{
+						{
+							DevicePath: "/dev/bus/usb/001/015",
+							LastSeen:   metav1.NewTime(fiveMinutesAgo), // 5 minutes ago
+							Available:  false,                          // Device is unavailable
+						},
+					},
+				},
+			},
+			hsmDevices: []*hsmv1alpha1.HSMDevice{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "recent-device",
+						Namespace: "default",
+					},
+				},
+			},
+			absenceTimeout:   8 * time.Minute, // Cleanup after 8 minutes
+			expectedCleanups: []string{},      // No cleanup - within timeout
+			description:      "Device last seen 5 minutes ago, should not be cleaned up (timeout: 8 min)",
+		},
+		{
+			name: "no cleanup for available device",
+			hsmPool: &hsmv1alpha1.HSMPool{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pool",
+					Namespace: "default",
+				},
+				Spec: hsmv1alpha1.HSMPoolSpec{
+					HSMDeviceRefs: []string{"available-device"},
+					GracePeriod:   &metav1.Duration{Duration: 5 * time.Minute},
+				},
+				Status: hsmv1alpha1.HSMPoolStatus{
+					AggregatedDevices: []hsmv1alpha1.DiscoveredDevice{
+						{
+							DevicePath: "/dev/bus/usb/001/015",
+							LastSeen:   metav1.NewTime(tenMinutesAgo), // 10 minutes ago
+							Available:  true,                          // Device is available
+						},
+					},
+				},
+			},
+			hsmDevices: []*hsmv1alpha1.HSMDevice{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "available-device",
+						Namespace: "default",
+					},
+				},
+			},
+			absenceTimeout:   8 * time.Minute, // Cleanup after 8 minutes
+			expectedCleanups: []string{},      // No cleanup - device is available
+			description:      "Device is available, should not be cleaned up regardless of LastSeen",
+		},
+		{
+			name: "cleanup device never seen after pool timeout",
+			hsmPool: &hsmv1alpha1.HSMPool{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "test-pool",
+					Namespace:         "default",
+					CreationTimestamp: metav1.NewTime(tenMinutesAgo), // Pool created 10 minutes ago
+				},
+				Spec: hsmv1alpha1.HSMPoolSpec{
+					HSMDeviceRefs: []string{"never-seen-device"},
+					GracePeriod:   &metav1.Duration{Duration: 5 * time.Minute},
+				},
+				Status: hsmv1alpha1.HSMPoolStatus{
+					AggregatedDevices: []hsmv1alpha1.DiscoveredDevice{}, // No devices ever discovered
+				},
+			},
+			hsmDevices: []*hsmv1alpha1.HSMDevice{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "never-seen-device",
+						Namespace: "default",
+					},
+				},
+			},
+			absenceTimeout:   8 * time.Minute,               // Cleanup after 8 minutes
+			expectedCleanups: []string{"never-seen-device"}, // Should cleanup - pool older than timeout
+			description:      "Device never discovered, pool older than timeout, should be cleaned up",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			// Create fake client with objects
+			objs := []runtime.Object{tt.hsmPool}
+			for _, device := range tt.hsmDevices {
+				objs = append(objs, device)
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithRuntimeObjects(objs...).
+				Build()
+
+			// Create mock agent manager
+			mockAgentManager := &MockAgentManager{}
+
+			// Create reconciler
+			reconciler := &HSMPoolAgentReconciler{
+				Client:               fakeClient,
+				Scheme:               scheme,
+				AgentManager:         mockAgentManager,
+				DeviceAbsenceTimeout: tt.absenceTimeout,
+			}
+
+			// Run cleanup
+			err := reconciler.cleanupStaleAgents(ctx, tt.hsmPool)
+			require.NoError(t, err, tt.description)
+
+			// Verify expected cleanups
+			if len(tt.expectedCleanups) == 0 {
+				assert.Empty(t, mockAgentManager.CleanupCalls,
+					"Expected no cleanups but got some. %s", tt.description)
+			} else {
+				assert.Equal(t, tt.expectedCleanups, mockAgentManager.CleanupCalls,
+					"Expected cleanups didn't match actual cleanups. %s", tt.description)
+			}
+		})
+	}
+}
+
+func TestDefaultAbsenceTimeout(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, hsmv1alpha1.AddToScheme(scheme))
+
+	ctx := context.Background()
+	now := time.Now()
+	elevenMinutesAgo := now.Add(-11 * time.Minute)
+
+	// Pool with custom grace period but no explicit absence timeout
+	hsmPool := &hsmv1alpha1.HSMPool{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pool",
+			Namespace: "default",
+		},
+		Spec: hsmv1alpha1.HSMPoolSpec{
+			HSMDeviceRefs: []string{"test-device"},
+			GracePeriod:   &metav1.Duration{Duration: 3 * time.Minute}, // 3 minute grace period
+		},
+		Status: hsmv1alpha1.HSMPoolStatus{
+			AggregatedDevices: []hsmv1alpha1.DiscoveredDevice{
+				{
+					DevicePath: "/dev/bus/usb/001/015",
+					LastSeen:   metav1.NewTime(elevenMinutesAgo), // 11 minutes ago
+					Available:  false,
+				},
+			},
+		},
+	}
+
+	hsmDevice := &hsmv1alpha1.HSMDevice{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-device",
+			Namespace: "default",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(hsmPool, hsmDevice).
+		Build()
+
+	mockAgentManager := &MockAgentManager{}
+
+	reconciler := &HSMPoolAgentReconciler{
+		Client:       fakeClient,
+		Scheme:       scheme,
+		AgentManager: mockAgentManager,
+		// DeviceAbsenceTimeout not set - should default to 2x grace period (6 minutes)
+	}
+
+	err := reconciler.cleanupStaleAgents(ctx, hsmPool)
+	require.NoError(t, err)
+
+	// Should cleanup because device was last seen 11 minutes ago, and default timeout is 2x3=6 minutes
+	assert.Equal(t, []string{"test-device"}, mockAgentManager.CleanupCalls,
+		"Should cleanup device when using default timeout (2x grace period)")
+}

@@ -261,6 +261,9 @@ Each binary runs specific controllers:
 - **HSMPool Agent Controller** (manager): `internal/controller/hsmpool_agent_controller.go`
   - **NEW**: Manages agent deployment for HSM pools  
   - Coordinates agent pod lifecycle with discovered devices
+  - **Enhanced**: Watches deployments for immediate recreation when deleted
+  - Device path change detection and agent restart capability
+  - Automatic cleanup of stale agents after device absence timeout (default: 10 minutes)
 
 - **HSMDevice Controller** (discovery): `internal/controller/hsmdevice_controller.go` 
   - USB device discovery via sysfs scanning
@@ -559,6 +562,38 @@ metadata:
 
 **Result**: Clean port separation with no conflicts.
 
+### Immediate Reconciliation for Resource Deletion ✅ COMPLETED (NEW)
+**Enhancement**: All managed resources now support immediate recreation when manually deleted.
+
+**Problem**: When users manually deleted agent deployments, discovery DaemonSets, or HSMPools, there could be delays before the controllers noticed and recreated them.
+
+**Solution Applied**: 
+- **Agent Deployments**: `HSMPoolAgentReconciler` now watches deployments with `findPoolsForDeployment()` mapping
+- **Discovery DaemonSets**: `DiscoveryDaemonSetReconciler` now watches DaemonSets with `findDevicesForDaemonSet()` mapping  
+- **HSMPools**: `DiscoveryDaemonSetReconciler` now watches HSMPools with `findDevicesForHSMPool()` mapping
+
+**Implementation Pattern**:
+```go
+// All controllers now use this pattern for immediate reconciliation
+.Watches(
+    &ResourceType{},
+    handler.EnqueueRequestsFromMapFunc(r.findOwnerFunction),
+)
+```
+
+**Key Benefits**:
+- ✅ **Immediate Recovery**: Delete any managed resource → immediate reconciliation → resource recreated
+- ✅ **Label-Based Filtering**: Only resources with proper labels trigger reconciliation
+- ✅ **Cross-Resource Mapping**: Deleted resource events map to correct owner for reconciliation
+- ✅ **Comprehensive Coverage**: Agents, DaemonSets, and HSMPools all protected
+
+**Files Updated**:
+- `internal/controller/hsmpool_agent_controller.go`: Added deployment watching
+- `internal/controller/discovery_daemonset_controller.go`: Added DaemonSet and HSMPool watching
+- Comprehensive test coverage for all mapping functions
+
+**Result**: Complete resilience to manual deletions across all infrastructure components.
+
 ## ✅ Current Implementation Status
 
 ### Completed Components
@@ -668,7 +703,7 @@ kubectl logs -n hsm-secrets-operator-system -l app=hsm-device-discovery
 │   │   ├── hsmsecret_controller.go        # Secret sync
 │   │   ├── hsmpool_controller.go          # Device aggregation (NEW)
 │   │   ├── hsmpool_agent_controller.go    # Agent deployment (NEW) 
-│   │   └── discovery_daemonset_controller.go # DaemonSet management
+│   │   └── discovery_daemonset_controller.go # DaemonSet and HSMPool management (Enhanced)
 │   ├── hsm/                      # HSM client abstraction
 │   │   ├── client.go             # Interface definition
 │   │   ├── mock_client.go        # Testing implementation
@@ -744,26 +779,19 @@ spec:
 
 ```bash
 # List all secrets (requires PIN authentication)
-pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" \
-  --login --pin=$PKCS11_PIN \
-  --list-objects --type=data
+pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" --login --pin=$PKCS11_PIN --list-objects --type=data
 
 # List public objects only (no PIN required)
-pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" \
-  --list-objects --type=data
+pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" --list-objects --type=data
 
 # Read a specific secret component
-pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" \
-  --login --pin=$PKCS11_PIN \
-  --read-object --type=data --label="secret-name/api_key"
+pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" --login --pin=$PKCS11_PIN --read-object --type=data --label="secret-name/api_key"
 
 # Get HSM info
 pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" -I
 
 # List all object types
-pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" \
-  --login --pin=$PKCS11_PIN \
-  --list-objects
+pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" --login --pin=$PKCS11_PIN --list-objects
 ```
 
 **Secret Storage Structure:**
@@ -903,6 +931,25 @@ kubectl get pods -l app.kubernetes.io/component=discovery \
 
 # Check pod reporting status in HSMPool
 kubectl get hsmpool pico-hsm-discovery-pool -o jsonpath='{.status.reportingPods[*].podName}'
+```
+
+### Testing Immediate Reconciliation
+```bash
+# Test immediate recreation of managed resources
+
+# 1. Delete an agent deployment - should recreate immediately
+kubectl delete deployment -l app.kubernetes.io/component=agent
+kubectl get deployments -l app.kubernetes.io/component=agent -w  # Watch immediate recreation
+
+# 2. Delete a discovery DaemonSet - should recreate immediately  
+kubectl delete daemonset -l app.kubernetes.io/component=discovery
+kubectl get daemonsets -l app.kubernetes.io/component=discovery -w  # Watch immediate recreation
+
+# 3. Delete an HSMPool - should recreate immediately
+kubectl delete hsmpool <pool-name>
+kubectl get hsmpool -w  # Watch immediate recreation
+
+# All resources should be recreated within seconds of deletion
 ```
 
 This operator design provides a secure, hardware-backed secret management solution that integrates seamlessly with Kubernetes while maintaining the security benefits of HSM-based storage.

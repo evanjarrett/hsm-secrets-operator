@@ -332,4 +332,198 @@ var _ = Describe("DiscoveryDaemonSetReconciler", func() {
 			}).Should(Equal("hsm-discovery:latest"))
 		})
 	})
+
+	Describe("findDevicesForDaemonSet", func() {
+		var reconciler *DiscoveryDaemonSetReconciler
+
+		BeforeEach(func() {
+			reconciler = &DiscoveryDaemonSetReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+		})
+
+		It("Should return reconcile request for discovery DaemonSet", func() {
+			daemonSet := &appsv1.DaemonSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-device-discovery",
+					Namespace: "test-namespace",
+					Labels: map[string]string{
+						"app.kubernetes.io/component": "discovery",
+						"hsm.j5t.io/device":           "test-device",
+					},
+				},
+			}
+
+			ctx := context.Background()
+			requests := reconciler.findDevicesForDaemonSet(ctx, daemonSet)
+
+			Expect(requests).To(HaveLen(1))
+			Expect(requests[0].Name).To(Equal("test-device"))
+			Expect(requests[0].Namespace).To(Equal("test-namespace"))
+		})
+
+		It("Should return no requests for non-discovery DaemonSet", func() {
+			daemonSet := &appsv1.DaemonSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "some-other-daemonset",
+					Namespace: "test-namespace",
+					Labels: map[string]string{
+						"app.kubernetes.io/component": "other",
+						"hsm.j5t.io/device":           "test-device",
+					},
+				},
+			}
+
+			ctx := context.Background()
+			requests := reconciler.findDevicesForDaemonSet(ctx, daemonSet)
+
+			Expect(requests).To(BeEmpty())
+		})
+
+		It("Should return no requests for DaemonSet without device label", func() {
+			daemonSet := &appsv1.DaemonSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-device-discovery",
+					Namespace: "test-namespace",
+					Labels: map[string]string{
+						"app.kubernetes.io/component": "discovery",
+					},
+				},
+			}
+
+			ctx := context.Background()
+			requests := reconciler.findDevicesForDaemonSet(ctx, daemonSet)
+
+			Expect(requests).To(BeEmpty())
+		})
+
+		It("Should return no requests for DaemonSet without component label", func() {
+			daemonSet := &appsv1.DaemonSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-device-discovery",
+					Namespace: "test-namespace",
+					Labels: map[string]string{
+						"hsm.j5t.io/device": "test-device",
+					},
+				},
+			}
+
+			ctx := context.Background()
+			requests := reconciler.findDevicesForDaemonSet(ctx, daemonSet)
+
+			Expect(requests).To(BeEmpty())
+		})
+
+		It("Should return no requests for non-DaemonSet object", func() {
+			deployment := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-deployment",
+					Namespace: "test-namespace",
+				},
+			}
+
+			ctx := context.Background()
+			requests := reconciler.findDevicesForDaemonSet(ctx, deployment)
+
+			Expect(requests).To(BeEmpty())
+		})
+	})
+
+	Describe("findDevicesForHSMPool", func() {
+		var reconciler *DiscoveryDaemonSetReconciler
+
+		BeforeEach(func() {
+			reconciler = &DiscoveryDaemonSetReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+		})
+
+		It("Should return reconcile request for pool HSMPool", func() {
+			hsmPool := &hsmv1alpha1.HSMPool{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-device-pool",
+					Namespace: "test-namespace",
+					Labels: map[string]string{
+						"app.kubernetes.io/component": "pool",
+						"hsm.j5t.io/device":           "test-device",
+					},
+				},
+			}
+
+			ctx := context.Background()
+			requests := reconciler.findDevicesForHSMPool(ctx, hsmPool)
+
+			Expect(requests).To(HaveLen(1))
+			Expect(requests[0].Name).To(Equal("test-device"))
+			Expect(requests[0].Namespace).To(Equal("test-namespace"))
+		})
+
+		It("Should return no requests for non-pool HSMPool", func() {
+			hsmPool := &hsmv1alpha1.HSMPool{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "some-other-pool",
+					Namespace: "test-namespace",
+					Labels: map[string]string{
+						"app.kubernetes.io/component": "other",
+						"hsm.j5t.io/device":           "test-device",
+					},
+				},
+			}
+
+			ctx := context.Background()
+			requests := reconciler.findDevicesForHSMPool(ctx, hsmPool)
+
+			Expect(requests).To(BeEmpty())
+		})
+
+		It("Should return no requests for HSMPool without device label", func() {
+			hsmPool := &hsmv1alpha1.HSMPool{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-device-pool",
+					Namespace: "test-namespace",
+					Labels: map[string]string{
+						"app.kubernetes.io/component": "pool",
+					},
+				},
+			}
+
+			ctx := context.Background()
+			requests := reconciler.findDevicesForHSMPool(ctx, hsmPool)
+
+			Expect(requests).To(BeEmpty())
+		})
+
+		It("Should return no requests for HSMPool without component label", func() {
+			hsmPool := &hsmv1alpha1.HSMPool{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-device-pool",
+					Namespace: "test-namespace",
+					Labels: map[string]string{
+						"hsm.j5t.io/device": "test-device",
+					},
+				},
+			}
+
+			ctx := context.Background()
+			requests := reconciler.findDevicesForHSMPool(ctx, hsmPool)
+
+			Expect(requests).To(BeEmpty())
+		})
+
+		It("Should return no requests for non-HSMPool object", func() {
+			deployment := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-deployment",
+					Namespace: "test-namespace",
+				},
+			}
+
+			ctx := context.Background()
+			requests := reconciler.findDevicesForHSMPool(ctx, deployment)
+
+			Expect(requests).To(BeEmpty())
+		})
+	})
 })
