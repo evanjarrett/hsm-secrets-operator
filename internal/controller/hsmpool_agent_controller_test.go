@@ -129,7 +129,8 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 			Expect(k8sClient.Status().Update(ctx, hsmPool)).To(Succeed())
 
 			// Create agent manager
-			agentManager = agent.NewManager(k8sClient, "test-agent:latest", hsmPoolNamespace)
+			imageResolver := NewImageResolver(k8sClient)
+			agentManager = agent.NewManager(k8sClient, hsmPoolNamespace, imageResolver)
 		})
 
 		AfterEach(func() {

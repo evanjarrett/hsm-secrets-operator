@@ -45,9 +45,6 @@ const (
 	// AgentNamePrefix is the prefix for HSM agent deployment names
 	AgentNamePrefix = "hsm-agent"
 
-	// AgentImage is the container image for HSM agents
-	AgentImage = "hsm-secrets-operator:latest"
-
 	// AgentPort is the port the HSM agent serves on
 	AgentPort = 8092
 
@@ -60,18 +57,21 @@ type Manager struct {
 	client.Client
 	AgentImage     string
 	AgentNamespace string
+	ImageResolver  ImageResolver
+}
+
+// ImageResolver interface for dependency injection
+type ImageResolver interface {
+	GetImage(ctx context.Context, defaultImage string) string
 }
 
 // NewManager creates a new agent manager
-func NewManager(k8sClient client.Client, agentImage, namespace string) *Manager {
-	if agentImage == "" {
-		agentImage = AgentImage
-	}
+func NewManager(k8sClient client.Client, namespace string, imageResolver ImageResolver) *Manager {
 
 	m := &Manager{
 		Client:         k8sClient,
-		AgentImage:     agentImage,
 		AgentNamespace: namespace,
+		ImageResolver:  imageResolver,
 	}
 
 	// If no namespace provided, agents will be deployed in the same namespace as their HSMDevice
@@ -209,6 +209,9 @@ func (m *Manager) createAgentDeployment(ctx context.Context, hsmDevice *hsmv1alp
 		return fmt.Errorf("no target node found for HSM device %s", hsmDevice.Name)
 	}
 
+	// Get discovery image from environment, manager image, or use default
+	agentImage := m.ImageResolver.GetImage(ctx, "AGENT_IMAGE")
+
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      agentName,
@@ -274,7 +277,7 @@ func (m *Manager) createAgentDeployment(ctx context.Context, hsmDevice *hsmv1alp
 					Containers: []corev1.Container{
 						{
 							Name:  "agent",
-							Image: m.AgentImage,
+							Image: agentImage,
 							Command: []string{
 								"/entrypoint.sh",
 								"agent",

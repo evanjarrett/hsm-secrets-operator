@@ -219,14 +219,10 @@ func main() {
 
 	// HSM client registration removed - now handled by agent architecture
 
-	// Create agent manager
-	agentImage := os.Getenv("AGENT_IMAGE")
-	if agentImage == "" {
-		agentImage = "hsm-secrets-operator:latest" // Default to same image as manager
-	}
 
 	// Agent manager will detect the current namespace automatically
-	agentManager := agent.NewManager(mgr.GetClient(), agentImage, "")
+	imageResolver := controller.NewImageResolver(mgr.GetClient())
+	agentManager := agent.NewManager(mgr.GetClient(), "", imageResolver)
 
 	// Set up HSMPool controller to aggregate discovery reports from pod annotations
 	if err := (&controller.HSMPoolReconciler{
@@ -260,8 +256,9 @@ func main() {
 
 	// Set up discovery DaemonSet controller (manager-owned)
 	if err := (&controller.DiscoveryDaemonSetReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		ImageResolver: imageResolver,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DiscoveryDaemonSet")
 		os.Exit(1)

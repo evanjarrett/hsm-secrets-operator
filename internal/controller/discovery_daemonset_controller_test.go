@@ -93,8 +93,9 @@ var _ = Describe("DiscoveryDaemonSetReconciler", func() {
 
 			By("Reconciling the HSMDevice")
 			reconciler := &DiscoveryDaemonSetReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:        k8sClient,
+				Scheme:        k8sClient.Scheme(),
+				ImageResolver: NewImageResolver(k8sClient),
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -191,8 +192,9 @@ var _ = Describe("DiscoveryDaemonSetReconciler", func() {
 
 			By("Reconciling to create initial DaemonSet")
 			reconciler := &DiscoveryDaemonSetReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:        k8sClient,
+				Scheme:        k8sClient.Scheme(),
+				ImageResolver: NewImageResolver(k8sClient),
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -250,8 +252,9 @@ var _ = Describe("DiscoveryDaemonSetReconciler", func() {
 
 			By("Reconciling to create DaemonSet")
 			reconciler := &DiscoveryDaemonSetReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:        k8sClient,
+				Scheme:        k8sClient.Scheme(),
+				ImageResolver: NewImageResolver(k8sClient),
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -305,8 +308,9 @@ var _ = Describe("DiscoveryDaemonSetReconciler", func() {
 
 			By("Reconciling the HSMDevice")
 			reconciler := &DiscoveryDaemonSetReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:        k8sClient,
+				Scheme:        k8sClient.Scheme(),
+				ImageResolver: NewImageResolver(k8sClient),
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
