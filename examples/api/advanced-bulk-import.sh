@@ -34,6 +34,61 @@ warning() {
     echo -e "${YELLOW}⚠️${NC} $1"
 }
 
+# Convert Bitwarden vault format to HSM format
+convert_bitwarden_vault() {
+    local input_file="$1"
+    local output_file="${input_file%.json}-hsm.json"
+    
+    log "Converting Bitwarden vault format to HSM format..."
+    
+    # Check if this is a Bitwarden vault file
+    if jq -e '.projects and .secrets' "$input_file" > /dev/null 2>&1; then
+        log "Detected Bitwarden vault format"
+        
+        # Build project name mapping
+        local project_map=$(mktemp)
+        jq -r '.projects[] | "\(.id) \(.name)"' "$input_file" > "$project_map"
+        
+        # Convert secrets format
+        jq --slurpfile projects <(jq '.projects' "$input_file") '
+        {
+          "secrets": [
+            .secrets[] | {
+              "label": .key,
+              "id": (.id | gsub("-"; "") | .[0:8]),
+              "format": "text",
+              "description": (if .note != "" then .note else "Imported from Bitwarden vault" end),
+              "tags": {
+                "source": "bitwarden",
+                "projects": [.projectIds[] as $pid | $projects[0][] | select(.id == $pid) | .name]
+              },
+              "metadata": {
+                "label": .key,
+                "description": (if .note != "" then .note else "Imported from Bitwarden vault" end),
+                "tags": {
+                  "source": "bitwarden",
+                  "projects": [.projectIds[] as $pid | $projects[0][] | select(.id == $pid) | .name]
+                },
+                "format": "text",
+                "dataType": "plaintext",
+                "createdAt": now | strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "source": "bitwarden"
+              },
+              "data": {
+                "value": .value
+              }
+            }
+          ]
+        }' "$input_file" > "$output_file"
+        
+        rm "$project_map"
+        success "Converted Bitwarden vault to: $output_file"
+        CONFIG_FILE="$output_file"
+    else
+        log "Not a Bitwarden vault format, proceeding with original file"
+    fi
+}
+
 # Validate prerequisites
 validate_prerequisites() {
     log "Validating prerequisites..."
@@ -57,6 +112,9 @@ validate_prerequisites() {
         error "Invalid JSON in config file: $CONFIG_FILE"
         exit 1
     fi
+    
+    # Convert Bitwarden format if detected
+    convert_bitwarden_vault "$CONFIG_FILE"
     
     # Test API connectivity
     if ! curl -s --connect-timeout 5 "$API_BASE_URL/api/v1/health" > /dev/null; then
@@ -171,7 +229,7 @@ import_secret() {
     response=$(curl -s -X POST \
       -H "Content-Type: application/json" \
       -d "$secret_data" \
-      "$API_BASE_URL/api/v1/hsm/secrets" 2>/dev/null)
+      "$API_BASE_URL/api/v1/hsm/secrets/$label" 2>/dev/null)
     
     if [ $? -ne 0 ]; then
         error "Failed to connect to API for $label"
@@ -302,11 +360,17 @@ while [[ $# -gt 0 ]]; do
         --help)
             echo "Usage: $0 [config-file] [options]"
             echo ""
+            echo "Supports both HSM format and Bitwarden vault format (auto-detected)."
+            echo ""
             echo "Options:"
             echo "  --dry-run        Show what would be imported without making changes"
             echo "  --no-rollback    Don't rollback on failure"
             echo "  --api-url URL    Override API base URL"
             echo "  --help           Show this help message"
+            echo ""
+            echo "Config file formats:"
+            echo "  HSM format:      Standard format with 'secrets' array"
+            echo "  Bitwarden:       Vault export with 'projects' and 'secrets' arrays"
             echo ""
             echo "Environment variables:"
             echo "  API_BASE_URL           API endpoint (default: http://localhost:8090)"

@@ -393,3 +393,27 @@ func (c *Client) SetTimeout(timeout time.Duration) {
 	c.timeout = timeout
 	c.httpClient.Timeout = timeout
 }
+
+// WriteSecretWithMetadata writes secret data and metadata to the specified HSM path
+func (c *Client) WriteSecretWithMetadata(ctx context.Context, path string, data hsm.SecretData, metadata *hsm.SecretMetadata) error {
+	// For now, just write the secret data - metadata support can be added to agent API later
+	// This provides compatibility with the updated interface
+	if err := c.WriteSecret(ctx, path, data); err != nil {
+		return err
+	}
+
+	// TODO: Add metadata storage to agent API endpoints
+	if metadata != nil {
+		c.logger.V(1).Info("Metadata not yet supported in agent API, skipping", "path", path)
+	}
+
+	return nil
+}
+
+// ReadMetadata reads metadata for a secret at the given path
+func (c *Client) ReadMetadata(ctx context.Context, path string) (*hsm.SecretMetadata, error) {
+	// TODO: Add metadata reading from agent API endpoints
+	// For now, return empty metadata to satisfy interface
+	c.logger.V(1).Info("Metadata reading not yet supported in agent API", "path", path)
+	return nil, fmt.Errorf("metadata not found for path: %s (agent API doesn't support metadata yet)", path)
+}

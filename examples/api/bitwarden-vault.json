@@ -1,0 +1,23 @@
+{
+  "projects": [
+    {
+      "id": "a9501a2c-1984-435a-90b8-b20f016554c2",
+      "name": "kubernetes"
+    },
+    {
+      "id": "b1234567-8901-2345-6789-012345678901",
+      "name": "web-services"
+    }
+  ],
+  "secrets": [
+    {
+      "key": "CLOUDFLARE_API",
+      "value": "my_cf_api_token",
+      "note": "Cloudflare API token for DNS management",
+      "id": "0dc93e40-9155-4a7a-a809-b20f0165daa4",
+      "projectIds": [
+        "a9501a2c-1984-435a-90b8-b20f016554c2"
+      ]
+    }
+  ]
+}

@@ -10,18 +10,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Building and Testing
 ```bash
-# Build both binaries
-make build                    # Builds bin/manager and bin/discovery
+# Build all binaries (manager, discovery, agent)
+make build                    # Builds bin/manager, bin/discovery, bin/agent
 
-# Build specific components
+# Build specific components individually
 go build -o bin/manager cmd/manager/main.go
-go build -o bin/discovery cmd/discovery/main.go
+go build -o bin/discovery cmd/discovery/main.go  
 go build -o bin/agent cmd/agent/main.go
 go build -o bin/test-hsm cmd/test-hsm/main.go
 
-# Run tests
+# Run local development
+make run                      # Run manager locally (requires cluster access)
+
+# Testing
 make test                     # Run unit tests with coverage
-make test-e2e                 # Run end-to-end tests (requires Kind cluster)
+make test-e2e                 # Run end-to-end tests (requires Kind cluster) 
 make setup-test-e2e          # Set up Kind cluster for e2e testing
 make cleanup-test-e2e        # Tear down Kind cluster
 
@@ -29,27 +32,30 @@ make cleanup-test-e2e        # Tear down Kind cluster
 # To trigger E2E tests manually in GitHub Actions:
 # Go to Actions tab -> "E2E Tests" -> "Run workflow"
 
-# Run specific test package
+# Run specific test packages
 go test ./internal/controller -v
 go test ./internal/hsm -v
 go test ./internal/discovery -v
 go test ./internal/api -v
 
 # Code quality (ALWAYS RUN BEFORE COMMITTING)
-make fmt                      # Format code (or: gofmt -w .)
+make fmt                      # Format code (runs go fmt ./...)
 make vet                      # Run go vet
-make lint                     # Run golangci-lint ./... (fixed to scan all packages)
+make lint                     # Run golangci-lint ./... (configured via .golangci.yml)
 make lint-fix                 # Run golangci-lint with auto-fixes
+make lint-config             # Verify golangci-lint configuration
 make quality                  # Run all quality checks (fmt + vet + lint)
 
-# Quality check workflow for development
+# Quality check workflow for development  
 make quality                  # ONE COMMAND: Format + vet + lint (RECOMMENDED)
 # OR run individually:
 gofmt -w .                    # Format all Go files
 golangci-lint run ./...       # Lint all packages (REQUIRED before code changes)
 
-# Sync CRDs from config/ to helm/ after CRD changes
-make helm-sync                # Sync generated CRDs to Helm crds/ directory
+# CRD and manifest generation
+make manifests               # Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects
+make generate                # Generate DeepCopy methods for CRD types
+make helm-sync               # Sync generated CRDs from config/ to helm/ after CRD changes
 ```
 
 ### Docker Images
@@ -60,11 +66,14 @@ make docker-build IMG=hsm-secrets-operator:latest
 # Testing image (all binaries without CGO, uses mock clients only)
 make docker-build-testing IMG=hsm-secrets-operator:latest
 
-# Discovery image (native sysfs, distroless, no external dependencies)
-make docker-build-discovery DISCOVERY_IMG=hsm-discovery:latest
+# Push images to registry
+make docker-push IMG=<registry>/hsm-secrets-operator:tag
 
-# Build both manager and discovery images
-make docker-build-all
+# Multi-architecture build and push
+make docker-build-multiarch IMG=<registry>/hsm-secrets-operator:tag
+
+# Build installer bundle (consolidated YAML)
+make build-installer IMG=<registry>/hsm-secrets-operator:tag
 ```
 
 ### PKCS#11 Build Architecture
@@ -108,6 +117,18 @@ helm lint helm/hsm-secrets-operator
 # Template Helm chart for validation
 helm template test helm/hsm-secrets-operator
 
+# Install from local chart
+helm install hsm-secrets-operator helm/hsm-secrets-operator \
+  --namespace hsm-secrets-operator-system \
+  --create-namespace
+
+# Upgrade existing installation
+helm upgrade hsm-secrets-operator helm/hsm-secrets-operator \
+  --namespace hsm-secrets-operator-system
+
+# Uninstall
+helm uninstall hsm-secrets-operator -n hsm-secrets-operator-system
+
 # Sync CRDs to Helm after changes
 make helm-sync               # Copies CRDs from config/crd/bases/ to helm/hsm-secrets-operator/crds/
 ```
@@ -136,10 +157,51 @@ make test
 - **The status update loop bug** was caught by adding proper linting workflows
 
 **Before committing any changes:**
-1. ✅ `gofmt -w .` (format all files)
-2. ✅ `golangci-lint run ./...` (must show "0 issues")  
-3. ✅ `make test` (all tests must pass)
-4. ✅ Test your changes locally
+1. ✅ `make quality` (format + vet + lint)
+2. ✅ `make test` (all tests must pass)
+3. ✅ Test your changes locally with actual deployment
+
+## Common Development Workflows
+
+### Adding a New CRD Field
+```bash
+# 1. Modify the CRD struct in api/v1alpha1/
+# 2. Regenerate manifests and code
+make manifests generate
+
+# 3. Sync CRDs to Helm chart
+make helm-sync
+
+# 4. Run quality checks
+make quality
+
+# 5. Test the changes
+make test
+```
+
+### Working with Controllers
+```bash
+# Run unit tests for specific controller
+go test ./internal/controller -run TestHSMSecretController -v
+
+# Test controller with actual cluster (local development)
+make run
+
+# Build and test with Docker
+make docker-build IMG=test:latest
+```
+
+### API Development and Testing
+```bash
+# Test API endpoints locally
+cd examples/api && ./health-check.sh
+
+# Create test secrets via API
+./create-secret.sh my-test-secret
+
+# List all secrets
+./list-secrets.sh
+```
 
 ## Project Overview
 
@@ -588,59 +650,54 @@ kubectl get hsmdevice -w
 kubectl logs -n hsm-secrets-operator-system -l app=hsm-device-discovery
 ```
 
-### Complete Files Structure
+### Project Structure Overview
+
+**Key Architecture Components:**
 ```
-├── api/v1alpha1/
-│   ├── hsmsecret_types.go          # HSMSecret CRD with mirroring support
-│   ├── hsmdevice_types.go          # HSMDevice CRD with USB discovery
-│   └── groupversion_info.go        # API group metadata
-├── cmd/
-│   ├── manager/main.go             # Manager binary (HSMSecret controller + API)
-│   └── discovery/main.go           # Discovery binary (HSMDevice controller)
+├── cmd/                           # Entry points for all binaries
+│   ├── manager/main.go           # Manager: HSMSecret controller + API proxy
+│   ├── discovery/main.go         # Discovery: HSMPool controller (removed from new arch)
+│   ├── agent/main.go             # Agent: Direct HSM communication
+│   └── test-hsm/main.go          # Test utility for HSM operations
+├── api/v1alpha1/                 # CRD definitions
+│   ├── hsmsecret_types.go        # HSMSecret CRD
+│   ├── hsmpool_types.go          # HSMPool CRD (race-free aggregation)
+│   └── hsmdevice_types.go        # HSMDevice CRD (readonly specs)
 ├── internal/
-│   ├── controller/
-│   │   ├── hsmsecret_controller.go # Secret reconciliation with fallback
-│   │   └── hsmdevice_controller.go # Device discovery (FIXED: no more loops!)
-│   ├── discovery/
-│   │   ├── usb.go                  # USB device discovery (Talos host path support)
-│   │   ├── mirroring.go            # Cross-node device mirroring
-│   │   └── deviceplugin.go         # Kubernetes device management
-│   ├── hsm/
-│   │   ├── client.go               # HSM client interface
-│   │   ├── mock_client.go          # Full test implementation
-│   │   └── pkcs11_client.go        # Production PKCS#11 client
-│   └── api/
-│       ├── server.go               # REST API server with Gin
-│       ├── handlers.go             # HTTP request handlers
-│       └── middleware.go           # API middleware
-├── examples/
-│   ├── basic/                      # Basic usage examples
-│   ├── advanced/                   # Advanced configurations
-│   │   ├── talos-deployment.yaml   # Talos Linux deployment
-│   │   ├── talos-build-guide.md    # Talos setup guide
-│   │   └── custom-library-guide.md # PKCS#11 library integration
-│   └── api/                        # API usage examples
-│       ├── bulk-operations.sh      # Basic bulk operations
-│       ├── advanced-bulk-import.sh # Advanced bulk import
-│       ├── direct-import-examples.sh # Direct API examples
-│       ├── production-import.json  # Sample production config
-│       └── bulk-secrets.json       # Sample bulk config
-├── scripts/
-│   └── build-talos.sh             # Talos Linux build automation
-├── deploy/
-│   └── talos/                     # Talos-specific manifests
-│       ├── daemonset-discovery.yaml # Fixed discovery DaemonSet (no loops!)
-│       └── README.md               # Talos deployment guide
-├── config/
-│   ├── crd/bases/                 # Generated CRD manifests
-│   ├── rbac/                      # Generated RBAC rules
-│   └── samples/                   # Sample resources
-├── Dockerfile                     # Manager image (with HSM libraries)
-├── Dockerfile.discovery          # Discovery image (lightweight distroless)
-├── Dockerfile.talos              # Talos-optimized image
-├── test-loop-fix.yaml            # Test pod for verifying loop fix
-├── STATUS-UPDATE-LOOP-FIX.md     # Documentation of critical fix
-└── CLAUDE.md                     # This file (updated with fixes!)
+│   ├── controller/               # Kubernetes controllers
+│   │   ├── hsmsecret_controller.go        # Secret sync
+│   │   ├── hsmpool_controller.go          # Device aggregation (NEW)
+│   │   ├── hsmpool_agent_controller.go    # Agent deployment (NEW) 
+│   │   └── discovery_daemonset_controller.go # DaemonSet management
+│   ├── hsm/                      # HSM client abstraction
+│   │   ├── client.go             # Interface definition
+│   │   ├── mock_client.go        # Testing implementation
+│   │   ├── pkcs11_client.go      # Production PKCS#11 client (CGO)
+│   │   └── pkcs11_client_nocgo.go # Stub for testing builds
+│   ├── agent/                    # Agent deployment and communication
+│   │   ├── deployment.go         # Agent pod management
+│   │   └── client.go             # Agent API client
+│   ├── api/                      # REST API server
+│   │   ├── server.go             # HTTP server setup
+│   │   └── proxy_handlers.go     # API proxy to agents
+│   └── discovery/                # Device discovery (legacy)
+│       ├── usb.go               # USB device scanning
+│       └── mirroring.go         # Cross-node mirroring
+├── examples/                     # Usage examples and configurations
+│   ├── basic/                   # Simple configurations
+│   ├── advanced/                # Complex multi-device setups
+│   ├── api/                     # API usage scripts
+│   └── agent-deployment/        # Agent-specific examples
+├── config/                      # Kubernetes manifests
+│   ├── crd/bases/              # Generated CRD definitions
+│   ├── rbac/                   # Generated RBAC rules
+│   ├── samples/                # Sample resource configurations
+│   └── default/                # Default deployment configuration
+├── helm/                       # Helm chart
+│   └── hsm-secrets-operator/   # Complete Helm chart
+└── test/                       # Test suites
+    ├── e2e/                    # End-to-end tests
+    └── utils/                  # Test utilities
 ```
 
 ## Technical Requirements
@@ -688,7 +745,7 @@ spec:
 ```bash
 # List all secrets (requires PIN authentication)
 pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" \
-  --login --pin="YOUR_PIN" \
+  --login --pin=$PKCS11_PIN \
   --list-objects --type=data
 
 # List public objects only (no PIN required)
@@ -697,7 +754,7 @@ pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" \
 
 # Read a specific secret component
 pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" \
-  --login --pin="YOUR_PIN" \
+  --login --pin=$PKCS11_PIN \
   --read-object --type=data --label="secret-name/api_key"
 
 # Get HSM info
@@ -705,7 +762,7 @@ pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" -I
 
 # List all object types
 pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" \
-  --login --pin="YOUR_PIN" \
+  --login --pin=$PKCS11_PIN \
   --list-objects
 ```
 

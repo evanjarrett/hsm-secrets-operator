@@ -21,6 +21,7 @@ package hsm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -32,7 +33,9 @@ import (
 )
 
 const (
-	defaultKeyName = "data"
+	defaultKeyName    = "data"
+	metadataKeySuffix = "/_metadata"
+	applicationName   = "hsm-secrets-operator"
 )
 
 // PKCS11Client implements the Client interface using PKCS#11
@@ -359,6 +362,19 @@ func (c *PKCS11Client) ReadSecret(ctx context.Context, path string) (SecretData,
 	return data, nil
 }
 
+// WriteSecretWithMetadata writes secret data and metadata to the specified HSM path
+func (c *PKCS11Client) WriteSecretWithMetadata(ctx context.Context, path string, data SecretData, metadata *SecretMetadata) error {
+	if err := c.WriteSecret(ctx, path, data); err != nil {
+		return err
+	}
+
+	if metadata != nil {
+		return c.writeMetadata(path, metadata)
+	}
+
+	return nil
+}
+
 // WriteSecret writes secret data to the specified HSM path
 func (c *PKCS11Client) WriteSecret(ctx context.Context, path string, data SecretData) error {
 	c.mutex.Lock()
@@ -383,13 +399,38 @@ func (c *PKCS11Client) WriteSecret(ctx context.Context, path string, data Secret
 			label = path + "/" + key
 		}
 
+		// Infer data type from content
+		dataType := InferDataType(value)
+
+		// Get OID for data type
+		oid, err := GetOIDForDataType(dataType)
+		if err != nil {
+			c.logger.V(1).Info("Failed to get OID for data type, using default",
+				"dataType", dataType, "error", err)
+			oid = OIDPlaintext // Default fallback
+		}
+
+		// Encode OID as DER
+		derOID, err := EncodeDER(oid)
+		if err != nil {
+			c.logger.V(1).Info("Failed to encode OID as DER", "error", err)
+			derOID = nil // Will skip CKA_OBJECT_ID if encoding fails
+		}
+
+		// Build template with proper attributes
 		template := []*pkcs11.Attribute{
 			pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_DATA),
 			pkcs11.NewAttribute(pkcs11.CKA_LABEL, label),
+			pkcs11.NewAttribute(pkcs11.CKA_APPLICATION, applicationName), // Proper application name
 			pkcs11.NewAttribute(pkcs11.CKA_VALUE, value),
 			pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),      // Store persistently
 			pkcs11.NewAttribute(pkcs11.CKA_PRIVATE, true),    // Require authentication
 			pkcs11.NewAttribute(pkcs11.CKA_MODIFIABLE, true), // Allow updates
+		}
+
+		// Add OID if we successfully encoded it
+		if derOID != nil {
+			template = append(template, pkcs11.NewAttribute(pkcs11.CKA_OBJECT_ID, derOID))
 		}
 
 		obj, err := c.ctx.CreateObject(c.session, template)
@@ -400,11 +441,121 @@ func (c *PKCS11Client) WriteSecret(ctx context.Context, path string, data Secret
 		// Cache the object handle for faster future lookups
 		c.dataObjects[label] = obj
 
-		c.logger.V(2).Info("Created data object", "path", path, "key", key, "label", label)
+		c.logger.V(2).Info("Created data object", "path", path, "key", key, "label", label, "dataType", dataType)
 	}
 
 	c.logger.Info("Successfully wrote secret to HSM", "path", path)
 	return nil
+}
+
+// writeMetadata creates a metadata object for the secret
+func (c *PKCS11Client) writeMetadata(path string, metadata *SecretMetadata) error {
+	// Serialize metadata to JSON
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("failed to serialize metadata: %w", err)
+	}
+
+	// Create metadata object label
+	metadataLabel := path + metadataKeySuffix
+
+	// Get OID for JSON data type
+	oid, err := GetOIDForDataType(DataTypeJson)
+	if err != nil {
+		c.logger.V(1).Info("Failed to get OID for JSON metadata", "error", err)
+		oid = OIDJson // Fallback
+	}
+
+	// Encode OID as DER
+	derOID, err := EncodeDER(oid)
+	if err != nil {
+		c.logger.V(1).Info("Failed to encode metadata OID as DER", "error", err)
+		derOID = nil
+	}
+
+	// Build metadata object template
+	template := []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_DATA),
+		pkcs11.NewAttribute(pkcs11.CKA_LABEL, metadataLabel),
+		pkcs11.NewAttribute(pkcs11.CKA_APPLICATION, applicationName),
+		pkcs11.NewAttribute(pkcs11.CKA_VALUE, metadataJSON),
+		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),      // Store persistently
+		pkcs11.NewAttribute(pkcs11.CKA_PRIVATE, true),    // Require authentication
+		pkcs11.NewAttribute(pkcs11.CKA_MODIFIABLE, true), // Allow updates
+	}
+
+	// Add OID if we successfully encoded it
+	if derOID != nil {
+		template = append(template, pkcs11.NewAttribute(pkcs11.CKA_OBJECT_ID, derOID))
+	}
+
+	// Create the metadata object
+	obj, err := c.ctx.CreateObject(c.session, template)
+	if err != nil {
+		return fmt.Errorf("failed to create metadata object: %w", err)
+	}
+
+	// Cache the metadata object handle
+	c.dataObjects[metadataLabel] = obj
+
+	c.logger.V(2).Info("Created metadata object", "path", path, "label", metadataLabel)
+	return nil
+}
+
+// ReadMetadata reads metadata for a secret at the given path
+func (c *PKCS11Client) ReadMetadata(ctx context.Context, path string) (*SecretMetadata, error) {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+
+	if !c.connected {
+		return nil, fmt.Errorf("HSM not connected")
+	}
+
+	metadataLabel := path + metadataKeySuffix
+
+	// Find the metadata object
+	template := []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_DATA),
+		pkcs11.NewAttribute(pkcs11.CKA_LABEL, metadataLabel),
+	}
+
+	if err := c.ctx.FindObjectsInit(c.session, template); err != nil {
+		return nil, fmt.Errorf("failed to initialize metadata search: %w", err)
+	}
+	defer func() {
+		if finalErr := c.ctx.FindObjectsFinal(c.session); finalErr != nil {
+			c.logger.V(1).Info("Failed to finalize metadata search", "error", finalErr)
+		}
+	}()
+
+	objs, _, err := c.ctx.FindObjects(c.session, 1)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find metadata object: %w", err)
+	}
+
+	if len(objs) == 0 {
+		return nil, fmt.Errorf("metadata not found for path: %s", path)
+	}
+
+	// Get the metadata value
+	valueAttr, err := c.ctx.GetAttributeValue(c.session, objs[0], []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_VALUE, nil),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get metadata value: %w", err)
+	}
+
+	if len(valueAttr) == 0 || len(valueAttr[0].Value) == 0 {
+		return nil, fmt.Errorf("metadata object has no value")
+	}
+
+	// Parse the JSON metadata
+	var metadata SecretMetadata
+	if err := json.Unmarshal(valueAttr[0].Value, &metadata); err != nil {
+		return nil, fmt.Errorf("failed to parse metadata JSON: %w", err)
+	}
+
+	return &metadata, nil
 }
 
 // deleteSecretObjects removes all data objects matching the given path prefix

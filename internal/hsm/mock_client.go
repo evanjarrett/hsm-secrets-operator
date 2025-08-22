@@ -32,14 +32,16 @@ type MockClient struct {
 	mutex     sync.RWMutex
 	connected bool
 	secrets   map[string]SecretData
+	metadata  map[string]*SecretMetadata
 	config    Config
 }
 
 // NewMockClient creates a new mock HSM client for testing
 func NewMockClient() *MockClient {
 	return &MockClient{
-		logger:  ctrl.Log.WithName("hsm-mock-client"),
-		secrets: make(map[string]SecretData),
+		logger:   ctrl.Log.WithName("hsm-mock-client"),
+		secrets:  make(map[string]SecretData),
+		metadata: make(map[string]*SecretMetadata),
 	}
 }
 
@@ -142,6 +144,39 @@ func (m *MockClient) WriteSecret(ctx context.Context, path string, data SecretDa
 	return nil
 }
 
+// WriteSecretWithMetadata writes secret data and metadata to the specified HSM path
+func (m *MockClient) WriteSecretWithMetadata(ctx context.Context, path string, data SecretData, metadata *SecretMetadata) error {
+	if err := m.WriteSecret(ctx, path, data); err != nil {
+		return err
+	}
+
+	if metadata != nil {
+		m.mutex.Lock()
+		defer m.mutex.Unlock()
+		m.metadata[path] = metadata
+		m.logger.V(1).Info("Wrote metadata to mock HSM", "path", path)
+	}
+
+	return nil
+}
+
+// ReadMetadata reads metadata for a secret at the given path
+func (m *MockClient) ReadMetadata(ctx context.Context, path string) (*SecretMetadata, error) {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+
+	if !m.connected {
+		return nil, fmt.Errorf("HSM not connected")
+	}
+
+	metadata, exists := m.metadata[path]
+	if !exists {
+		return nil, fmt.Errorf("metadata not found for path: %s", path)
+	}
+
+	return metadata, nil
+}
+
 // DeleteSecret removes secret data from mock storage
 func (m *MockClient) DeleteSecret(ctx context.Context, path string) error {
 	m.mutex.Lock()
@@ -156,6 +191,7 @@ func (m *MockClient) DeleteSecret(ctx context.Context, path string) error {
 	}
 
 	delete(m.secrets, path)
+	delete(m.metadata, path) // Also delete metadata
 	m.logger.Info("Deleted secret from mock HSM", "path", path)
 	return nil
 }

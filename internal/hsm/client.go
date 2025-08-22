@@ -35,6 +35,17 @@ type HSMInfo struct {
 	FirmwareVersion string
 }
 
+// SecretMetadata contains metadata about an HSM secret
+type SecretMetadata struct {
+	Label       string            `json:"label,omitempty"`
+	Description string            `json:"description,omitempty"`
+	Tags        map[string]string `json:"tags,omitempty"`
+	Format      string            `json:"format,omitempty"`
+	DataType    SecretDataType    `json:"dataType,omitempty"`
+	CreatedAt   string            `json:"createdAt,omitempty"`
+	Source      string            `json:"source,omitempty"`
+}
+
 // Client defines the interface for HSM operations
 type Client interface {
 	// Initialize establishes connection to the HSM
@@ -51,6 +62,12 @@ type Client interface {
 
 	// WriteSecret writes secret data to the specified HSM path
 	WriteSecret(ctx context.Context, path string, data SecretData) error
+
+	// WriteSecretWithMetadata writes secret data and metadata to the specified HSM path
+	WriteSecretWithMetadata(ctx context.Context, path string, data SecretData, metadata *SecretMetadata) error
+
+	// ReadMetadata reads metadata for a secret at the given path
+	ReadMetadata(ctx context.Context, path string) (*SecretMetadata, error)
 
 	// DeleteSecret removes secret data from the specified HSM path
 	DeleteSecret(ctx context.Context, path string) error
