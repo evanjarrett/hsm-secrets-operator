@@ -292,7 +292,7 @@ func (r *DiscoveryDaemonSetReconciler) ensureDiscoveryDaemonSet(ctx context.Cont
 			UpdateStrategy: appsv1.DaemonSetUpdateStrategy{
 				Type: appsv1.RollingUpdateDaemonSetStrategyType,
 				RollingUpdate: &appsv1.RollingUpdateDaemonSet{
-					MaxUnavailable: &intstr.IntOrString{Type: intstr.Int, IntVal: 1},
+					MaxUnavailable: &intstr.IntOrString{Type: intstr.String, StrVal: "100%"},
 				},
 			},
 		},
