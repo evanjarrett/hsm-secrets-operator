@@ -636,8 +636,25 @@ func (m *Manager) buildAgentVolumes(hsmDevice *hsmv1alpha1.HSMDevice) []corev1.V
 	return volumes
 }
 
-// agentNeedsUpdate checks if the agent deployment needs to be updated due to device path changes
+// agentNeedsUpdate checks if the agent deployment needs to be updated due to device path or image changes
 func (m *Manager) agentNeedsUpdate(ctx context.Context, deployment *appsv1.Deployment, hsmDevice *hsmv1alpha1.HSMDevice) (bool, error) {
+	// Check if container image needs updating
+	if len(deployment.Spec.Template.Spec.Containers) == 0 {
+		return false, fmt.Errorf("deployment has no containers")
+	}
+
+	container := deployment.Spec.Template.Spec.Containers[0]
+	currentImage := container.Image
+
+	// Check if image has changed (only if ImageResolver is available)
+	if m.ImageResolver != nil {
+		expectedImage := m.ImageResolver.GetImage(ctx, "AGENT_IMAGE")
+		if currentImage != expectedImage {
+			// Image has changed, need to update
+			return true, nil
+		}
+	}
+
 	// Get current HSMPool to check for updated device paths
 	poolName := hsmDevice.Name + "-pool"
 	pool := &hsmv1alpha1.HSMPool{}
@@ -654,11 +671,6 @@ func (m *Manager) agentNeedsUpdate(ctx context.Context, deployment *appsv1.Deplo
 	}
 
 	// Extract current volume mounts from deployment
-	if len(deployment.Spec.Template.Spec.Containers) == 0 {
-		return false, fmt.Errorf("deployment has no containers")
-	}
-
-	container := deployment.Spec.Template.Spec.Containers[0]
 	currentDeviceMounts := make(map[string]string) // mount name -> device path
 
 	for _, mount := range container.VolumeMounts {

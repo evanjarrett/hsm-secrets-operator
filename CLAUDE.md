@@ -56,6 +56,11 @@ golangci-lint run ./...       # Lint all packages (REQUIRED before code changes)
 make manifests               # Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects
 make generate                # Generate DeepCopy methods for CRD types
 make helm-sync               # Sync generated CRDs from config/ to helm/ after CRD changes
+
+# Protocol Buffer generation (for gRPC)
+buf generate                 # Generate Go code from proto files (requires buf tool)
+buf lint                     # Lint protobuf files
+buf format -w                # Format protobuf files
 ```
 
 ### Docker Images
@@ -193,7 +198,7 @@ make docker-build IMG=test:latest
 
 ### API Development and Testing
 ```bash
-# Test API endpoints locally
+# Test REST API endpoints locally (manager)
 cd examples/api && ./health-check.sh
 
 # Create test secrets via API
@@ -201,6 +206,42 @@ cd examples/api && ./health-check.sh
 
 # List all secrets
 ./list-secrets.sh
+```
+
+### gRPC Development and Testing
+```bash
+# Generate protobuf code after modifying .proto files
+buf generate
+
+# Test gRPC agent connectivity
+# Note: Agent runs on port 9090 (gRPC) and 8093 (health)
+
+# Test agent health via HTTP (from within cluster)
+curl http://hsm-agent-pod:8093/healthz
+
+# Test gRPC connection programmatically
+# See internal/agent/grpc_integration_test.go for examples
+
+# Protocol buffer linting
+buf lint api/proto/hsm/v1/hsm.proto
+```
+
+### Protocol Buffer Development
+```bash
+# Install buf tool (required for proto generation)
+go install github.com/bufbuild/buf/cmd/buf@latest
+
+# Modify proto files
+# Edit api/proto/hsm/v1/hsm.proto
+
+# Regenerate Go code  
+buf generate
+
+# Format proto files
+buf format -w api/proto/hsm/v1/hsm.proto
+
+# Validate proto files
+buf lint
 ```
 
 ## Project Overview
@@ -228,7 +269,9 @@ The operator uses a **four-binary architecture** with race-condition-free coordi
    - Can fallback to **MockClient** for testing
    - Deployed close to HSM hardware (DaemonSet pattern)  
    - Heavy image with full PKCS#11 library dependencies
-   - Serves HSM operations via API for manager requests
+   - **gRPC API**: Serves HSM operations via gRPC on port 9090 (default)
+   - **HTTP API**: Legacy HTTP support via `--use-grpc=false`
+   - **Health Checks**: HTTP health endpoints on port 8093
 
 3. **Discovery Binary** (`cmd/discovery/main.go`) 
    - Handles **HSMDevice CRDs** (readonly specs) and USB device discovery
@@ -279,12 +322,12 @@ Each binary runs specific controllers:
 HSM Storage ←→ HSMSecret CRD ←→ Kubernetes Secret
 USB Device  ←→ HSMDevice CRD (readonly spec) ←→ Pod Annotations ←→ HSMPool CRD (aggregated status)
 
-Manager:    HSMPath ←→ Agent API ←→ PKCS#11 Client ←→ K8s Secret (owner refs)
+Manager:    HSMPath ←→ Agent gRPC ←→ PKCS#11 Client ←→ K8s Secret (owner refs)
             HSMDevice ←→ HSMPool (auto-created with owner refs)
             Pod Annotations ←→ HSMPool Status (aggregated discovery results)
             
 Discovery:  /sys/bus/usb ←→ Pod Annotations (ephemeral reports)
-Agent:      PKCS#11 Library ←→ HSM Device ←→ API Server
+Agent:      PKCS#11 Library ←→ HSM Device ←→ gRPC Server (port 9090)
 ```
 
 **Key Benefits:**
@@ -292,6 +335,45 @@ Agent:      PKCS#11 Library ←→ HSM Device ←→ API Server
 - ✅ **Automatic Cleanup**: Pod dies → annotations disappear → no stale data  
 - ✅ **Grace Periods**: 5-minute buffer prevents agent churn during outages
 - ✅ **Kubernetes Native**: Standard patterns (annotations, owner refs, watches)
+
+### gRPC Communication Architecture
+
+The operator uses **Protocol Buffers (protobuf)** and **gRPC** for efficient, type-safe communication between manager and agent components:
+
+**Protocol Definition**: `api/proto/hsm/v1/hsm.proto`
+- **HSMAgent Service**: Complete gRPC service definition
+- **10 Operations**: GetInfo, ReadSecret, WriteSecret, WriteSecretWithMetadata, ReadMetadata, DeleteSecret, ListSecrets, GetChecksum, IsConnected, Health
+- **Type Safety**: Structured messages for HSMInfo, SecretData, SecretMetadata
+- **Error Handling**: gRPC status codes for proper error propagation
+
+**gRPC Server** (`internal/agent/grpc_server.go`):
+- **Port 9090**: Default gRPC service port
+- **Port 8093**: HTTP health checks (`/healthz`, `/readyz`)
+- **Interceptors**: Request logging and metrics collection
+- **Graceful Shutdown**: Context-based cancellation support
+
+**gRPC Client** (`internal/agent/grpc_client.go`):
+- **Connection Management**: Automatic keepalive and reconnection
+- **Timeouts**: Configurable request timeouts (default: 30s)
+- **Error Handling**: gRPC status code interpretation
+- **Interface Compatibility**: Implements `hsm.Client` interface
+
+**Protocol Buffer Generation**:
+```bash
+# Generate Go code from .proto files
+buf generate
+
+# Lint proto files
+buf lint
+
+# Format proto files  
+buf format -w
+```
+
+**Generated Files**:
+- `api/proto/hsm/v1/hsm.pb.go` - Message types
+- `api/proto/hsm/v1/hsm_grpc.pb.go` - Service client/server code
+- `hsm/v1/hsm.pb.go` - Duplicate for backward compatibility
 
 ### Key Architectural Patterns
 
@@ -555,10 +637,11 @@ metadata:
 **Root Cause**: API server was configured to use port 8080, conflicting with metrics server.
 
 **Solution Applied**:
-- **API Server**: Restored to port 8090 (dedicated for REST API)
-- **Metrics Server**: Port 8080 internal, exposed as 8443 via service
-- **Health Probes**: Port 8081 (unchanged)
-- **Service Mapping**: Corrected service target ports to match actual server ports
+- **Manager API Server**: Port 8090 (dedicated for REST API)
+- **Manager Metrics Server**: Port 8080 internal, exposed as 8443 via service  
+- **Manager Health Probes**: Port 8081 (unchanged)
+- **Agent gRPC Server**: Port 9090 (default for HSM operations)
+- **Agent Health Server**: Port 8093 (HTTP health checks)
 
 **Result**: Clean port separation with no conflicts.
 
@@ -694,10 +777,15 @@ kubectl logs -n hsm-secrets-operator-system -l app=hsm-device-discovery
 │   ├── discovery/main.go         # Discovery: HSMPool controller (removed from new arch)
 │   ├── agent/main.go             # Agent: Direct HSM communication
 │   └── test-hsm/main.go          # Test utility for HSM operations
-├── api/v1alpha1/                 # CRD definitions
-│   ├── hsmsecret_types.go        # HSMSecret CRD
-│   ├── hsmpool_types.go          # HSMPool CRD (race-free aggregation)
-│   └── hsmdevice_types.go        # HSMDevice CRD (readonly specs)
+├── api/                           # API definitions
+│   ├── proto/hsm/v1/             # Protocol buffer definitions
+│   │   ├── hsm.proto             # gRPC service definition
+│   │   ├── hsm.pb.go             # Generated protobuf messages
+│   │   └── hsm_grpc.pb.go        # Generated gRPC client/server
+│   └── v1alpha1/                 # CRD definitions
+│       ├── hsmsecret_types.go    # HSMSecret CRD
+│       ├── hsmpool_types.go      # HSMPool CRD (race-free aggregation)
+│       └── hsmdevice_types.go    # HSMDevice CRD (readonly specs)
 ├── internal/
 │   ├── controller/               # Kubernetes controllers
 │   │   ├── hsmsecret_controller.go        # Secret sync
@@ -710,8 +798,11 @@ kubectl logs -n hsm-secrets-operator-system -l app=hsm-device-discovery
 │   │   ├── pkcs11_client.go      # Production PKCS#11 client (CGO)
 │   │   └── pkcs11_client_nocgo.go # Stub for testing builds
 │   ├── agent/                    # Agent deployment and communication
-│   │   ├── deployment.go         # Agent pod management
-│   │   └── client.go             # Agent API client
+│   │   ├── deployment.go         # Agent pod management  
+│   │   ├── server.go             # Legacy HTTP server
+│   │   ├── grpc_server.go        # gRPC server implementation
+│   │   ├── grpc_client.go        # gRPC client implementation
+│   │   └── client.go             # Agent API client (legacy)
 │   ├── api/                      # REST API server
 │   │   ├── server.go             # HTTP server setup
 │   │   └── proxy_handlers.go     # API proxy to agents
@@ -730,6 +821,11 @@ kubectl logs -n hsm-secrets-operator-system -l app=hsm-device-discovery
 │   └── default/                # Default deployment configuration
 ├── helm/                       # Helm chart
 │   └── hsm-secrets-operator/   # Complete Helm chart
+├── buf.yaml                    # Buf protobuf tool configuration  
+├── buf.gen.yaml                # Protobuf code generation config
+├── hsm/v1/                     # Legacy protobuf output (compatibility)
+│   ├── hsm.pb.go               # Duplicate protobuf messages
+│   └── hsm_grpc.pb.go          # Duplicate gRPC client/server
 └── test/                       # Test suites
     ├── e2e/                    # End-to-end tests
     └── utils/                  # Test utilities
@@ -742,6 +838,10 @@ kubectl logs -n hsm-secrets-operator-system -l app=hsm-device-discovery
 - **controller-runtime**: Kubernetes controller framework
 - **PKCS#11 library**: For HSM communication (sc-hsm-embedded)
 - **OpenSC**: PKCS#11 middleware for smart cards/HSMs
+- **buf**: Protocol buffer compiler and linter
+- **protoc-gen-go**: Protocol buffer Go code generator
+- **protoc-gen-go-grpc**: gRPC Go code generator
+- **google.golang.org/grpc**: gRPC Go library
 
 ### HSM Integration
 - Use PKCS#11 interface for Pico HSM communication
@@ -986,8 +1086,22 @@ kubectl exec $AGENT_POD -- sh -c 'pkcs11-tool --module="/usr/lib/opensc-pkcs11.s
 kubectl exec $AGENT_POD -- pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" -I
 ```
 
+### Agent Configuration and Ports
+```bash
+# Agent runs with gRPC by default (port 9090)
+# Health checks via HTTP (port 8093)
+
+# To use legacy HTTP mode instead of gRPC:
+# agent --use-grpc=false --port=8090
+
+# Check agent configuration
+kubectl get deployment hsm-agent-* -o yaml | grep -A 10 containers:
+```
+
 ### Troubleshooting
 - **API works, pkcs11-tool doesn't see objects**: Use `--login --pin` for private objects
 - **`CKR_DEVICE_REMOVED` errors**: Restart agent pod to reset PKCS#11 session
 - **`CKR_TEMPLATE_INCONSISTENT` errors**: Switch from CardContact to OpenSC library
 - **Agent crash loop**: Check library path and PIN secret configuration
+- **gRPC connection failed**: Verify agent is running on port 9090, check service/endpoint configuration
+- **Proto generation issues**: Install buf tool and run `buf generate` after proto changes
