@@ -198,7 +198,6 @@ The Pico HSM requires the **OpenSC PKCS#11 library** (`/usr/lib/opensc-pkcs11.so
 
 **Build Architecture:**
 - **Production Build** (`Dockerfile`): Agent has CGO enabled with real PKCS#11Client
-- **Testing Build** (`Dockerfile.testing`): All binaries use MockClient stubs, no CGO dependencies
 - **Conditional Compilation**: `internal/hsm/pkcs11_client.go` vs `pkcs11_client_nocgo.go` based on build tags
 
 ## Common Development Workflows

@@ -70,7 +70,7 @@ const (
 // Run starts the discovery mode
 func Run(args []string) error {
 	// Create a new flag set for discovery-specific flags
-	fs := flag.NewFlagSet("discovery", flag.ExitOnError)
+	fs := flag.NewFlagSet("discovery", flag.ContinueOnError)
 
 	var nodeName string
 	var podName string
@@ -85,8 +85,8 @@ func Run(args []string) error {
 	fs.StringVar(&detectionMethod, "detection-method", "auto",
 		"USB detection method: 'sysfs' (native), 'legacy' (privileged), or 'auto'")
 
-	// Parse discovery-specific flags (skip first arg which is the mode)
-	if err := fs.Parse(args[2:]); err != nil {
+	// Parse discovery-specific flags from the remaining unparsed arguments
+	if err := fs.Parse(args); err != nil {
 		return err
 	}
 

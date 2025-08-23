@@ -6,24 +6,8 @@ ARG TARGETARCH
 
 # Install build dependencies for PKCS#11
 RUN apk add --no-cache \
-  git \
   gcc \
-  g++ \
-  make \
-  cmake \
-  pkgconfig \
-  openssl-dev \
-  pcsc-lite-dev \
-  libusb-dev \
-  autoconf \
-  automake \
-  libtool
-
-# Build sc-hsm-embedded library
-RUN cd / && git clone https://github.com/CardContact/sc-hsm-embedded.git 
-WORKDIR /sc-hsm-embedded
-RUN autoreconf -fi && ./configure
-RUN make && make install
+  g++
 
 # Return to workspace for Go builds
 WORKDIR /workspace
@@ -44,11 +28,7 @@ COPY web/ web/
 RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o hsm-operator cmd/hsm-operator/main.go
 
 FROM alpine:3.22
-RUN apk add --no-cache opensc-dev ccid pcsc-lite openssl libtool libusb
-
-COPY --from=builder /usr/lib/libssl.so* /usr/lib/
-COPY --from=builder /usr/lib/libcrypto.so* /usr/lib/
-COPY --from=builder /usr/local/ /usr/local/
+RUN apk add --no-cache opensc-dev ccid pcsc-lite openssl libtool libusb ca-certificates
 
 WORKDIR /
 COPY --from=builder /workspace/hsm-operator .

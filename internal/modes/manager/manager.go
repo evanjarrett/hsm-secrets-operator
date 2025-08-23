@@ -56,7 +56,7 @@ func init() {
 // Run starts the manager mode
 func Run(args []string) error {
 	// Create a new flag set for manager-specific flags
-	fs := flag.NewFlagSet("manager", flag.ExitOnError)
+	fs := flag.NewFlagSet("manager", flag.ContinueOnError)
 
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
@@ -90,8 +90,8 @@ func Run(args []string) error {
 	fs.IntVar(&apiPort, "api-port", 8090,
 		"Port for the REST API server")
 
-	// Parse manager-specific flags (skip first arg which is the mode)
-	if err := fs.Parse(args[2:]); err != nil {
+	// Parse manager-specific flags from the remaining unparsed arguments
+	if err := fs.Parse(args); err != nil {
 		return err
 	}
 

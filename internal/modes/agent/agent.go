@@ -38,7 +38,7 @@ var (
 // Run starts the agent mode
 func Run(args []string) error {
 	// Create a new flag set for agent-specific flags
-	fs := flag.NewFlagSet("agent", flag.ExitOnError)
+	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
 
 	var deviceName string
 	var port int
@@ -58,8 +58,8 @@ func Run(args []string) error {
 	fs.StringVar(&pin, "pin", "", "PKCS#11 PIN (use environment variable HSM_PIN for security)")
 	fs.BoolVar(&useGRPC, "use-grpc", true, "Use gRPC server instead of HTTP (default: true)")
 
-	// Parse agent-specific flags (skip first arg which is the mode)
-	if err := fs.Parse(args[2:]); err != nil {
+	// Parse agent-specific flags from the remaining unparsed arguments
+	if err := fs.Parse(args); err != nil {
 		return err
 	}
 

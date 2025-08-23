@@ -195,10 +195,6 @@ run-discovery: ## Run discovery mode from your host.
 docker-build: ## Build production docker image with PKCS#11 support.
 	$(CONTAINER_TOOL) build -t ${IMG} .
 
-.PHONY: docker-build-testing
-docker-build-testing: ## Build testing docker image without PKCS#11 dependencies.
-	$(CONTAINER_TOOL) build -f Dockerfile.testing -t ${IMG}-testing .
-
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}

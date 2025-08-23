@@ -20,6 +20,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -34,13 +35,53 @@ func main() {
 	var logLevel string
 	var showHelp bool
 
-	// Global flags
-	flag.StringVar(&mode, "mode", "", "Operating mode: manager, agent, or discovery (required)")
-	flag.StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
-	flag.BoolVar(&showHelp, "help", false, "Show help")
+	// Create flag set for global flags only
+	globalFlags := flag.NewFlagSet("global", flag.ContinueOnError)
+	globalFlags.StringVar(&mode, "mode", "", "Operating mode: manager, agent, or discovery (required)")
+	globalFlags.StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
+	globalFlags.BoolVar(&showHelp, "help", false, "Show help")
 
-	// Parse global flags first
-	flag.Parse()
+	// Find the --mode flag and parse only global flags up to that point
+	var modeArg string
+	var globalArgs []string
+	var modeSpecificArgs []string
+
+	args := os.Args[1:]
+	i := 0
+	for i < len(args) {
+		arg := args[i]
+		if strings.HasPrefix(arg, "--mode=") {
+			modeArg = strings.TrimPrefix(arg, "--mode=")
+			globalArgs = append(globalArgs, arg)
+			i++
+		} else if arg == "--mode" && i+1 < len(args) {
+			modeArg = args[i+1]
+			globalArgs = append(globalArgs, arg, modeArg)
+			i += 2
+		} else if strings.HasPrefix(arg, "--log-level=") || arg == "--log-level" ||
+			strings.HasPrefix(arg, "--help") || arg == "--help" {
+			// These are global flags
+			globalArgs = append(globalArgs, arg)
+			if arg == "--log-level" && i+1 < len(args) && !strings.HasPrefix(args[i+1], "--") {
+				i++
+				globalArgs = append(globalArgs, args[i])
+			}
+			i++
+		} else {
+			// This is a mode-specific flag
+			modeSpecificArgs = append(modeSpecificArgs, arg)
+			i++
+		}
+	}
+
+	// Parse global flags
+	if err := globalFlags.Parse(globalArgs); err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing global flags: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Set mode from parsed value
+	mode = modeArg
 
 	// Show help if requested
 	if showHelp {
@@ -71,11 +112,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Set up logging
-	opts := zap.Options{
-		Development: logLevel == "debug",
-	}
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	// Set up basic logging for startup message (each mode will configure its own logger)
+	ctrl.SetLogger(zap.New(zap.UseDevMode(logLevel == "debug")))
 
 	setupLog := ctrl.Log.WithName("hsm-operator")
 	setupLog.Info("Starting HSM Secrets Operator", "mode", mode, "version", "0.0.1")
@@ -83,17 +121,17 @@ func main() {
 	// Route to appropriate mode
 	switch mode {
 	case "manager":
-		if err := manager.Run(os.Args); err != nil {
+		if err := manager.Run(modeSpecificArgs); err != nil {
 			setupLog.Error(err, "Manager mode failed")
 			os.Exit(1)
 		}
 	case "agent":
-		if err := agent.Run(os.Args); err != nil {
+		if err := agent.Run(modeSpecificArgs); err != nil {
 			setupLog.Error(err, "Agent mode failed")
 			os.Exit(1)
 		}
 	case "discovery":
-		if err := discovery.Run(os.Args); err != nil {
+		if err := discovery.Run(modeSpecificArgs); err != nil {
 			setupLog.Error(err, "Discovery mode failed")
 			os.Exit(1)
 		}

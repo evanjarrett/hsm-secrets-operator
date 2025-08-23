@@ -59,8 +59,9 @@ spec:
           type: RuntimeDefault
       containers:
       - command:
-        - /manager
+        - /entrypoint.sh
         args:
+          - --mode=manager
           - --leader-elect
           - --health-probe-bind-address=:8081
         image: controller:latest
