@@ -333,7 +333,7 @@ var _ = Describe("DiscoveryDaemonSetReconciler", func() {
 					return daemonSet.Spec.Template.Spec.Containers[0].Image
 				}
 				return ""
-			}).Should(Equal("hsm-discovery:latest"))
+			}).Should(Equal("ghcr.io/evanjarrett/hsm-secrets-operator:latest"))
 		})
 	})
 

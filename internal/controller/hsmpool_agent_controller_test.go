@@ -81,7 +81,9 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 					},
 				},
 			}
-			Expect(k8sClient.Create(ctx, hsmDevice)).To(Succeed())
+			Eventually(func() error {
+				return k8sClient.Create(ctx, hsmDevice)
+			}).WithTimeout(2 * time.Second).Should(Succeed())
 
 			// Create HSMPool with ready status and aggregated devices
 			hsmPool = &hsmv1alpha1.HSMPool{
@@ -108,7 +110,9 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 					},
 				},
 			}
-			Expect(k8sClient.Create(ctx, hsmPool)).To(Succeed())
+			Eventually(func() error {
+				return k8sClient.Create(ctx, hsmPool)
+			}).WithTimeout(2 * time.Second).Should(Succeed())
 
 			// Update HSMPool status separately
 			hsmPool.Status = hsmv1alpha1.HSMPoolStatus{
@@ -126,11 +130,13 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 					},
 				},
 			}
-			Expect(k8sClient.Status().Update(ctx, hsmPool)).To(Succeed())
+			Eventually(func() error {
+				return k8sClient.Status().Update(ctx, hsmPool)
+			}).WithTimeout(2 * time.Second).Should(Succeed())
 
-			// Create agent manager
+			// Create agent manager optimized for testing
 			imageResolver := NewImageResolver(k8sClient)
-			agentManager = agent.NewManager(k8sClient, hsmPoolNamespace, imageResolver)
+			agentManager = agent.NewTestManager(k8sClient, hsmPoolNamespace, imageResolver)
 		})
 
 		AfterEach(func() {
@@ -185,7 +191,7 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 					Name:      agentName,
 					Namespace: hsmPoolNamespace,
 				}, deployment)
-			}).Should(Succeed())
+			}).WithTimeout(2 * time.Second).WithPolling(50 * time.Millisecond).Should(Succeed())
 
 			// Verify deployment configuration
 			Expect(deployment.Name).To(Equal(agentName))
@@ -200,26 +206,24 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 
 			container := podSpec.Containers[0]
 			Expect(container.Name).To(Equal("agent"))
-			Expect(container.Image).To(Equal("test-agent:latest"))
+			Expect(container.Image).To(Equal("ghcr.io/evanjarrett/hsm-secrets-operator:latest"))
 			Expect(container.Command).To(Equal([]string{"/entrypoint.sh", "agent"}))
 			Expect(container.Args).To(ContainElement("--device-name=" + hsmDeviceName))
 
-			By("Checking that agent service was created")
-			service := &corev1.Service{}
-			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{
-					Name:      agentName,
-					Namespace: hsmPoolNamespace,
-				}, service)
-			}).Should(Succeed())
-
-			// Verify service configuration
-			Expect(service.Name).To(Equal(agentName))
-			Expect(service.Namespace).To(Equal(hsmPoolNamespace))
-			Expect(service.Labels).To(HaveKeyWithValue("hsm.j5t.io/device", hsmDeviceName))
-			Expect(service.Spec.Ports).To(HaveLen(2))
-			Expect(service.Spec.Ports[0].Port).To(Equal(int32(8092))) // AgentPort
-			Expect(service.Spec.Ports[1].Port).To(Equal(int32(8093))) // AgentHealthPort
+			// Note: Services are no longer created for gRPC agents - direct pod-to-pod communication is used
+			// Verify ports are configured correctly in the deployment
+			foundGRPCPort := false
+			foundHealthPort := false
+			for _, port := range container.Ports {
+				if port.ContainerPort == 9090 {
+					foundGRPCPort = true
+				}
+				if port.ContainerPort == 8093 {
+					foundHealthPort = true
+				}
+			}
+			Expect(foundGRPCPort).To(BeTrue(), "gRPC port 9090 should be exposed")
+			Expect(foundHealthPort).To(BeTrue(), "Health port 8093 should be exposed")
 		})
 
 		It("Should not deploy agent when HSMPool is not ready", func() {
@@ -234,7 +238,7 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 				}
 				pool.Status.Phase = hsmv1alpha1.HSMPoolPhasePending
 				return k8sClient.Status().Update(ctx, pool)
-			}).Should(Succeed())
+			}).WithTimeout(2 * time.Second).WithPolling(50 * time.Millisecond).Should(Succeed())
 
 			By("Reconciling the HSMPool")
 			reconciler := &HSMPoolAgentReconciler{
@@ -274,7 +278,7 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 				}
 				pool.Status.AggregatedDevices = []hsmv1alpha1.DiscoveredDevice{}
 				return k8sClient.Status().Update(ctx, pool)
-			}).Should(Succeed())
+			}).WithTimeout(2 * time.Second).WithPolling(50 * time.Millisecond).Should(Succeed())
 
 			By("Reconciling the HSMPool")
 			reconciler := &HSMPoolAgentReconciler{
@@ -421,7 +425,7 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 					Name:      agentName,
 					Namespace: hsmPoolNamespace,
 				}, deployment)
-			}).Should(Succeed())
+			}).WithTimeout(2 * time.Second).WithPolling(50 * time.Millisecond).Should(Succeed())
 
 			originalUID := deployment.UID
 

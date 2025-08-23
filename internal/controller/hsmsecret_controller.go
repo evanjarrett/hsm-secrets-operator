@@ -132,18 +132,30 @@ func (r *HSMSecretReconciler) ensureHSMAgent(ctx context.Context, hsmSecret *hsm
 		return nil, nil, fmt.Errorf("agent manager not configured")
 	}
 
-	agentEndpoint, err := r.AgentManager.EnsureAgent(ctx, hsmDevice, hsmSecret)
+	// EnsureAgent now returns HTTP endpoint for backward compatibility, but we'll use gRPC
+	_, err = r.AgentManager.EnsureAgent(ctx, hsmDevice, hsmSecret)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to ensure HSM agent: %w", err)
 	}
 
-	// Create agent client
-	agentClient := agent.NewClient(agentEndpoint, hsmDevice.Name, logger)
+	// Create gRPC client using agent manager's direct pod connections
+	agentClient, err := r.AgentManager.CreateSingleGRPCClient(ctx, hsmDevice.Name, logger)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create gRPC client: %w", err)
+	}
 
-	// Wait a moment for agent to start if just created
+	// Test connection
 	if !agentClient.IsConnected() {
-		logger.Info("Waiting for HSM agent to start", "device", hsmDevice.Name, "endpoint", agentEndpoint)
+		logger.Info("Waiting for HSM agent to be ready", "device", hsmDevice.Name)
 		time.Sleep(5 * time.Second)
+
+		// Test again
+		if !agentClient.IsConnected() {
+			if err := agentClient.Close(); err != nil {
+				logger.Error(err, "Failed to close gRPC client after failed connection test")
+			}
+			return nil, nil, fmt.Errorf("HSM agent not ready after waiting")
+		}
 	}
 
 	return hsmDevice, agentClient, nil

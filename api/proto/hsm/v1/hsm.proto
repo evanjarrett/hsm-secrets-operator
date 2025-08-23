@@ -1,0 +1,134 @@
+syntax = "proto3";
+
+package hsm.v1;
+
+option go_package = "github.com/evanjarrett/hsm-secrets-operator/api/proto/hsm/v1";
+
+// HSMAgent service provides HSM operations via gRPC
+service HSMAgent {
+  // GetInfo returns information about the HSM device
+  rpc GetInfo(GetInfoRequest) returns (GetInfoResponse);
+  
+  // ReadSecret reads secret data from the specified HSM path
+  rpc ReadSecret(ReadSecretRequest) returns (ReadSecretResponse);
+  
+  // WriteSecret writes secret data to the specified HSM path
+  rpc WriteSecret(WriteSecretRequest) returns (WriteSecretResponse);
+  
+  // WriteSecretWithMetadata writes secret data and metadata to the specified HSM path
+  rpc WriteSecretWithMetadata(WriteSecretWithMetadataRequest) returns (WriteSecretWithMetadataResponse);
+  
+  // ReadMetadata reads metadata for a secret at the given path
+  rpc ReadMetadata(ReadMetadataRequest) returns (ReadMetadataResponse);
+  
+  // DeleteSecret removes secret data from the specified HSM path
+  rpc DeleteSecret(DeleteSecretRequest) returns (DeleteSecretResponse);
+  
+  // ListSecrets returns a list of secret paths
+  rpc ListSecrets(ListSecretsRequest) returns (ListSecretsResponse);
+  
+  // GetChecksum returns the SHA256 checksum of the secret data at the given path
+  rpc GetChecksum(GetChecksumRequest) returns (GetChecksumResponse);
+  
+  // IsConnected returns true if the HSM is connected and responsive
+  rpc IsConnected(IsConnectedRequest) returns (IsConnectedResponse);
+  
+  // Health check for gRPC health protocol
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// Common types
+message HSMInfo {
+  string label = 1;
+  string manufacturer = 2;
+  string model = 3;
+  string serial_number = 4;
+  string firmware_version = 5;
+}
+
+message SecretData {
+  map<string, bytes> data = 1;
+}
+
+message SecretMetadata {
+  string label = 1;
+  string description = 2;
+  map<string, string> tags = 3;
+  string format = 4;
+  string data_type = 5;
+  string created_at = 6;
+  string source = 7;
+}
+
+// Request/Response messages
+message GetInfoRequest {}
+
+message GetInfoResponse {
+  HSMInfo hsm_info = 1;
+}
+
+message ReadSecretRequest {
+  string path = 1;
+}
+
+message ReadSecretResponse {
+  SecretData secret_data = 1;
+}
+
+message WriteSecretRequest {
+  string path = 1;
+  SecretData secret_data = 2;
+}
+
+message WriteSecretResponse {}
+
+message WriteSecretWithMetadataRequest {
+  string path = 1;
+  SecretData secret_data = 2;
+  SecretMetadata metadata = 3;
+}
+
+message WriteSecretWithMetadataResponse {}
+
+message ReadMetadataRequest {
+  string path = 1;
+}
+
+message ReadMetadataResponse {
+  SecretMetadata metadata = 1;
+}
+
+message DeleteSecretRequest {
+  string path = 1;
+}
+
+message DeleteSecretResponse {}
+
+message ListSecretsRequest {
+  string prefix = 1;
+}
+
+message ListSecretsResponse {
+  repeated string paths = 1;
+}
+
+message GetChecksumRequest {
+  string path = 1;
+}
+
+message GetChecksumResponse {
+  string checksum = 1;
+}
+
+message IsConnectedRequest {}
+
+message IsConnectedResponse {
+  bool connected = 1;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  string status = 1;
+  string message = 2;
+}

@@ -19,7 +19,10 @@ package agent
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
 
+	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -31,6 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
 )
 
 // ManagerInterface defines the interface for HSM agent management
@@ -41,14 +45,34 @@ type ManagerInterface interface {
 	GetAgentEndpoint(hsmDevice *hsmv1alpha1.HSMDevice) string
 }
 
+// AgentStatus represents the current status of an agent
+type AgentStatus string
+
+const (
+	AgentStatusCreating AgentStatus = "Creating"
+	AgentStatusReady    AgentStatus = "Ready"
+	AgentStatusFailed   AgentStatus = "Failed"
+)
+
+// AgentInfo tracks agent state and connections
+type AgentInfo struct {
+	DeviceName      string
+	PodIPs          []string
+	CreatedAt       time.Time
+	LastHealthCheck time.Time
+	Status          AgentStatus
+	AgentName       string
+	Namespace       string
+}
+
 const (
 	// AgentNamePrefix is the prefix for HSM agent deployment names
 	AgentNamePrefix = "hsm-agent"
 
-	// AgentPort is the port the HSM agent serves on
-	AgentPort = 8092
+	// AgentPort is the port the HSM agent serves on (now gRPC)
+	AgentPort = 9090
 
-	// AgentHealthPort is the port for health checks
+	// AgentHealthPort is the port for health checks (HTTP for simplicity)
 	AgentHealthPort = 8093
 )
 
@@ -58,6 +82,15 @@ type Manager struct {
 	AgentImage     string
 	AgentNamespace string
 	ImageResolver  ImageResolver
+
+	// Internal tracking
+	activeAgents map[string]*AgentInfo // deviceName -> AgentInfo
+	mu           sync.RWMutex
+
+	// Test configuration
+	TestMode         bool          // Enable test mode for faster operations
+	WaitTimeout      time.Duration // Timeout for waiting operations (default: 60s)
+	WaitPollInterval time.Duration // Polling interval for waiting operations (default: 2s)
 }
 
 // ImageResolver interface for dependency injection
@@ -72,6 +105,10 @@ func NewManager(k8sClient client.Client, namespace string, imageResolver ImageRe
 		Client:         k8sClient,
 		AgentNamespace: namespace,
 		ImageResolver:  imageResolver,
+		activeAgents:   make(map[string]*AgentInfo),
+		// Default production timeouts
+		WaitTimeout:      60 * time.Second,
+		WaitPollInterval: 2 * time.Second,
 	}
 
 	// If no namespace provided, agents will be deployed in the same namespace as their HSMDevice
@@ -80,14 +117,44 @@ func NewManager(k8sClient client.Client, namespace string, imageResolver ImageRe
 	return m
 }
 
+// NewTestManager creates a new agent manager optimized for testing
+func NewTestManager(k8sClient client.Client, namespace string, imageResolver ImageResolver) *Manager {
+	m := &Manager{
+		Client:         k8sClient,
+		AgentNamespace: namespace,
+		ImageResolver:  imageResolver,
+		activeAgents:   make(map[string]*AgentInfo),
+		// Fast test timeouts
+		TestMode:         true,
+		WaitTimeout:      5 * time.Second,
+		WaitPollInterval: 100 * time.Millisecond,
+	}
+	return m
+}
+
 // EnsureAgent ensures an HSM agent pod exists for the given HSM device
 func (m *Manager) EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, hsmSecret *hsmv1alpha1.HSMSecret) (string, error) {
-	agentName := m.generateAgentName(hsmDevice)
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	// Deploy agent in the same namespace as the HSMDevice
+	deviceName := hsmDevice.Name
+	agentName := m.generateAgentName(hsmDevice)
 	agentNamespace := hsmDevice.Namespace
 
-	// Check if deployment exists
+	// Check if we already have this agent tracked
+	if agentInfo, exists := m.activeAgents[deviceName]; exists {
+		// Agent exists in tracking, verify it's still healthy
+		if m.isAgentHealthy(ctx, agentInfo) {
+			// Return the first pod IP as endpoint for backward compatibility
+			if len(agentInfo.PodIPs) > 0 {
+				return fmt.Sprintf("http://%s:%d", agentInfo.PodIPs[0], AgentPort), nil
+			}
+		}
+		// Agent unhealthy, remove from tracking and recreate
+		m.removeAgentFromTracking(deviceName)
+	}
+
+	// Check if deployment exists in Kubernetes
 	var deployment appsv1.Deployment
 	err := m.Get(ctx, types.NamespacedName{
 		Name:      agentName,
@@ -108,8 +175,25 @@ func (m *Manager) EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDev
 			}
 			// Continue to create new deployment below
 		} else {
-			// Agent exists and is up to date, return endpoint
-			return m.getAgentEndpoint(agentName, agentNamespace), nil
+			// Agent exists in K8s but not tracked - wait for it and track it
+			podIPs, err := m.waitForAgentReady(ctx, agentName, agentNamespace)
+			if err != nil {
+				return "", fmt.Errorf("failed waiting for existing agent pods: %w", err)
+			}
+
+			// Track the existing agent
+			agentInfo := &AgentInfo{
+				DeviceName:      deviceName,
+				PodIPs:          podIPs,
+				CreatedAt:       time.Now(),
+				LastHealthCheck: time.Now(),
+				Status:          AgentStatusReady,
+				AgentName:       agentName,
+				Namespace:       agentNamespace,
+			}
+
+			m.activeAgents[deviceName] = agentInfo
+			return fmt.Sprintf("http://%s:%d", podIPs[0], AgentPort), nil
 		}
 	}
 
@@ -122,16 +206,34 @@ func (m *Manager) EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDev
 		return "", fmt.Errorf("failed to create agent deployment: %w", err)
 	}
 
-	// Create agent service
-	if err := m.createAgentService(ctx, hsmDevice, agentNamespace); err != nil {
-		return "", fmt.Errorf("failed to create agent service: %w", err)
+	// Wait for agent pods to be ready and get their IPs
+	podIPs, err := m.waitForAgentReady(ctx, agentName, agentNamespace)
+	if err != nil {
+		return "", fmt.Errorf("failed waiting for agent pods: %w", err)
 	}
 
-	return m.getAgentEndpoint(agentName, agentNamespace), nil
+	// Track the new agent
+	agentInfo := &AgentInfo{
+		DeviceName:      deviceName,
+		PodIPs:          podIPs,
+		CreatedAt:       time.Now(),
+		LastHealthCheck: time.Now(),
+		Status:          AgentStatusReady,
+		AgentName:       agentName,
+		Namespace:       agentNamespace,
+	}
+
+	m.activeAgents[deviceName] = agentInfo
+
+	// For backward compatibility, still return HTTP endpoint (will change to gRPC later)
+	return fmt.Sprintf("http://%s:%d", podIPs[0], AgentPort), nil
 }
 
 // CleanupAgent removes the HSM agent for the given device when no longer needed
 func (m *Manager) CleanupAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	agentName := m.generateAgentName(hsmDevice)
 
 	// Check if any HSMSecrets still reference this device
@@ -153,16 +255,8 @@ func (m *Manager) CleanupAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDe
 		return nil
 	}
 
-	// Delete service
-	service := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      agentName,
-			Namespace: hsmDevice.Namespace,
-		},
-	}
-	if err := m.Delete(ctx, service); err != nil && !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete agent service: %w", err)
-	}
+	// Remove from internal tracking
+	m.removeAgentFromTracking(hsmDevice.Name)
 
 	// Delete deployment
 	deployment := &appsv1.Deployment{
@@ -184,6 +278,7 @@ func (m *Manager) generateAgentName(hsmDevice *hsmv1alpha1.HSMDevice) string {
 }
 
 // getAgentEndpoint returns the HTTP endpoint for the agent
+// TODO: This will be removed when we switch to direct pod gRPC connections
 func (m *Manager) getAgentEndpoint(agentName, namespace string) string {
 	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", agentName, namespace, AgentPort)
 }
@@ -290,7 +385,7 @@ func (m *Manager) createAgentDeployment(ctx context.Context, hsmDevice *hsmv1alp
 							Env: m.buildAgentEnv(hsmDevice),
 							Ports: []corev1.ContainerPort{
 								{
-									Name:          "http",
+									Name:          "grpc",
 									ContainerPort: AgentPort,
 									Protocol:      corev1.ProtocolTCP,
 								},
@@ -360,49 +455,6 @@ func (m *Manager) createAgentDeployment(ctx context.Context, hsmDevice *hsmv1alp
 	}
 
 	return m.Create(ctx, deployment)
-}
-
-// createAgentService creates the service for the HSM agent
-func (m *Manager) createAgentService(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, namespace string) error {
-	agentName := m.generateAgentName(hsmDevice)
-
-	service := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      agentName,
-			Namespace: namespace,
-			Labels: map[string]string{
-				"app":                         agentName,
-				"app.kubernetes.io/component": "hsm-agent",
-				"app.kubernetes.io/instance":  agentName,
-				"app.kubernetes.io/name":      "hsm-agent",
-				"app.kubernetes.io/part-of":   "hsm-secrets-operator",
-				"hsm.j5t.io/device":           hsmDevice.Name,
-				"hsm.j5t.io/device-type":      string(hsmDevice.Spec.DeviceType),
-			},
-		},
-		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{
-				"app": agentName,
-			},
-			Ports: []corev1.ServicePort{
-				{
-					Name:       "http",
-					Port:       AgentPort,
-					TargetPort: intstr.FromInt(AgentPort),
-					Protocol:   corev1.ProtocolTCP,
-				},
-				{
-					Name:       "health",
-					Port:       AgentHealthPort,
-					TargetPort: intstr.FromInt(AgentHealthPort),
-					Protocol:   corev1.ProtocolTCP,
-				},
-			},
-			Type: corev1.ServiceTypeClusterIP,
-		},
-	}
-
-	return m.Create(ctx, service)
 }
 
 // findTargetNode finds the node where the HSM device is located by checking the HSMPool
@@ -658,6 +710,213 @@ func (m *Manager) agentNeedsUpdate(ctx context.Context, deployment *appsv1.Deplo
 }
 
 // Helper functions
+// waitForAgentReady waits for agent pods to be ready and returns their IPs
+func (m *Manager) waitForAgentReady(ctx context.Context, agentName, namespace string) ([]string, error) {
+	// In test mode, simulate immediate readiness for faster tests
+	if m.TestMode {
+		return []string{"127.0.0.1"}, nil
+	}
+
+	timeout := time.After(m.WaitTimeout)
+	ticker := time.NewTicker(m.WaitPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeout:
+			return nil, fmt.Errorf("timeout waiting for agent pods to be ready after %v", m.WaitTimeout)
+		case <-ticker.C:
+			pods := &corev1.PodList{}
+			err := m.List(ctx, pods,
+				client.InNamespace(namespace),
+				client.MatchingLabels{"app": agentName},
+			)
+			if err != nil {
+				continue
+			}
+
+			var readyPodIPs []string
+			for _, pod := range pods.Items {
+				if pod.Status.Phase == corev1.PodRunning &&
+					len(pod.Status.PodIP) > 0 {
+					// Check if all containers are ready
+					allReady := true
+					for _, condition := range pod.Status.Conditions {
+						if condition.Type == corev1.PodReady {
+							allReady = condition.Status == corev1.ConditionTrue
+							break
+						}
+					}
+					if allReady {
+						readyPodIPs = append(readyPodIPs, pod.Status.PodIP)
+					}
+				}
+			}
+
+			if len(readyPodIPs) > 0 {
+				return readyPodIPs, nil
+			}
+		}
+	}
+}
+
+// GetAgentInfo returns the AgentInfo for a device
+func (m *Manager) GetAgentInfo(deviceName string) (*AgentInfo, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	agentInfo, exists := m.activeAgents[deviceName]
+	return agentInfo, exists
+}
+
+// removeAgentFromTracking removes an agent from internal tracking
+func (m *Manager) removeAgentFromTracking(deviceName string) {
+	delete(m.activeAgents, deviceName)
+}
+
+// RemoveAgentFromTracking removes an agent from tracking (public method for testing)
+func (m *Manager) RemoveAgentFromTracking(deviceName string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.removeAgentFromTracking(deviceName)
+}
+
+// SetAgentInfo sets agent information for testing
+func (m *Manager) SetAgentInfo(deviceName string, info *AgentInfo) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.activeAgents[deviceName] = info
+}
+
+// isAgentHealthy checks if an agent is healthy by verifying pod IPs
+func (m *Manager) isAgentHealthy(ctx context.Context, agentInfo *AgentInfo) bool {
+	// Simple health check: ensure pod IPs are still valid
+	// In the future, we can add gRPC health checks here
+	if len(agentInfo.PodIPs) == 0 {
+		return false
+	}
+
+	// Check if pods still exist and are running
+	pods := &corev1.PodList{}
+	err := m.List(ctx, pods,
+		client.InNamespace(agentInfo.Namespace),
+		client.MatchingLabels{"app": agentInfo.AgentName},
+	)
+	if err != nil {
+		return false
+	}
+
+	runningPods := 0
+	for _, pod := range pods.Items {
+		if pod.Status.Phase == corev1.PodRunning {
+			runningPods++
+		}
+	}
+
+	return runningPods > 0
+}
+
+// GetAgentPodIPs returns the pod IPs for a device (for direct gRPC connections)
+func (m *Manager) GetAgentPodIPs(deviceName string) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	agentInfo, exists := m.activeAgents[deviceName]
+	if !exists {
+		return nil, fmt.Errorf("no active agents found for device %s", deviceName)
+	}
+
+	if len(agentInfo.PodIPs) == 0 {
+		return nil, fmt.Errorf("no pod IPs available for device %s", deviceName)
+	}
+
+	return agentInfo.PodIPs, nil
+}
+
+// GetGRPCEndpoints returns gRPC endpoints for all agent pods of a device
+func (m *Manager) GetGRPCEndpoints(deviceName string) ([]string, error) {
+	podIPs, err := m.GetAgentPodIPs(deviceName)
+	if err != nil {
+		return nil, err
+	}
+
+	endpoints := make([]string, 0, len(podIPs))
+	for _, ip := range podIPs {
+		endpoints = append(endpoints, fmt.Sprintf("%s:%d", ip, AgentPort))
+	}
+
+	return endpoints, nil
+}
+
+// CreateGRPCClients creates gRPC clients for all agent pods of a device
+func (m *Manager) CreateGRPCClients(ctx context.Context, deviceName string, logger logr.Logger) ([]hsm.Client, error) {
+	endpoints, err := m.GetGRPCEndpoints(deviceName)
+	if err != nil {
+		return nil, err
+	}
+
+	clients := make([]hsm.Client, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		grpcClient, err := NewGRPCClient(endpoint, deviceName, logger)
+		if err != nil {
+			// Clean up any successful connections
+			for _, c := range clients {
+				if err := c.Close(); err != nil {
+					logger.Error(err, "Failed to close gRPC connection during cleanup")
+				}
+			}
+			return nil, fmt.Errorf("failed to create gRPC client for %s: %w", endpoint, err)
+		}
+
+		// Test the connection
+		if err := grpcClient.Initialize(ctx, hsm.Config{}); err != nil {
+			// Clean up any successful connections
+			for _, c := range clients {
+				if err := c.Close(); err != nil {
+					logger.Error(err, "Failed to close gRPC connection during cleanup")
+				}
+			}
+			if err := grpcClient.Close(); err != nil {
+				logger.Error(err, "Failed to close gRPC client during cleanup")
+			}
+			return nil, fmt.Errorf("failed to initialize gRPC client for %s: %w", endpoint, err)
+		}
+
+		clients = append(clients, grpcClient)
+	}
+
+	return clients, nil
+}
+
+// CreateSingleGRPCClient creates a gRPC client for the first available agent pod of a device
+func (m *Manager) CreateSingleGRPCClient(ctx context.Context, deviceName string, logger logr.Logger) (hsm.Client, error) {
+	endpoints, err := m.GetGRPCEndpoints(deviceName)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(endpoints) == 0 {
+		return nil, fmt.Errorf("no agent endpoints available for device %s", deviceName)
+	}
+
+	// Use the first endpoint for single client
+	grpcClient, err := NewGRPCClient(endpoints[0], deviceName, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create gRPC client for %s: %w", endpoints[0], err)
+	}
+
+	// Test the connection
+	if err := grpcClient.Initialize(ctx, hsm.Config{}); err != nil {
+		if err := grpcClient.Close(); err != nil {
+			logger.Error(err, "Failed to close gRPC client after failed initialization")
+		}
+		return nil, fmt.Errorf("failed to initialize gRPC client for %s: %w", endpoints[0], err)
+	}
+
+	return grpcClient, nil
+}
+
 func int32Ptr(i int32) *int32 {
 	return &i
 }

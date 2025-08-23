@@ -219,7 +219,6 @@ func main() {
 
 	// HSM client registration removed - now handled by agent architecture
 
-
 	// Agent manager will detect the current namespace automatically
 	imageResolver := controller.NewImageResolver(mgr.GetClient())
 	agentManager := agent.NewManager(mgr.GetClient(), "", imageResolver)
