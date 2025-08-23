@@ -29,7 +29,7 @@ func (s *Server) handleProxyRequest(c *gin.Context) {
 	if namespace == "" {
 		namespace = "secrets" // Default namespace
 	}
-	
+
 	// Find available agent (returns device name)
 	deviceName, err := s.findAvailableAgent(c.Request.Context(), namespace)
 	if err != nil {

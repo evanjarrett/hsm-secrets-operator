@@ -199,7 +199,7 @@ func (s *Server) findAvailableAgent(ctx context.Context, namespace string) (stri
 func (s *Server) proxyToAgent(c *gin.Context, deviceName, path string) {
 	// Parse the REST API path and convert to gRPC call
 	method := c.Request.Method
-	
+
 	// Extract namespace for finding device
 	namespace := c.GetHeader("X-Namespace")
 	if namespace == "" {
@@ -234,13 +234,13 @@ func (s *Server) createGRPCClient(ctx context.Context, deviceName, _ string) (hs
 	if s.agentManager == nil {
 		return nil, fmt.Errorf("agent manager not available")
 	}
-	
+
 	// Create gRPC client using AgentManager's existing method
 	grpcClient, err := s.agentManager.CreateSingleGRPCClient(ctx, deviceName, s.logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gRPC client for device %s: %w", deviceName, err)
 	}
-	
+
 	return grpcClient, nil
 }
 
@@ -248,7 +248,7 @@ func (s *Server) createGRPCClient(ctx context.Context, deviceName, _ string) (hs
 func (s *Server) handleListSecrets(c *gin.Context, grpcClient hsm.Client) {
 	// Get query parameters
 	prefix := c.Query("prefix")
-	
+
 	// Call gRPC ListSecrets
 	secrets, err := grpcClient.ListSecrets(c.Request.Context(), prefix)
 	if err != nil {
@@ -257,12 +257,12 @@ func (s *Server) handleListSecrets(c *gin.Context, grpcClient hsm.Client) {
 		})
 		return
 	}
-	
+
 	// Return the secrets in the expected format
 	response := map[string]any{
 		"secrets": secrets,
 		"count":   len(secrets),
 	}
-	
+
 	s.sendResponse(c, http.StatusOK, "Secrets listed successfully", response)
 }
