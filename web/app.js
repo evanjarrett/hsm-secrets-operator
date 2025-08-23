@@ -113,7 +113,7 @@ class HSMSecretsUI {
 
         try {
             const response = await this.api.listSecrets();
-            this.secrets = response.data.paths || [];
+            this.secrets = response.data.secrets || [];
             
             document.getElementById('totalSecrets').textContent = this.secrets.length;
             

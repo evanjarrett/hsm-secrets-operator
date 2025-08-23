@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -42,7 +41,7 @@ type Server struct {
 	validator        *validator.Validate
 	logger           logr.Logger
 	router           *gin.Engine
-	httpClient       *http.Client
+	proxyClient      *ProxyClient
 }
 
 // NewServer creates a new API server instance that proxies to agents
@@ -53,10 +52,10 @@ func NewServer(k8sClient client.Client, agentManager *agent.Manager, mirroringMa
 		mirroringManager: mirroringManager,
 		validator:        validator.New(),
 		logger:           logger.WithName("api-server"),
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
 	}
+
+	// Create ProxyClient instance
+	s.proxyClient = NewProxyClient(s, s.logger)
 
 	s.setupRouter()
 	return s
@@ -195,39 +194,6 @@ func (s *Server) findAvailableAgent(ctx context.Context, namespace string) (stri
 	return "", fmt.Errorf("no available HSM agents found")
 }
 
-// proxyToAgent forwards the request to an HSM agent via gRPC and returns the HTTP response
-func (s *Server) proxyToAgent(c *gin.Context, deviceName, path string) {
-	// Parse the REST API path and convert to gRPC call
-	method := c.Request.Method
-
-	// Extract namespace for finding device
-	namespace := c.GetHeader("X-Namespace")
-	if namespace == "" {
-		namespace = "secrets"
-	}
-
-	// Create gRPC client for this device
-	grpcClient, err := s.createGRPCClient(c.Request.Context(), deviceName, namespace)
-	if err != nil {
-		s.sendError(c, http.StatusServiceUnavailable, "grpc_error", "Failed to connect to HSM agent", map[string]any{
-			"error": err.Error(),
-		})
-		return
-	}
-	defer func() {
-		if closeErr := grpcClient.Close(); closeErr != nil {
-			s.logger.Error(closeErr, "Failed to close gRPC client")
-		}
-	}()
-
-	// For now, just implement ListSecrets to test gRPC connection
-	if method == "GET" && strings.Contains(path, "/secrets") {
-		s.handleListSecrets(c, grpcClient)
-	} else {
-		s.sendError(c, http.StatusNotImplemented, "not_implemented", "gRPC routing not yet implemented for this endpoint", nil)
-	}
-}
-
 // createGRPCClient creates a gRPC client for the specified device using AgentManager
 func (s *Server) createGRPCClient(ctx context.Context, deviceName, _ string) (hsm.Client, error) {
 	// Use the AgentManager to create a gRPC client directly
@@ -242,27 +208,4 @@ func (s *Server) createGRPCClient(ctx context.Context, deviceName, _ string) (hs
 	}
 
 	return grpcClient, nil
-}
-
-// handleListSecrets handles GET /api/v1/hsm/secrets via gRPC
-func (s *Server) handleListSecrets(c *gin.Context, grpcClient hsm.Client) {
-	// Get query parameters
-	prefix := c.Query("prefix")
-
-	// Call gRPC ListSecrets
-	secrets, err := grpcClient.ListSecrets(c.Request.Context(), prefix)
-	if err != nil {
-		s.sendError(c, http.StatusInternalServerError, "grpc_error", "Failed to list secrets from HSM agent", map[string]any{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	// Return the secrets in the expected format
-	response := map[string]any{
-		"secrets": secrets,
-		"count":   len(secrets),
-	}
-
-	s.sendResponse(c, http.StatusOK, "Secrets listed successfully", response)
 }

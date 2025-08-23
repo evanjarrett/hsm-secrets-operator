@@ -22,32 +22,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// handleProxyRequest handles all HSM API requests by converting to gRPC calls
-func (s *Server) handleProxyRequest(c *gin.Context) {
-	// Extract namespace from request or use default
-	namespace := c.GetHeader("X-Namespace")
-	if namespace == "" {
-		namespace = "secrets" // Default namespace
-	}
-
-	// Find available agent (returns device name)
-	deviceName, err := s.findAvailableAgent(c.Request.Context(), namespace)
-	if err != nil {
-		s.sendError(c, http.StatusServiceUnavailable, "no_agent", "No HSM agents available", map[string]any{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	s.logger.V(1).Info("Converting HTTP request to gRPC call",
-		"method", c.Request.Method,
-		"path", c.Request.URL.Path,
-		"device", deviceName)
-
-	// Convert HTTP request to gRPC call
-	s.proxyToAgent(c, deviceName, c.Request.URL.Path)
-}
-
 // setupProxyRoutes sets up proxy routes for HSM operations
 func (s *Server) setupProxyRoutes() {
 	// Serve web UI static files
@@ -59,11 +33,29 @@ func (s *Server) setupProxyRoutes() {
 	// Create API v1 group
 	v1 := s.router.Group("/api/v1")
 	{
-		// HSM operations group - proxy everything to agents
+		// HSM operations group - use ProxyClient methods directly as handlers
 		hsmGroup := v1.Group("/hsm")
 		{
-			// Proxy all HSM operations to agents
-			hsmGroup.Any("/*path", s.handleProxyRequest)
+			// HSM device info and status
+			hsmGroup.GET("/info", s.proxyClient.GetInfo)
+			hsmGroup.GET("/status", s.proxyClient.IsConnected)
+
+			// Secret operations
+			secretsGroup := hsmGroup.Group("/secrets")
+			{
+				// List secrets
+				secretsGroup.GET("", s.proxyClient.ListSecrets)
+
+				// Secret-specific operations
+				secretsGroup.GET("/:path", s.proxyClient.ReadSecret)
+				secretsGroup.POST("/:path", s.proxyClient.WriteSecret)
+				secretsGroup.PUT("/:path", s.proxyClient.WriteSecret)
+				secretsGroup.DELETE("/:path", s.proxyClient.DeleteSecret)
+
+				// Secret metadata and checksum
+				secretsGroup.GET("/:path/metadata", s.proxyClient.ReadMetadata)
+				secretsGroup.GET("/:path/checksum", s.proxyClient.GetChecksum)
+			}
 		}
 
 		// Health and info endpoints can stay local
