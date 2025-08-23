@@ -22,16 +22,16 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// handleProxyRequest handles all HSM API requests by proxying to agent pods
+// handleProxyRequest handles all HSM API requests by converting to gRPC calls
 func (s *Server) handleProxyRequest(c *gin.Context) {
 	// Extract namespace from request or use default
 	namespace := c.GetHeader("X-Namespace")
 	if namespace == "" {
 		namespace = "secrets" // Default namespace
 	}
-
-	// Find available agent and proxy the request
-	agentEndpoint, err := s.findAvailableAgent(c.Request.Context(), namespace)
+	
+	// Find available agent (returns device name)
+	deviceName, err := s.findAvailableAgent(c.Request.Context(), namespace)
 	if err != nil {
 		s.sendError(c, http.StatusServiceUnavailable, "no_agent", "No HSM agents available", map[string]any{
 			"error": err.Error(),
@@ -39,21 +39,13 @@ func (s *Server) handleProxyRequest(c *gin.Context) {
 		return
 	}
 
-	// Build the full path for the agent API
-	// Request path will be like /api/v1/hsm/secrets/my-secret
-	// Agent expects the same path
-	path := c.Request.URL.Path
-	if c.Request.URL.RawQuery != "" {
-		path += "?" + c.Request.URL.RawQuery
-	}
-
-	s.logger.V(1).Info("Proxying request to agent",
+	s.logger.V(1).Info("Converting HTTP request to gRPC call",
 		"method", c.Request.Method,
-		"path", path,
-		"agent", agentEndpoint)
+		"path", c.Request.URL.Path,
+		"device", deviceName)
 
-	// Proxy to agent
-	s.proxyToAgent(c, agentEndpoint, path)
+	// Convert HTTP request to gRPC call
+	s.proxyToAgent(c, deviceName, c.Request.URL.Path)
 }
 
 // setupProxyRoutes sets up proxy routes for HSM operations

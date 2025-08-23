@@ -42,7 +42,6 @@ import (
 type ManagerInterface interface {
 	EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, hsmSecret *hsmv1alpha1.HSMSecret) (string, error)
 	CleanupAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice) error
-	GetAgentEndpoint(hsmDevice *hsmv1alpha1.HSMDevice) string
 }
 
 // AgentStatus represents the current status of an agent
@@ -275,23 +274,6 @@ func (m *Manager) CleanupAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDe
 // generateAgentName creates a consistent agent name for an HSM device
 func (m *Manager) generateAgentName(hsmDevice *hsmv1alpha1.HSMDevice) string {
 	return fmt.Sprintf("%s-%s", AgentNamePrefix, hsmDevice.Name)
-}
-
-// getAgentEndpoint returns the HTTP endpoint for the agent
-// TODO: This will be removed when we switch to direct pod gRPC connections
-func (m *Manager) getAgentEndpoint(agentName, namespace string) string {
-	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", agentName, namespace, AgentPort)
-}
-
-// GetAgentEndpoint returns the HTTP endpoint for the agent for a given HSM device
-// This implements the ManagerInterface
-func (m *Manager) GetAgentEndpoint(hsmDevice *hsmv1alpha1.HSMDevice) string {
-	agentName := m.generateAgentName(hsmDevice)
-	namespace := hsmDevice.Namespace
-	if namespace == "" {
-		namespace = m.AgentNamespace
-	}
-	return m.getAgentEndpoint(agentName, namespace)
 }
 
 // createAgentDeployment creates the HSM agent deployment

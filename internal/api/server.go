@@ -17,11 +17,10 @@ limitations under the License.
 package api
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -32,6 +31,7 @@ import (
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/discovery"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
 )
 
 // Server represents the HSM REST API server that proxies requests to agent pods
@@ -174,93 +174,95 @@ func (s *Server) corsMiddleware() gin.HandlerFunc {
 
 // findAvailableAgent finds an available HSM agent for handling requests
 func (s *Server) findAvailableAgent(ctx context.Context, namespace string) (string, error) {
-	// List all HSMDevices in the namespace to find ready ones
+	if s.agentManager == nil {
+		return "", fmt.Errorf("agent manager not available")
+	}
+
+	// List all HSMDevices to find one with an active agent
 	var hsmDeviceList hsmv1alpha1.HSMDeviceList
 	if err := s.client.List(ctx, &hsmDeviceList, client.InNamespace(namespace)); err != nil {
 		return "", fmt.Errorf("failed to list HSM devices: %w", err)
 	}
 
-	// Look for devices with associated HSMPools that have available agents
+	// Check if any device has an active agent with pod IPs
 	for _, device := range hsmDeviceList.Items {
-		// Check the HSMPool for this device
-		poolName := device.Name + "-pool"
-		pool := &hsmv1alpha1.HSMPool{}
-
-		err := s.client.Get(ctx, client.ObjectKey{
-			Name:      poolName,
-			Namespace: device.Namespace,
-		}, pool)
-
-		if err == nil && pool.Status.Phase == hsmv1alpha1.HSMPoolPhaseReady && len(pool.Status.AggregatedDevices) > 0 {
-			// Generate agent endpoint for gRPC communication
-			agentName := fmt.Sprintf("hsm-agent-%s", device.Name)
-			agentEndpoint := fmt.Sprintf("%s.%s.svc.cluster.local:9090", agentName, namespace)
-
-			// Test if agent is responsive using health check on HTTP port
-			healthURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:8093/healthz", agentName, namespace)
-			resp, err := s.httpClient.Get(healthURL)
-			if err == nil && resp.StatusCode == 200 {
-				_ = resp.Body.Close()
-				return agentEndpoint, nil
-			}
-			if resp != nil {
-				_ = resp.Body.Close()
-			}
+		if podIPs, err := s.agentManager.GetAgentPodIPs(device.Name); err == nil && len(podIPs) > 0 {
+			// Return the device name (we'll use AgentManager to get the actual client)
+			return device.Name, nil
 		}
 	}
 
 	return "", fmt.Errorf("no available HSM agents found")
 }
 
-// proxyToAgent forwards the request to an HSM agent and returns the response
-func (s *Server) proxyToAgent(c *gin.Context, agentEndpoint, path string) {
-	// Build agent URL
-	agentURL := agentEndpoint + path
-
-	// Create request with same method and body
-	var bodyReader io.Reader
-	if c.Request.Body != nil {
-		bodyBytes, err := io.ReadAll(c.Request.Body)
-		if err != nil {
-			s.sendError(c, http.StatusInternalServerError, "proxy_error", "Failed to read request body", nil)
-			return
-		}
-		bodyReader = bytes.NewReader(bodyBytes)
+// proxyToAgent forwards the request to an HSM agent via gRPC and returns the HTTP response
+func (s *Server) proxyToAgent(c *gin.Context, deviceName, path string) {
+	// Parse the REST API path and convert to gRPC call
+	method := c.Request.Method
+	
+	// Extract namespace for finding device
+	namespace := c.GetHeader("X-Namespace")
+	if namespace == "" {
+		namespace = "secrets"
 	}
 
-	req, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, agentURL, bodyReader)
+	// Create gRPC client for this device
+	grpcClient, err := s.createGRPCClient(c.Request.Context(), deviceName, namespace)
 	if err != nil {
-		s.sendError(c, http.StatusInternalServerError, "proxy_error", "Failed to create agent request", nil)
-		return
-	}
-
-	// Copy headers
-	for key, values := range c.Request.Header {
-		for _, value := range values {
-			req.Header.Add(key, value)
-		}
-	}
-
-	// Make request to agent
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		s.sendError(c, http.StatusBadGateway, "agent_error", "Failed to connect to HSM agent", map[string]any{
+		s.sendError(c, http.StatusServiceUnavailable, "grpc_error", "Failed to connect to HSM agent", map[string]any{
 			"error": err.Error(),
 		})
 		return
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	// Copy response headers
-	for key, values := range resp.Header {
-		for _, value := range values {
-			c.Header(key, value)
+	defer func() {
+		if closeErr := grpcClient.Close(); closeErr != nil {
+			s.logger.Error(closeErr, "Failed to close gRPC client")
 		}
-	}
+	}()
 
-	// Copy status and body
-	c.Status(resp.StatusCode)
-	if _, err := io.Copy(c.Writer, resp.Body); err != nil {
-		s.logger.Error(err, "Failed to copy agent response")
+	// For now, just implement ListSecrets to test gRPC connection
+	if method == "GET" && strings.Contains(path, "/secrets") {
+		s.handleListSecrets(c, grpcClient)
+	} else {
+		s.sendError(c, http.StatusNotImplemented, "not_implemented", "gRPC routing not yet implemented for this endpoint", nil)
 	}
+}
+
+// createGRPCClient creates a gRPC client for the specified device using AgentManager
+func (s *Server) createGRPCClient(ctx context.Context, deviceName, _ string) (hsm.Client, error) {
+	// Use the AgentManager to create a gRPC client directly
+	if s.agentManager == nil {
+		return nil, fmt.Errorf("agent manager not available")
+	}
+	
+	// Create gRPC client using AgentManager's existing method
+	grpcClient, err := s.agentManager.CreateSingleGRPCClient(ctx, deviceName, s.logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create gRPC client for device %s: %w", deviceName, err)
+	}
+	
+	return grpcClient, nil
+}
+
+// handleListSecrets handles GET /api/v1/hsm/secrets via gRPC
+func (s *Server) handleListSecrets(c *gin.Context, grpcClient hsm.Client) {
+	// Get query parameters
+	prefix := c.Query("prefix")
+	
+	// Call gRPC ListSecrets
+	secrets, err := grpcClient.ListSecrets(c.Request.Context(), prefix)
+	if err != nil {
+		s.sendError(c, http.StatusInternalServerError, "grpc_error", "Failed to list secrets from HSM agent", map[string]any{
+			"error": err.Error(),
+		})
+		return
+	}
+	
+	// Return the secrets in the expected format
+	response := map[string]any{
+		"secrets": secrets,
+		"count":   len(secrets),
+	}
+	
+	s.sendResponse(c, http.StatusOK, "Secrets listed successfully", response)
 }

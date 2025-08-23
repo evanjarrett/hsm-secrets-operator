@@ -47,16 +47,13 @@ func Run(args []string) error {
 	var slotID int
 	var tokenLabel string
 	var pin string
-	var useGRPC bool
-
 	fs.StringVar(&deviceName, "device-name", "", "Name of the HSM device this agent serves")
-	fs.IntVar(&port, "port", 9090, "Port for the HSM agent API (gRPC by default)")
+	fs.IntVar(&port, "port", 9090, "Port for the HSM agent gRPC API")
 	fs.IntVar(&healthPort, "health-port", 8093, "Port for health checks")
 	fs.StringVar(&pkcs11LibraryPath, "pkcs11-library", "", "Path to PKCS#11 library")
 	fs.IntVar(&slotID, "slot-id", 0, "PKCS#11 slot ID")
 	fs.StringVar(&tokenLabel, "token-label", "", "PKCS#11 token label")
 	fs.StringVar(&pin, "pin", "", "PKCS#11 PIN (use environment variable HSM_PIN for security)")
-	fs.BoolVar(&useGRPC, "use-grpc", true, "Use gRPC server instead of HTTP (default: true)")
 
 	// Parse agent-specific flags from the remaining unparsed arguments
 	if err := fs.Parse(args); err != nil {
@@ -86,7 +83,7 @@ func Run(args []string) error {
 		"device", deviceName,
 		"port", port,
 		"health-port", healthPort,
-		"protocol", map[bool]string{true: "gRPC", false: "HTTP"}[useGRPC],
+		"protocol", "gRPC",
 		"pkcs11-library", pkcs11LibraryPath,
 		"slot-id", slotID,
 		"token-label", tokenLabel,
@@ -143,22 +140,12 @@ func Run(args []string) error {
 		cancel()
 	}()
 
-	// Start server
+	// Start gRPC server
 	setupLog.Info("HSM agent ready", "device", deviceName)
 
-	var err error
-	if useGRPC {
-		// Create gRPC server
-		grpcServer := agent.NewGRPCServer(hsmClient, deviceName, port, healthPort, setupLog)
-		err = grpcServer.Start(ctx)
-	} else {
-		// Create HTTP server (legacy)
-		httpServer := agent.NewServer(hsmClient, deviceName, port, healthPort, setupLog)
-		err = httpServer.Start(ctx)
-	}
-
-	if err != nil {
-		setupLog.Error(err, "Server failed")
+	grpcServer := agent.NewGRPCServer(hsmClient, deviceName, port, healthPort, setupLog)
+	if err := grpcServer.Start(ctx); err != nil {
+		setupLog.Error(err, "gRPC server failed")
 		return err
 	}
 
