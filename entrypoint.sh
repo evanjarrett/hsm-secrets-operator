@@ -8,15 +8,15 @@ sleep 2
 # Supports running manager, discovery, or agent binaries from the same container
 
 case "$1" in
-    "--manager")
+    "manager")
         shift
         exec /hsm-operator --mode=manager "$@"
         ;;
-    "--discovery")
+    "discovery")
         shift
         exec /hsm-operator --mode=discovery "$@"
         ;;
-    "--agent")
+    "agent")
         shift
         exec /hsm-operator --mode=agent "$@"
         ;;
