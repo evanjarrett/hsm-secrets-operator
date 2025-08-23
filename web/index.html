@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HSM Secrets Manager</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .section {
+            background: white;
+            border-radius: 10px;
+            padding: 25px;
+            margin-bottom: 25px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .section h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #555;
+        }
+
+        .form-group input, .form-group textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e1e5e9;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-group input:focus, .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .form-group textarea {
+            resize: vertical;
+            min-height: 120px;
+            font-family: Monaco, 'Cascadia Code', Consolas, monospace;
+        }
+
+        .kv-pair {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            align-items: center;
+        }
+
+        .kv-pair input[type="text"] {
+            flex: 1;
+        }
+
+        .kv-pair input[name*="key"] {
+            flex: 0 0 30%;
+        }
+
+        .kv-pair input[name*="value"] {
+            flex: 0 0 60%;
+        }
+
+        .btn-small {
+            padding: 0;
+            font-size: 14px;
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+        }
+
+        .btn-add {
+            background: #38a169;
+        }
+
+        .btn-add:hover {
+            background: #2f855a;
+            box-shadow: 0 4px 12px rgba(56, 161, 105, 0.3);
+        }
+
+        .btn-remove {
+            background: #e53e3e;
+        }
+
+        .btn-remove:hover {
+            background: #c53030;
+            box-shadow: 0 4px 12px rgba(229, 62, 62, 0.3);
+        }
+
+        .kv-container {
+            border: 2px dashed #e2e8f0;
+            border-radius: 8px;
+            padding: 15px;
+            background: #f8f9fa;
+        }
+
+        .kv-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            font-weight: 600;
+            color: #4a5568;
+        }
+
+        .add-first-pair {
+            text-align: center;
+            color: #666;
+            padding: 20px;
+        }
+
+        .btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 20px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            text-decoration: none;
+        }
+
+        .btn:hover {
+            background: #5a67d8;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-danger {
+            background: #e53e3e;
+        }
+
+        .btn-danger:hover {
+            background: #c53030;
+            box-shadow: 0 4px 12px rgba(229, 62, 62, 0.3);
+        }
+
+        .btn-secondary {
+            background: #718096;
+        }
+
+        .btn-secondary:hover {
+            background: #4a5568;
+            box-shadow: 0 4px 12px rgba(113, 128, 150, 0.3);
+        }
+
+        .secrets-list {
+            margin-top: 20px;
+        }
+
+        .secret-item {
+            background: #f8f9fa;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: between;
+            align-items: center;
+        }
+
+        .secret-name {
+            font-weight: 600;
+            color: #2d3748;
+            flex-grow: 1;
+        }
+
+        .secret-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+
+        .error {
+            background: #fed7d7;
+            border: 1px solid #feb2b2;
+            color: #c53030;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+
+        .success {
+            background: #c6f6d5;
+            border: 1px solid #9ae6b4;
+            color: #22543d;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+
+        .json-preview {
+            background: #1a202c;
+            color: #e2e8f0;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: Monaco, 'Cascadia Code', Consolas, monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .stat-number {
+            font-size: 2em;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .toolbar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            align-items: center;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            .header h1 {
+                font-size: 1.8em;
+            }
+            
+            .secret-item {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .secret-actions {
+                margin-top: 10px;
+                justify-content: flex-end;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔐 HSM Secrets Manager</h1>
+            <p>Manage your Hardware Security Module secrets through a simple web interface</p>
+        </div>
+
+        <div class="stats" id="stats">
+            <div class="stat-card">
+                <div class="stat-number" id="totalSecrets">-</div>
+                <div class="stat-label">Total Secrets</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="apiStatus">-</div>
+                <div class="stat-label">API Status</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>📋 Secrets List</h2>
+            <div class="toolbar">
+                <button class="btn btn-secondary" onclick="refreshSecrets()">🔄 Refresh</button>
+                <button class="btn" onclick="showCreateForm()">➕ Create New Secret</button>
+            </div>
+            <div id="secretsList" class="secrets-list">
+                <div class="loading">Loading secrets...</div>
+            </div>
+        </div>
+
+        <div class="section" id="createSection" style="display: none;">
+            <h2>➕ Create New Secret</h2>
+            <div id="createMessage"></div>
+            <form id="createForm">
+                <div class="form-group">
+                    <label for="secretName">Secret Name</label>
+                    <input type="text" id="secretName" name="secretName" placeholder="e.g., my-app-secrets" required>
+                </div>
+                
+                <div class="form-group">
+                    <label>Secret Data</label>
+                    <div class="kv-container">
+                        <div class="kv-header">
+                            <span>Key-Value Pairs</span>
+                            <button type="button" class="btn btn-add btn-small" onclick="ui.addKeyValuePair()" title="Add new key-value pair">
+                                ➕
+                            </button>
+                        </div>
+                        <div id="kvPairs">
+                            <!-- Initial key-value pair will be added by JavaScript -->
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="display: flex; gap: 10px;">
+                    <button type="submit" class="btn">Create Secret</button>
+                    <button type="button" class="btn btn-secondary" onclick="hideCreateForm()">Cancel</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="section" id="viewSection" style="display: none;">
+            <h2>🔍 Secret Details</h2>
+            <div id="viewMessage"></div>
+            <div id="secretDetails"></div>
+            <div style="margin-top: 20px;">
+                <button class="btn btn-secondary" onclick="hideViewSection()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

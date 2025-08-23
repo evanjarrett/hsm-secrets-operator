@@ -38,6 +38,7 @@ RUN go mod download
 COPY cmd/ cmd/
 COPY api/ api/
 COPY internal/ internal/
+COPY web/ web/
 
 # Build manager and discovery without CGO (they use mock clients)
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o manager cmd/manager/main.go
@@ -57,6 +58,7 @@ WORKDIR /
 COPY --from=builder /workspace/manager .
 COPY --from=builder /workspace/agent .
 COPY --from=builder /workspace/discovery .
+COPY --from=builder /workspace/web ./web/
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 USER 65532:65532

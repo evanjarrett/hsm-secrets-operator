@@ -4,7 +4,7 @@ A Kubernetes operator that bridges Hardware Security Module (HSM) data storage w
 
 ## Description
 
-The HSM Secrets Operator implements a controller pattern that maintains bidirectional synchronization between HSM binary data files and Kubernetes Secret objects. It uses a dual-binary architecture with automatic USB device discovery and dynamic agent deployment to provide secure, hardware-backed secret management in Kubernetes environments.
+The HSM Secrets Operator implements a controller pattern that maintains bidirectional synchronization between HSM binary data files and Kubernetes Secret objects. It uses a four-binary architecture with gRPC communication, automatic USB device discovery, and dynamic agent deployment to provide secure, hardware-backed secret management in Kubernetes environments.
 
 ### Key Features
 
@@ -12,19 +12,27 @@ The HSM Secrets Operator implements a controller pattern that maintains bidirect
 - **Bidirectional Sync**: Automatic synchronization between HSM storage and Kubernetes Secrets
 - **Device Discovery**: Automatic USB HSM device detection with support for multiple device types
 - **Agent Architecture**: Dynamic deployment of HSM agent pods with node affinity for direct hardware access
+- **gRPC Communication**: High-performance gRPC protocol for manager-agent communication with fallback to HTTP
 - **Unified API**: Single REST API endpoint that routes operations to appropriate HSM agents
 - **Secret Portability**: Move secrets between clusters by carrying the HSM device
 - **Multi-Device Support**: Support for Pico HSM, SmartCard-HSM, YubiKey HSM, and custom devices
 
 ### Architecture
 
-The operator consists of three main components:
+The operator consists of four main components:
 
-1. **Manager**: Orchestrates HSMSecret resources, deploys agents, and provides unified API proxy
-2. **Discovery**: DaemonSet that discovers USB HSM devices on cluster nodes
-3. **Agent**: Dynamically deployed pods that handle direct HSM communication on nodes with devices
+1. **Manager**: Orchestrates HSMSecret resources, deploys agents, and provides unified REST API proxy (port 8090)
+2. **Discovery**: DaemonSet that discovers USB HSM devices on cluster nodes and reports via pod annotations
+3. **Agent**: Dynamically deployed pods that handle direct HSM communication via gRPC (port 9090) with HTTP health checks (port 8093)
+4. **Test HSM**: Utility for HSM operations testing and debugging
 
-This architecture ensures that HSM operations only occur on nodes with physical device access while providing a centralized management interface.
+**Communication Architecture:**
+- **Manager ↔ Agent**: gRPC for efficient, type-safe HSM operations
+- **Discovery → Manager**: Pod annotations for race-free device reporting  
+- **External → Manager**: REST API for user/application access
+- **Protocol Buffers**: Structured message definitions in `api/proto/hsm/v1/hsm.proto`
+
+This architecture ensures that HSM operations only occur on nodes with physical device access while providing a centralized management interface with high-performance communication.
 
 ## Getting Started
 
@@ -34,6 +42,7 @@ This architecture ensures that HSM operations only occur on nodes with physical 
 - Docker 17.03+ (for building images)
 - kubectl with cluster-admin privileges
 - HSM device (Pico HSM, SmartCard-HSM, YubiKey HSM, or compatible PKCS#11 device)
+- **For development**: buf tool (`go install github.com/bufbuild/buf/cmd/buf@latest`)
 
 ### Deployment Options
 
@@ -110,11 +119,17 @@ curl http://localhost:8090/api/v1/health
 # List secrets
 curl http://localhost:8090/api/v1/hsm/secrets
 
-# Check discovered HSM devices
+# Check discovered HSM devices  
 kubectl get hsmdevices
 
+# Check HSM pools (aggregated device discovery)
+kubectl get hsmpools
+
 # Check agent pods (deployed automatically when devices are ready)
-kubectl get pods -l app=hsm-agent
+kubectl get pods -l app.kubernetes.io/component=agent
+
+# Test gRPC agent health (from within cluster)
+kubectl exec -it <agent-pod> -- curl http://localhost:8093/healthz
 ```
 
 ### Uninstallation
@@ -206,7 +221,10 @@ make test
 # Generate manifests after CRD changes
 make manifests
 
-# Build binaries
+# Generate protocol buffer code after .proto changes
+buf generate
+
+# Build all binaries (manager, discovery, agent, test-hsm)
 make build
 ```
 
@@ -219,10 +237,30 @@ make quality  # Runs format + vet + lint
 
 ### Architecture Notes
 
-- **Manager**: Handles HSMSecret CRDs and agent deployment
-- **Discovery**: DaemonSet for USB device discovery
-- **Agent**: Dynamic pods for direct HSM communication
-- **API**: Unified proxy that routes to agent pods
+- **Manager**: Handles HSMSecret CRDs, agent deployment, and REST API proxy (port 8090)
+- **Discovery**: DaemonSet for USB device discovery with pod annotation reporting
+- **Agent**: Dynamic pods for direct HSM communication via gRPC (port 9090)
+- **gRPC Protocol**: Type-safe communication defined in `api/proto/hsm/v1/hsm.proto`
+- **Health Checks**: HTTP endpoints on port 8093 for Kubernetes probes
+
+### Protocol Buffer Development
+
+When modifying the gRPC service definition:
+
+```bash
+# 1. Edit the protocol definition
+vim api/proto/hsm/v1/hsm.proto
+
+# 2. Generate Go code  
+buf generate
+
+# 3. Lint and format
+buf lint
+buf format -w api/proto/hsm/v1/hsm.proto
+
+# 4. Run tests to ensure compatibility
+make test
+```
 
 **NOTE:** Run `make help` for more information on all potential `make` targets
 

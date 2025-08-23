@@ -58,6 +58,12 @@ func (s *Server) handleProxyRequest(c *gin.Context) {
 
 // setupProxyRoutes sets up proxy routes for HSM operations
 func (s *Server) setupProxyRoutes() {
+	// Serve web UI static files
+	s.router.Static("/web", "./web")
+	s.router.GET("/", func(c *gin.Context) {
+		c.Redirect(http.StatusFound, "/web/")
+	})
+
 	// Create API v1 group
 	v1 := s.router.Group("/api/v1")
 	{
