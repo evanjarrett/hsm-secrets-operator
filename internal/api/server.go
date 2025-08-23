@@ -192,13 +192,13 @@ func (s *Server) findAvailableAgent(ctx context.Context, namespace string) (stri
 		}, pool)
 
 		if err == nil && pool.Status.Phase == hsmv1alpha1.HSMPoolPhaseReady && len(pool.Status.AggregatedDevices) > 0 {
-			// Generate agent endpoint
+			// Generate agent endpoint for gRPC communication
 			agentName := fmt.Sprintf("hsm-agent-%s", device.Name)
-			agentEndpoint := fmt.Sprintf("http://%s.%s.svc.cluster.local:8092", agentName, namespace)
+			agentEndpoint := fmt.Sprintf("%s.%s.svc.cluster.local:9090", agentName, namespace)
 
-			// Test if agent is responsive
-			testURL := agentEndpoint + "/api/v1/hsm/info"
-			resp, err := s.httpClient.Get(testURL)
+			// Test if agent is responsive using health check on HTTP port
+			healthURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:8093/healthz", agentName, namespace)
+			resp, err := s.httpClient.Get(healthURL)
 			if err == nil && resp.StatusCode == 200 {
 				_ = resp.Body.Close()
 				return agentEndpoint, nil
