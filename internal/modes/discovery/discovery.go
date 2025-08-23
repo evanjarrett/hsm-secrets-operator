@@ -14,10 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;patch
-// +kubebuilder:rbac:groups=hsm.j5t.io,resources=hsmdevices,verbs=get;list;watch
-
-package main
+package discovery
 
 import (
 	"context"
@@ -40,7 +37,6 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/discovery"
@@ -71,27 +67,28 @@ const (
 	DeviceReportAnnotation = "hsm.j5t.io/device-report"
 )
 
-func main() {
+// Run starts the discovery mode
+func Run(args []string) error {
+	// Create a new flag set for discovery-specific flags
+	fs := flag.NewFlagSet("discovery", flag.ExitOnError)
+
 	var nodeName string
 	var podName string
 	var podNamespace string
 	var syncInterval time.Duration
 	var detectionMethod string
 
-	flag.StringVar(&nodeName, "node-name", "", "The name of the node this discovery agent is running on")
-	flag.StringVar(&podName, "pod-name", "", "The name of this discovery pod")
-	flag.StringVar(&podNamespace, "pod-namespace", "", "The namespace of this discovery pod")
-	flag.DurationVar(&syncInterval, "sync-interval", 30*time.Second, "Interval for device discovery sync")
-	flag.StringVar(&detectionMethod, "detection-method", "auto",
+	fs.StringVar(&nodeName, "node-name", "", "The name of the node this discovery agent is running on")
+	fs.StringVar(&podName, "pod-name", "", "The name of this discovery pod")
+	fs.StringVar(&podNamespace, "pod-namespace", "", "The namespace of this discovery pod")
+	fs.DurationVar(&syncInterval, "sync-interval", 30*time.Second, "Interval for device discovery sync")
+	fs.StringVar(&detectionMethod, "detection-method", "auto",
 		"USB detection method: 'sysfs' (native), 'legacy' (privileged), or 'auto'")
 
-	opts := zap.Options{
-		Development: true,
+	// Parse discovery-specific flags (skip first arg which is the mode)
+	if err := fs.Parse(args[2:]); err != nil {
+		return err
 	}
-	opts.BindFlags(flag.CommandLine)
-	flag.Parse()
-
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
 	// Get node name
 	if nodeName == "" {
@@ -100,8 +97,7 @@ func main() {
 		} else if hostname, err := os.Hostname(); err == nil {
 			nodeName = hostname
 		} else {
-			setupLog.Error(nil, "node name must be provided via --node-name flag or NODE_NAME environment variable")
-			os.Exit(1)
+			return fmt.Errorf("node name must be provided via --node-name flag or NODE_NAME environment variable")
 		}
 	}
 
@@ -137,7 +133,7 @@ func main() {
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to create Kubernetes client")
-		os.Exit(1)
+		return err
 	}
 
 	// Initialize USB discoverer
@@ -157,8 +153,10 @@ func main() {
 
 	if err := discoveryAgent.Run(ctx); err != nil {
 		setupLog.Error(err, "discovery agent failed")
-		os.Exit(1)
+		return err
 	}
+
+	return nil
 }
 
 // DiscoveryAgent handles device discovery and pod annotation updates

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package main
+package agent
 
 import (
 	"context"
@@ -26,7 +26,6 @@ import (
 	"time"
 
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
@@ -36,7 +35,11 @@ var (
 	setupLog = ctrl.Log.WithName("agent")
 )
 
-func main() {
+// Run starts the agent mode
+func Run(args []string) error {
+	// Create a new flag set for agent-specific flags
+	fs := flag.NewFlagSet("agent", flag.ExitOnError)
+
 	var deviceName string
 	var port int
 	var healthPort int
@@ -46,30 +49,25 @@ func main() {
 	var pin string
 	var useGRPC bool
 
-	flag.StringVar(&deviceName, "device-name", "", "Name of the HSM device this agent serves")
-	flag.IntVar(&port, "port", 9090, "Port for the HSM agent API (gRPC by default)")
-	flag.IntVar(&healthPort, "health-port", 8093, "Port for health checks")
-	flag.StringVar(&pkcs11LibraryPath, "pkcs11-library", "", "Path to PKCS#11 library")
-	flag.IntVar(&slotID, "slot-id", 0, "PKCS#11 slot ID")
-	flag.StringVar(&tokenLabel, "token-label", "", "PKCS#11 token label")
-	flag.StringVar(&pin, "pin", "", "PKCS#11 PIN (use environment variable HSM_PIN for security)")
-	flag.BoolVar(&useGRPC, "use-grpc", true, "Use gRPC server instead of HTTP (default: true)")
+	fs.StringVar(&deviceName, "device-name", "", "Name of the HSM device this agent serves")
+	fs.IntVar(&port, "port", 9090, "Port for the HSM agent API (gRPC by default)")
+	fs.IntVar(&healthPort, "health-port", 8093, "Port for health checks")
+	fs.StringVar(&pkcs11LibraryPath, "pkcs11-library", "", "Path to PKCS#11 library")
+	fs.IntVar(&slotID, "slot-id", 0, "PKCS#11 slot ID")
+	fs.StringVar(&tokenLabel, "token-label", "", "PKCS#11 token label")
+	fs.StringVar(&pin, "pin", "", "PKCS#11 PIN (use environment variable HSM_PIN for security)")
+	fs.BoolVar(&useGRPC, "use-grpc", true, "Use gRPC server instead of HTTP (default: true)")
 
-	opts := zap.Options{
-		Development: true,
+	// Parse agent-specific flags (skip first arg which is the mode)
+	if err := fs.Parse(args[2:]); err != nil {
+		return err
 	}
-	opts.BindFlags(flag.CommandLine)
-	flag.Parse()
-
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
 	// Validate required parameters
 	if deviceName == "" {
 		deviceName = os.Getenv("HSM_DEVICE_NAME")
 		if deviceName == "" {
-			setupLog.Error(fmt.Errorf("device name required"),
-				"Device name must be provided via --device-name or HSM_DEVICE_NAME environment variable")
-			os.Exit(1)
+			return fmt.Errorf("device name required: must be provided via --device-name or HSM_DEVICE_NAME environment variable")
 		}
 	}
 
@@ -115,7 +113,7 @@ func main() {
 
 		if err := hsmClient.Initialize(ctx, config); err != nil {
 			setupLog.Error(err, "Failed to initialize PKCS#11 client")
-			os.Exit(1)
+			return err
 		}
 	} else {
 		// Use mock client for testing
@@ -127,7 +125,7 @@ func main() {
 
 		if err := hsmClient.Initialize(ctx, hsm.DefaultConfig()); err != nil {
 			setupLog.Error(err, "Failed to initialize mock client")
-			os.Exit(1)
+			return err
 		}
 	}
 
@@ -161,7 +159,7 @@ func main() {
 
 	if err != nil {
 		setupLog.Error(err, "Server failed")
-		os.Exit(1)
+		return err
 	}
 
 	// Cleanup
@@ -171,4 +169,5 @@ func main() {
 	}
 
 	setupLog.Info("HSM agent shutdown complete")
+	return nil
 }

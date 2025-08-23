@@ -40,12 +40,8 @@ COPY api/ api/
 COPY internal/ internal/
 COPY web/ web/
 
-# Build manager and discovery without CGO (they use mock clients)
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o manager cmd/manager/main.go
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o discovery cmd/discovery/main.go
-
-# Build agent with CGO enabled for PKCS#11 support
-RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o agent cmd/agent/main.go
+# Build unified binary with CGO enabled for PKCS#11 support (agent mode needs it)
+RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o hsm-operator cmd/hsm-operator/main.go
 
 FROM alpine:3.22
 RUN apk add --no-cache opensc-dev ccid pcsc-lite openssl libtool libusb
@@ -55,9 +51,7 @@ COPY --from=builder /usr/lib/libcrypto.so* /usr/lib/
 COPY --from=builder /usr/local/ /usr/local/
 
 WORKDIR /
-COPY --from=builder /workspace/manager .
-COPY --from=builder /workspace/agent .
-COPY --from=builder /workspace/discovery .
+COPY --from=builder /workspace/hsm-operator .
 COPY --from=builder /workspace/web ./web/
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

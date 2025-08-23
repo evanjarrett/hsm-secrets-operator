@@ -17,19 +17,15 @@ COPY api/ api/
 COPY internal/ internal/
 COPY web/ web/
 
-# Build all binaries without CGO for testing (uses mock HSM clients)
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o manager cmd/manager/main.go
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o agent cmd/agent/main.go
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o discovery cmd/discovery/main.go
+# Build unified binary without CGO for testing (uses mock HSM clients)
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o hsm-operator cmd/hsm-operator/main.go
 
 FROM alpine:3.22
 # Minimal runtime dependencies for testing
 RUN apk add --no-cache ca-certificates
 
 WORKDIR /
-COPY --from=builder /workspace/manager .
-COPY --from=builder /workspace/agent .
-COPY --from=builder /workspace/discovery .
+COPY --from=builder /workspace/hsm-operator .
 COPY --from=builder /workspace/web ./web/
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

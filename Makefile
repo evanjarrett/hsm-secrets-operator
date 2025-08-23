@@ -166,14 +166,27 @@ quality: fmt vet lint ## Run full code quality check (format, vet, lint)
 ##@ Build
 
 .PHONY: build
-build: manifests generate fmt vet ## Build manager, discovery, and agent binaries.
-	go build -o bin/manager cmd/manager/main.go
-	go build -o bin/discovery cmd/discovery/main.go
-	go build -o bin/agent cmd/agent/main.go
+build: manifests generate fmt vet ## Build unified hsm-operator binary.
+	go build -o bin/hsm-operator cmd/hsm-operator/main.go
+
+# Legacy build targets for individual binaries (now creates symlinks to unified binary)
+.PHONY: build-legacy
+build-legacy: build ## Build legacy binary names as symlinks to unified binary.
+	ln -sf hsm-operator bin/manager
+	ln -sf hsm-operator bin/discovery  
+	ln -sf hsm-operator bin/agent
 
 .PHONY: run
-run: manifests generate fmt vet ## Run a controller from your host.
-	go run ./cmd/manager/main.go
+run: manifests generate fmt vet ## Run manager mode from your host.
+	go run ./cmd/hsm-operator/main.go --mode=manager
+
+.PHONY: run-agent
+run-agent: ## Run agent mode from your host (requires HSM device).
+	go run ./cmd/hsm-operator/main.go --mode=agent
+
+.PHONY: run-discovery  
+run-discovery: ## Run discovery mode from your host.
+	go run ./cmd/hsm-operator/main.go --mode=discovery
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.

@@ -8,32 +8,24 @@ sleep 2
 # Supports running manager, discovery, or agent binaries from the same container
 
 case "$1" in
-    "manager")
-        shift
-        exec /manager "$@"
-        ;;
-    "discovery")
-        shift
-        exec /discovery "$@"
-        ;;
-    "agent")
-        shift
-        exec /agent "$@"
-        ;;
     "--manager")
         shift
-        exec /manager "$@"
+        exec /hsm-operator --mode=manager "$@"
         ;;
     "--discovery")
         shift
-        exec /discovery "$@"
+        exec /hsm-operator --mode=discovery "$@"
         ;;
     "--agent")
         shift
-        exec /agent "$@"
+        exec /hsm-operator --mode=agent "$@"
+        ;;
+    "--mode="*)
+        # Direct mode flag usage (preferred)
+        exec /hsm-operator "$@"
         ;;
     *)
         # Default to manager for backward compatibility
-        exec /manager "$@"
+        exec /hsm-operator --mode=manager "$@"
         ;;
 esac
