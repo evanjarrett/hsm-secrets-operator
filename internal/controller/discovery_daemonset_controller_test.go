@@ -183,7 +183,7 @@ var _ = Describe("DiscoveryDaemonSetReconciler", func() {
 
 			// Check update strategy
 			Expect(daemonSet.Spec.UpdateStrategy.Type).To(Equal(appsv1.RollingUpdateDaemonSetStrategyType))
-			Expect(daemonSet.Spec.UpdateStrategy.RollingUpdate.MaxUnavailable).To(Equal(&intstr.IntOrString{Type: intstr.Int, IntVal: 1}))
+			Expect(daemonSet.Spec.UpdateStrategy.RollingUpdate.MaxUnavailable).To(Equal(&intstr.IntOrString{Type: intstr.String, StrVal: "100%"}))
 		})
 
 		It("Should update DaemonSet when HSMDevice is updated", func() {
