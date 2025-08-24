@@ -29,29 +29,26 @@ import (
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/discovery"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
 )
 
 // Server represents the HSM REST API server that proxies requests to agent pods
 type Server struct {
-	client           client.Client
-	agentManager     *agent.Manager
-	mirroringManager *discovery.MirroringManager
-	validator        *validator.Validate
-	logger           logr.Logger
-	router           *gin.Engine
-	proxyClient      *ProxyClient
+	client       client.Client
+	agentManager *agent.Manager
+	validator    *validator.Validate
+	logger       logr.Logger
+	router       *gin.Engine
+	proxyClient  *ProxyClient
 }
 
 // NewServer creates a new API server instance that proxies to agents
-func NewServer(k8sClient client.Client, agentManager *agent.Manager, mirroringManager *discovery.MirroringManager, logger logr.Logger) *Server {
+func NewServer(k8sClient client.Client, agentManager *agent.Manager, logger logr.Logger) *Server {
 	s := &Server{
-		client:           k8sClient,
-		agentManager:     agentManager,
-		mirroringManager: mirroringManager,
-		validator:        validator.New(),
-		logger:           logger.WithName("api-server"),
+		client:       k8sClient,
+		agentManager: agentManager,
+		validator:    validator.New(),
+		logger:       logger.WithName("api-server"),
 	}
 
 	// Create ProxyClient instance
@@ -89,13 +86,11 @@ func (s *Server) handleHealth(c *gin.Context) {
 	// In proxy mode, check if any agents are available
 	_, agentErr := s.findAvailableAgent(c.Request.Context(), "secrets")
 	hsmConnected := agentErr == nil
-	replicationEnabled := s.mirroringManager != nil
-	activeNodes := 0
 
-	if s.mirroringManager != nil {
-		// Count active nodes (simplified - in real implementation would check actual node health)
-		activeNodes = 1 // Current node
-	}
+	// Check if multiple agents are available for replication
+	agents, _ := s.getAllAvailableAgents(c.Request.Context(), "secrets")
+	replicationEnabled := len(agents) > 1
+	activeNodes := len(agents)
 
 	status := "healthy"
 	if !hsmConnected {
@@ -192,6 +187,33 @@ func (s *Server) findAvailableAgent(ctx context.Context, namespace string) (stri
 	}
 
 	return "", fmt.Errorf("no available HSM agents found")
+}
+
+// getAllAvailableAgents finds all available HSM agents for mirroring operations
+func (s *Server) getAllAvailableAgents(ctx context.Context, namespace string) ([]string, error) {
+	if s.agentManager == nil {
+		return nil, fmt.Errorf("agent manager not available")
+	}
+
+	// List all HSMDevices to find all with active agents
+	var hsmDeviceList hsmv1alpha1.HSMDeviceList
+	if err := s.client.List(ctx, &hsmDeviceList, client.InNamespace(namespace)); err != nil {
+		return nil, fmt.Errorf("failed to list HSM devices: %w", err)
+	}
+
+	var availableDevices []string
+	// Check all devices that have active agents with pod IPs
+	for _, device := range hsmDeviceList.Items {
+		if podIPs, err := s.agentManager.GetAgentPodIPs(device.Name); err == nil && len(podIPs) > 0 {
+			availableDevices = append(availableDevices, device.Name)
+		}
+	}
+
+	if len(availableDevices) == 0 {
+		return nil, fmt.Errorf("no available HSM agents found")
+	}
+
+	return availableDevices, nil
 }
 
 // createGRPCClient creates a gRPC client for the specified device using AgentManager

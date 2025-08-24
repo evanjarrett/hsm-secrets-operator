@@ -77,9 +77,6 @@ class HSMSecretsUI {
     setupEventListeners() {
         const createForm = document.getElementById('createForm');
         createForm.addEventListener('submit', (e) => this.handleCreateSecret(e));
-        
-        // Auto-refresh every 30 seconds
-        setInterval(() => this.refreshSecrets(), 30000);
     }
 
     async loadInitialData() {
@@ -187,8 +184,8 @@ class HSMSecretsUI {
 
         try {
             await this.api.deleteSecret(secretName);
-            this.showSuccess(`Secret "${secretName}" deleted successfully!`);
-            await this.loadSecrets();
+            this.showSuccess(null, `Secret "${secretName}" deleted successfully!`);
+            await this.loadSecrets(); // Refresh after deletion
         } catch (error) {
             this.showError(null, `Failed to delete secret: ${error.message}`);
         }
@@ -321,7 +318,7 @@ class HSMSecretsUI {
             
             // Reset form and refresh list
             event.target.reset();
-            await this.loadSecrets();
+            await this.loadSecrets(); // Refresh after creation
             
             // Hide form after a delay
             setTimeout(() => this.hideCreateForm(), 2000);

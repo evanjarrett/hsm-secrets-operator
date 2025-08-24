@@ -35,7 +35,6 @@ import (
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/discovery"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
 )
 
@@ -44,15 +43,14 @@ const (
 	HSMSecretFinalizer = "hsmsecret.hsm.j5t.io/finalizer"
 
 	// DefaultSyncInterval is the default sync interval in seconds
-	DefaultSyncInterval = 300
+	DefaultSyncInterval = 30
 )
 
 // HSMSecretReconciler reconciles a HSMSecret object
 type HSMSecretReconciler struct {
 	client.Client
-	Scheme           *runtime.Scheme
-	MirroringManager *discovery.MirroringManager
-	AgentManager     *agent.Manager
+	Scheme       *runtime.Scheme
+	AgentManager *agent.Manager
 }
 
 // +kubebuilder:rbac:groups=hsm.j5t.io,resources=hsmsecrets,verbs=get;list;watch;create;update;patch;delete
@@ -176,10 +174,10 @@ func (r *HSMSecretReconciler) reconcileNormal(ctx context.Context, hsmSecret *hs
 		syncInterval = DefaultSyncInterval
 	}
 
-	// Read secret from HSM with readonly fallback support
-	hsmData, err := r.readSecretWithFallback(ctx, hsmSecret, hsmClient)
+	// Read secret from HSM via agent
+	hsmData, err := r.readSecretFromHSM(ctx, hsmSecret, hsmClient)
 	if err != nil {
-		logger.Error(err, "Failed to read secret from HSM and mirrors", "path", hsmSecret.Name)
+		logger.Error(err, "Failed to read secret from HSM", "path", hsmSecret.Name)
 		return ctrl.Result{RequeueAfter: time.Minute * 2}, err
 	}
 
@@ -367,37 +365,22 @@ func (r *HSMSecretReconciler) updateStatus(_ context.Context, hsmSecret *hsmv1al
 	}
 }
 
-// readSecretWithFallback attempts to read a secret from primary HSM, falling back to mirrors if needed
-func (r *HSMSecretReconciler) readSecretWithFallback(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret, hsmClient hsm.Client) (hsm.SecretData, error) {
+// readSecretFromHSM attempts to read a secret from HSM via agent
+func (r *HSMSecretReconciler) readSecretFromHSM(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret, hsmClient hsm.Client) (hsm.SecretData, error) {
 	logger := log.FromContext(ctx)
 
-	// Try to read from primary HSM first (via agent)
+	// Read from HSM via agent (sync handles mirroring automatically)
 	if hsmClient != nil && hsmClient.IsConnected() {
 		data, err := hsmClient.ReadSecret(ctx, hsmSecret.Name)
 		if err == nil {
-			logger.V(1).Info("Successfully read secret from primary HSM", "path", hsmSecret.Name)
+			logger.V(1).Info("Successfully read secret from HSM", "path", hsmSecret.Name)
 			return data, nil
 		}
-		logger.V(1).Info("Failed to read from primary HSM, attempting fallback", "error", err)
+		logger.V(1).Info("Failed to read from HSM", "error", err)
+		return nil, err
 	}
 
-	// If primary failed and we have a mirroring manager, try readonly access from mirrors
-	if r.MirroringManager != nil {
-		// Find relevant HSMDevice for this secret path
-		hsmDevice, err := r.findHSMDeviceForSecret(ctx, hsmSecret)
-		if err != nil {
-			logger.Error(err, "Failed to find HSM device for readonly fallback")
-		} else if hsmDevice != nil {
-			data, err := r.MirroringManager.GetReadOnlyAccess(ctx, hsmSecret.Name, hsmDevice)
-			if err == nil {
-				logger.Info("Successfully read secret from readonly mirror", "path", hsmSecret.Name)
-				return data, nil
-			}
-			logger.V(1).Info("Failed to read from mirrors", "error", err)
-		}
-	}
-
-	return nil, fmt.Errorf("secret not accessible from primary HSM or mirrors")
+	return nil, fmt.Errorf("HSM client not available or not connected")
 }
 
 // findHSMDeviceForSecret finds the HSMDevice that should contain the secret

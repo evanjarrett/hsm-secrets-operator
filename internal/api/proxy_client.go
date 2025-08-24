@@ -18,14 +18,22 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-logr/logr"
 
 	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
 )
+
+// WriteResult represents the result of writing to a single device
+type WriteResult struct {
+	DeviceName string
+	Error      error
+}
 
 // ProxyClient handles HTTP requests and proxies them to gRPC clients
 // It has methods that match the HTTP endpoints and handle the full request/response cycle
@@ -94,6 +102,55 @@ func (p *ProxyClient) getOrCreateGRPCClient(c *gin.Context) (hsm.Client, error) 
 	p.grpcClients[deviceName] = grpcClient
 	p.logger.V(1).Info("Created new gRPC client", "device", deviceName)
 	return grpcClient, nil
+}
+
+// getAllAvailableGRPCClients returns all available gRPC clients for mirroring operations
+func (p *ProxyClient) getAllAvailableGRPCClients(c *gin.Context) (map[string]hsm.Client, error) {
+	// Extract namespace
+	namespace := c.GetHeader("X-Namespace")
+	if namespace == "" {
+		namespace = "secrets"
+	}
+
+	// Get all available devices
+	devices, err := p.server.getAllAvailableAgents(c.Request.Context(), namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	clients := make(map[string]hsm.Client)
+	p.clientsMutex.Lock()
+	defer p.clientsMutex.Unlock()
+
+	for _, deviceName := range devices {
+		// Try to get existing client for this device
+		if client, exists := p.grpcClients[deviceName]; exists && client.IsConnected() {
+			clients[deviceName] = client
+			continue
+		}
+
+		// Close existing client for this device if it exists but is not connected
+		if oldClient, exists := p.grpcClients[deviceName]; exists {
+			if closeErr := oldClient.Close(); closeErr != nil {
+				p.logger.V(1).Info("Error closing old gRPC client", "device", deviceName, "error", closeErr)
+			}
+			delete(p.grpcClients, deviceName)
+		}
+
+		// Create new gRPC client
+		grpcClient, err := p.server.createGRPCClient(c.Request.Context(), deviceName, namespace)
+		if err != nil {
+			p.logger.V(1).Info("Failed to create gRPC client", "device", deviceName, "error", err)
+			continue
+		}
+
+		// Cache and include the client
+		p.grpcClients[deviceName] = grpcClient
+		clients[deviceName] = grpcClient
+		p.logger.V(1).Info("Created new gRPC client", "device", deviceName)
+	}
+
+	return clients, nil
 }
 
 // GetInfo handles GET /hsm/info
@@ -177,7 +234,7 @@ func (p *ProxyClient) ReadSecret(c *gin.Context) {
 	p.server.sendResponse(c, http.StatusOK, "Secret read successfully", response)
 }
 
-// WriteSecret handles POST/PUT /hsm/secrets/:path
+// WriteSecret handles POST/PUT /hsm/secrets/:path with mirroring support
 func (p *ProxyClient) WriteSecret(c *gin.Context) {
 	path := c.Param("path")
 	if path == "" {
@@ -189,6 +246,7 @@ func (p *ProxyClient) WriteSecret(c *gin.Context) {
 	var req struct {
 		Data     map[string]string   `json:"data" binding:"required"`
 		Metadata *hsm.SecretMetadata `json:"metadata,omitempty"`
+		Mirror   *bool               `json:"mirror,omitempty"` // Enable/disable mirroring for this request
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		p.server.sendError(c, http.StatusBadRequest, "parse_error", "Failed to parse request body", map[string]any{
@@ -203,39 +261,133 @@ func (p *ProxyClient) WriteSecret(c *gin.Context) {
 		data[key] = []byte(value)
 	}
 
-	grpcClient, err := p.getOrCreateGRPCClient(c)
-	if err != nil {
-		p.server.sendError(c, http.StatusServiceUnavailable, "no_agent", "No HSM agents available", map[string]any{
-			"error": err.Error(),
-		})
-		return
-	}
+	// Determine if we should mirror this write (default: true)
+	shouldMirror := req.Mirror == nil || *req.Mirror
 
-	if req.Metadata != nil {
-		err = grpcClient.WriteSecretWithMetadata(c.Request.Context(), path, data, req.Metadata)
+	if shouldMirror {
+		// Get all available clients for mirroring
+		clients, err := p.getAllAvailableGRPCClients(c)
+		if err != nil {
+			p.server.sendError(c, http.StatusServiceUnavailable, "no_agents", "No HSM agents available for mirroring", map[string]any{
+				"error": err.Error(),
+			})
+			return
+		}
+
+		if len(clients) == 0 {
+			p.server.sendError(c, http.StatusServiceUnavailable, "no_agents", "No HSM agents available", nil)
+			return
+		}
+
+		// Add mirroring metadata
+		metadata := req.Metadata
+		if metadata == nil {
+			metadata = &hsm.SecretMetadata{Tags: make(map[string]string)}
+		}
+		if metadata.Tags == nil {
+			metadata.Tags = make(map[string]string)
+		}
+		metadata.Tags["sync.version"] = fmt.Sprintf("%d", time.Now().Unix())
+		metadata.Tags["sync.timestamp"] = time.Now().Format(time.RFC3339)
+		metadata.Tags["sync.mirrored"] = "true"
+
+		// Write to all devices in parallel
+		results := p.writeToAllDevices(c.Request.Context(), clients, path, data, metadata)
+
+		// Check results
+		successful := 0
+		var errors []string
+		deviceResults := make(map[string]any)
+
+		for deviceName, result := range results {
+			deviceResults[deviceName] = map[string]any{
+				"success": result.Error == nil,
+				"error": func() string {
+					if result.Error != nil {
+						return result.Error.Error()
+					}
+					return ""
+				}(),
+			}
+
+			if result.Error == nil {
+				successful++
+			} else {
+				errors = append(errors, fmt.Sprintf("%s: %v", deviceName, result.Error))
+				p.logger.Error(result.Error, "Failed to write to device", "device", deviceName, "path", path)
+			}
+		}
+
+		// Consider the operation successful if we wrote to at least one device
+		if successful > 0 {
+			response := map[string]any{
+				"path":          path,
+				"keys":          len(data),
+				"mirrored":      true,
+				"devices":       len(clients),
+				"successful":    successful,
+				"deviceResults": deviceResults,
+			}
+			if metadata != nil {
+				response["metadata"] = metadata
+			}
+			if len(errors) > 0 {
+				response["warnings"] = errors
+			}
+
+			statusCode := http.StatusCreated
+			message := "Secret written successfully"
+			if successful < len(clients) {
+				statusCode = http.StatusPartialContent // 206 indicates partial success
+				message = fmt.Sprintf("Secret written to %d/%d devices", successful, len(clients))
+			}
+
+			p.server.sendResponse(c, statusCode, message, response)
+		} else {
+			// All devices failed
+			p.server.sendError(c, http.StatusInternalServerError, "write_failed", "Failed to write secret to any HSM device", map[string]any{
+				"errors":        errors,
+				"deviceResults": deviceResults,
+				"path":          path,
+			})
+		}
 	} else {
-		err = grpcClient.WriteSecret(c.Request.Context(), path, data)
-	}
+		// Single-device write (no mirroring)
+		grpcClient, err := p.getOrCreateGRPCClient(c)
+		if err != nil {
+			p.server.sendError(c, http.StatusServiceUnavailable, "no_agent", "No HSM agents available", map[string]any{
+				"error": err.Error(),
+			})
+			return
+		}
 
-	if err != nil {
-		p.server.sendError(c, http.StatusInternalServerError, "grpc_error", "Failed to write secret to HSM", map[string]any{
-			"error": err.Error(),
-			"path":  path,
-		})
-		return
-	}
+		if req.Metadata != nil {
+			err = grpcClient.WriteSecretWithMetadata(c.Request.Context(), path, data, req.Metadata)
+		} else {
+			err = grpcClient.WriteSecret(c.Request.Context(), path, data)
+		}
 
-	response := map[string]any{
-		"path": path,
-		"keys": len(data),
+		if err != nil {
+			p.server.sendError(c, http.StatusInternalServerError, "grpc_error", "Failed to write secret to HSM", map[string]any{
+				"error": err.Error(),
+				"path":  path,
+			})
+			return
+		}
+
+		response := map[string]any{
+			"path":     path,
+			"keys":     len(data),
+			"mirrored": false,
+		}
+		if req.Metadata != nil {
+			response["metadata"] = req.Metadata
+		}
+		p.server.sendResponse(c, http.StatusCreated, "Secret written successfully", response)
 	}
-	if req.Metadata != nil {
-		response["metadata"] = req.Metadata
-	}
-	p.server.sendResponse(c, http.StatusCreated, "Secret written successfully", response)
 }
 
-// DeleteSecret handles DELETE /hsm/secrets/:path
+// DeleteSecret handles DELETE /hsm/secrets/:path with mirroring support
 func (p *ProxyClient) DeleteSecret(c *gin.Context) {
 	path := c.Param("path")
 	if path == "" {
@@ -243,27 +395,106 @@ func (p *ProxyClient) DeleteSecret(c *gin.Context) {
 		return
 	}
 
-	grpcClient, err := p.getOrCreateGRPCClient(c)
-	if err != nil {
-		p.server.sendError(c, http.StatusServiceUnavailable, "no_agent", "No HSM agents available", map[string]any{
-			"error": err.Error(),
-		})
-		return
-	}
+	// Check if mirroring is explicitly disabled
+	mirror := c.Query("mirror")
+	shouldMirror := mirror != "false" // Default to true unless explicitly set to false
 
-	err = grpcClient.DeleteSecret(c.Request.Context(), path)
-	if err != nil {
-		p.server.sendError(c, http.StatusInternalServerError, "grpc_error", "Failed to delete secret from HSM", map[string]any{
-			"error": err.Error(),
-			"path":  path,
-		})
-		return
-	}
+	if shouldMirror {
+		// Get all available clients for mirroring delete
+		clients, err := p.getAllAvailableGRPCClients(c)
+		if err != nil {
+			p.server.sendError(c, http.StatusServiceUnavailable, "no_agents", "No HSM agents available for mirroring", map[string]any{
+				"error": err.Error(),
+			})
+			return
+		}
 
-	response := map[string]any{
-		"path": path,
+		if len(clients) == 0 {
+			p.server.sendError(c, http.StatusServiceUnavailable, "no_agents", "No HSM agents available", nil)
+			return
+		}
+
+		// Delete from all devices in parallel
+		results := p.deleteFromAllDevices(c.Request.Context(), clients, path)
+
+		// Check results
+		successful := 0
+		var errors []string
+		deviceResults := make(map[string]any)
+
+		for deviceName, result := range results {
+			deviceResults[deviceName] = map[string]any{
+				"success": result.Error == nil,
+				"error": func() string {
+					if result.Error != nil {
+						return result.Error.Error()
+					}
+					return ""
+				}(),
+			}
+
+			if result.Error == nil {
+				successful++
+			} else {
+				errors = append(errors, fmt.Sprintf("%s: %v", deviceName, result.Error))
+				p.logger.Error(result.Error, "Failed to delete from device", "device", deviceName, "path", path)
+			}
+		}
+
+		// Consider the operation successful if we deleted from at least one device
+		if successful > 0 {
+			response := map[string]any{
+				"path":          path,
+				"mirrored":      true,
+				"devices":       len(clients),
+				"successful":    successful,
+				"deviceResults": deviceResults,
+			}
+			if len(errors) > 0 {
+				response["warnings"] = errors
+			}
+
+			statusCode := http.StatusOK
+			message := "Secret deleted successfully"
+			if successful < len(clients) {
+				statusCode = http.StatusPartialContent // 206 indicates partial success
+				message = fmt.Sprintf("Secret deleted from %d/%d devices", successful, len(clients))
+			}
+
+			p.server.sendResponse(c, statusCode, message, response)
+		} else {
+			// All devices failed
+			p.server.sendError(c, http.StatusInternalServerError, "delete_failed", "Failed to delete secret from any HSM device", map[string]any{
+				"errors":        errors,
+				"deviceResults": deviceResults,
+				"path":          path,
+			})
+		}
+	} else {
+		// Single-device delete (no mirroring)
+		grpcClient, err := p.getOrCreateGRPCClient(c)
+		if err != nil {
+			p.server.sendError(c, http.StatusServiceUnavailable, "no_agent", "No HSM agents available", map[string]any{
+				"error": err.Error(),
+			})
+			return
+		}
+
+		err = grpcClient.DeleteSecret(c.Request.Context(), path)
+		if err != nil {
+			p.server.sendError(c, http.StatusInternalServerError, "grpc_error", "Failed to delete secret from HSM", map[string]any{
+				"error": err.Error(),
+				"path":  path,
+			})
+			return
+		}
+
+		response := map[string]any{
+			"path":     path,
+			"mirrored": false,
+		}
+		p.server.sendResponse(c, http.StatusOK, "Secret deleted successfully", response)
 	}
-	p.server.sendResponse(c, http.StatusOK, "Secret deleted successfully", response)
 }
 
 // ReadMetadata handles GET /hsm/secrets/:path/metadata
@@ -395,6 +626,63 @@ func (p *ProxyClient) GetClientCount() int {
 	p.clientsMutex.RLock()
 	defer p.clientsMutex.RUnlock()
 	return len(p.grpcClients)
+}
+
+// writeToAllDevices writes secret data to all devices in parallel
+func (p *ProxyClient) writeToAllDevices(ctx context.Context, clients map[string]hsm.Client, path string, data hsm.SecretData, metadata *hsm.SecretMetadata) map[string]WriteResult {
+	results := make(map[string]WriteResult)
+	resultsMutex := sync.Mutex{}
+	wg := sync.WaitGroup{}
+
+	for deviceName, client := range clients {
+		wg.Add(1)
+		go func(deviceName string, client hsm.Client) {
+			defer wg.Done()
+
+			var err error
+			if metadata != nil {
+				err = client.WriteSecretWithMetadata(ctx, path, data, metadata)
+			} else {
+				err = client.WriteSecret(ctx, path, data)
+			}
+
+			resultsMutex.Lock()
+			results[deviceName] = WriteResult{
+				DeviceName: deviceName,
+				Error:      err,
+			}
+			resultsMutex.Unlock()
+		}(deviceName, client)
+	}
+
+	wg.Wait()
+	return results
+}
+
+// deleteFromAllDevices deletes secret data from all devices in parallel
+func (p *ProxyClient) deleteFromAllDevices(ctx context.Context, clients map[string]hsm.Client, path string) map[string]WriteResult {
+	results := make(map[string]WriteResult)
+	resultsMutex := sync.Mutex{}
+	wg := sync.WaitGroup{}
+
+	for deviceName, client := range clients {
+		wg.Add(1)
+		go func(deviceName string, client hsm.Client) {
+			defer wg.Done()
+
+			err := client.DeleteSecret(ctx, path)
+
+			resultsMutex.Lock()
+			results[deviceName] = WriteResult{
+				DeviceName: deviceName,
+				Error:      err,
+			}
+			resultsMutex.Unlock()
+		}(deviceName, client)
+	}
+
+	wg.Wait()
+	return results
 }
 
 // Interface compliance methods (unused in HTTP mode but required for hsm.Client interface)

@@ -40,7 +40,6 @@ import (
 	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/api"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/controller"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/discovery"
 )
 
 var (
@@ -210,11 +209,8 @@ func Run(args []string) error {
 		return err
 	}
 
-	// Initialize mirroring manager for HSMSecret controller device failover
-	// Note: Device discovery is handled by separate discovery daemon
-	mirroringManager := discovery.NewMirroringManager(mgr.GetClient(), setupLog)
-
-	// HSM client registration removed - now handled by agent architecture
+	// HSM mirroring is now handled by the sync package and HSMSyncReconciler
+	// Device discovery is handled by separate discovery daemon
 
 	// Agent manager will detect the current namespace automatically
 	imageResolver := controller.NewImageResolver(mgr.GetClient())
@@ -241,10 +237,9 @@ func Run(args []string) error {
 	}
 
 	if err := (&controller.HSMSecretReconciler{
-		Client:           mgr.GetClient(),
-		Scheme:           mgr.GetScheme(),
-		MirroringManager: mirroringManager,
-		AgentManager:     agentManager,
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		AgentManager: agentManager,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "HSMSecret")
 		return err
@@ -287,7 +282,7 @@ func Run(args []string) error {
 
 	// Start API server if enabled
 	if enableAPI {
-		apiServer := api.NewServer(mgr.GetClient(), agentManager, mirroringManager, ctrl.Log.WithName("api"))
+		apiServer := api.NewServer(mgr.GetClient(), agentManager, ctrl.Log.WithName("api"))
 
 		// Start API server in a separate goroutine
 		go func() {

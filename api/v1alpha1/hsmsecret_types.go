@@ -43,7 +43,7 @@ type HSMSecretSpec struct {
 
 	// SyncInterval defines how often to check for HSM changes (in seconds)
 	// Only applies when AutoSync is true
-	// +kubebuilder:default=300
+	// +kubebuilder:default=30
 	// +optional
 	SyncInterval int32 `json:"syncInterval,omitempty"`
 }
@@ -62,13 +62,44 @@ const (
 	SyncStatusPending SyncStatus = "Pending"
 )
 
+// HSMDeviceSync tracks synchronization state for a specific HSM device
+type HSMDeviceSync struct {
+	// DeviceName is the name of the HSM device
+	DeviceName string `json:"deviceName"`
+
+	// LastSyncTime is the timestamp of the last successful sync with this device
+	// +optional
+	LastSyncTime *metav1.Time `json:"lastSyncTime,omitempty"`
+
+	// Checksum is the SHA256 checksum of the data on this device
+	// +optional
+	Checksum string `json:"checksum,omitempty"`
+
+	// Status indicates the sync status for this specific device
+	// +optional
+	Status SyncStatus `json:"status,omitempty"`
+
+	// LastError contains the last error when syncing with this device
+	// +optional
+	LastError string `json:"lastError,omitempty"`
+
+	// Online indicates if this device is currently available
+	// +optional
+	Online bool `json:"online,omitempty"`
+
+	// Version is a monotonically increasing counter for conflict resolution
+	// Updated each time the secret changes on this device
+	// +optional
+	Version int64 `json:"version,omitempty"`
+}
+
 // HSMSecretStatus defines the observed state of HSMSecret.
 type HSMSecretStatus struct {
 	// LastSyncTime is the timestamp of the last successful synchronization
 	// +optional
 	LastSyncTime *metav1.Time `json:"lastSyncTime,omitempty"`
 
-	// HSMChecksum is the SHA256 checksum of the HSM data
+	// HSMChecksum is the SHA256 checksum of the HSM data (deprecated - use DeviceSyncStatus)
 	// +optional
 	HSMChecksum string `json:"hsmChecksum,omitempty"`
 
@@ -91,6 +122,19 @@ type HSMSecretStatus struct {
 	// SecretRef references the created Kubernetes Secret
 	// +optional
 	SecretRef *corev1.ObjectReference `json:"secretRef,omitempty"`
+
+	// DeviceSyncStatus tracks sync status for each HSM device in mirrored setups
+	// +optional
+	DeviceSyncStatus []HSMDeviceSync `json:"deviceSyncStatus,omitempty"`
+
+	// PrimaryDevice indicates which device is currently considered the primary source of truth
+	// Used for conflict resolution in multi-device scenarios
+	// +optional
+	PrimaryDevice string `json:"primaryDevice,omitempty"`
+
+	// SyncConflict indicates if there are conflicting versions across devices
+	// +optional
+	SyncConflict bool `json:"syncConflict,omitempty"`
 }
 
 // +kubebuilder:object:root=true

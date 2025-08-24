@@ -143,7 +143,7 @@ metadata:
   name: my-secret                   # HSM path = metadata.name
 spec:
   autoSync: true                    # Bidirectional sync (default)
-  syncInterval: 300                 # Sync interval in seconds  
+  syncInterval: 30                  # Sync interval in seconds  
 status:
   syncStatus: "InSync"              # InSync|OutOfSync|Error|Pending
   hsmChecksum: "sha256:abc123..."   # SHA256 checksum for change detection
