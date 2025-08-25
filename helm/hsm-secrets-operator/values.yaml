@@ -248,10 +248,25 @@ hsmsecret:
   # Enable HSMSecret resource creation
   enabled: false
   # List of HSM secrets to manage
+  # Note: parentRef is automatically added by the Helm chart to associate with this operator instance
   secrets:
-    - name: "example-secret"
-      namespace: "default"
+    - name: "database-credentials"
+      namespace: "production" 
+      secretName: "db-secrets"
       syncInterval: 300
+      autoSync: true
+    - name: "api-keys"
+      namespace: "development"
+      secretName: "third-party-keys"  
+      syncInterval: 60
+      autoSync: true
+  # Example of additional secrets:
+  #   - name: "tls-certs"
+  #     namespace: "ingress-system"
+  #     secretName: "wildcard-tls"
+  #     secretType: "kubernetes.io/tls"
+  #     syncInterval: 3600  # Sync hourly for certificates
+  #     autoSync: false     # Manual sync only
 
 # Additional configuration
 config:

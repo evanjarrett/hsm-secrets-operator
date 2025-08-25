@@ -10,6 +10,10 @@ metadata:
     {{- include "hsm-secrets-operator.labels" $ | nindent 4 }}
     app.kubernetes.io/component: hsmsecret
 spec:
+  # ParentRef automatically points to this Helm release's operator instance
+  parentRef:
+    name: {{ include "hsm-secrets-operator.controllerManagerName" $ }}
+    namespace: {{ $.Release.Namespace }}
   {{- with .secretName }}
   secretName: {{ . }}
   {{- end }}

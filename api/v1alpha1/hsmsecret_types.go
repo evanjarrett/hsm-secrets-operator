@@ -24,8 +24,38 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
+// ParentReference identifies an API object (typically an HSM operator instance)
+// to which the HSMSecret should be associated.
+type ParentReference struct {
+	// Name is the name of the parent resource.
+	Name string `json:"name"`
+
+	// Namespace is the namespace of the parent resource.
+	// This must be provided when the parent is in a different namespace
+	// from the HSMSecret.
+	// +optional
+	Namespace *string `json:"namespace,omitempty"`
+
+	// Group is the API group of the parent resource.
+	// Defaults to "apps" (for Deployment resources).
+	// +kubebuilder:default="apps"
+	// +optional
+	Group *string `json:"group,omitempty"`
+
+	// Kind is the kind of the parent resource.
+	// Defaults to "Deployment".
+	// +kubebuilder:default="Deployment"
+	// +optional
+	Kind *string `json:"kind,omitempty"`
+}
+
 // HSMSecretSpec defines the desired state of HSMSecret.
 type HSMSecretSpec struct {
+	// ParentRef identifies the HSM operator instance that should handle this HSMSecret.
+	// HSMSecrets without a ParentRef are ignored by all operators.
+	// +optional
+	ParentRef *ParentReference `json:"parentRef,omitempty"`
+
 	// SecretName is the name of the Kubernetes Secret object to create/update
 	// Defaults to the HSMSecret name if not specified
 	// +optional

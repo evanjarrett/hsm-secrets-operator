@@ -49,8 +49,10 @@ const (
 // HSMSecretReconciler reconciles a HSMSecret object
 type HSMSecretReconciler struct {
 	client.Client
-	Scheme       *runtime.Scheme
-	AgentManager *agent.Manager
+	Scheme            *runtime.Scheme
+	AgentManager      *agent.Manager
+	OperatorNamespace string
+	OperatorName      string
 }
 
 // +kubebuilder:rbac:groups=hsm.j5t.io,resources=hsmsecrets,verbs=get;list;watch;create;update;patch;delete
@@ -75,6 +77,16 @@ func (r *HSMSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		logger.Error(err, "Failed to get HSMSecret")
 		return ctrl.Result{}, err
+	}
+
+	// Check if this HSMSecret should be handled by this operator instance
+	if !r.shouldHandleSecret(&hsmSecret) {
+		logger.V(1).Info("HSMSecret not assigned to this operator instance, skipping",
+			"secret", hsmSecret.Name,
+			"namespace", hsmSecret.Namespace,
+			"operatorName", r.OperatorName,
+			"operatorNamespace", r.OperatorNamespace)
+		return ctrl.Result{}, nil
 	}
 
 	// Find target HSM device and ensure agent is running
@@ -120,7 +132,7 @@ func (r *HSMSecretReconciler) ensureHSMAgent(ctx context.Context, hsmSecret *hsm
 	logger := log.FromContext(ctx)
 
 	// Find the appropriate HSM device
-	hsmDevice, err := r.findHSMDeviceForSecret(ctx, hsmSecret)
+	hsmDevice, err := r.findHSMDeviceForSecret(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to find HSM device for secret: %w", err)
 	}
@@ -503,10 +515,11 @@ func (r *HSMSecretReconciler) readSecretFromHSM(ctx context.Context, hsmSecret *
 }
 
 // findHSMDeviceForSecret finds the HSMDevice that should contain the secret
-func (r *HSMSecretReconciler) findHSMDeviceForSecret(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret) (*hsmv1alpha1.HSMDevice, error) {
-	// List all HSMDevices in the same namespace
+// Note: HSMDevices are managed in the operator namespace, not the HSMSecret's namespace
+func (r *HSMSecretReconciler) findHSMDeviceForSecret(ctx context.Context) (*hsmv1alpha1.HSMDevice, error) {
+	// List HSMDevices in this operator's namespace (where operator infrastructure is contained)
 	var hsmDeviceList hsmv1alpha1.HSMDeviceList
-	if err := r.List(ctx, &hsmDeviceList, client.InNamespace(hsmSecret.Namespace)); err != nil {
+	if err := r.List(ctx, &hsmDeviceList, client.InNamespace(r.OperatorNamespace)); err != nil {
 		return nil, fmt.Errorf("failed to list HSM devices: %w", err)
 	}
 
@@ -530,6 +543,29 @@ func (r *HSMSecretReconciler) findHSMDeviceForSecret(ctx context.Context, hsmSec
 	}
 
 	return nil, fmt.Errorf("no suitable HSM device found in ready state")
+}
+
+// shouldHandleSecret determines if this operator instance should handle the given HSMSecret
+func (r *HSMSecretReconciler) shouldHandleSecret(hsmSecret *hsmv1alpha1.HSMSecret) bool {
+	// If no parentRef is present, ignore the secret (explicit association required)
+	if hsmSecret.Spec.ParentRef == nil {
+		return false
+	}
+
+	parentRef := hsmSecret.Spec.ParentRef
+
+	// Check if the parent name matches this operator
+	if parentRef.Name != r.OperatorName {
+		return false
+	}
+
+	// Check namespace match - if parentRef.Namespace is nil, assume same namespace as HSMSecret
+	expectedNamespace := r.OperatorNamespace
+	if parentRef.Namespace != nil {
+		expectedNamespace = *parentRef.Namespace
+	}
+
+	return expectedNamespace == r.OperatorNamespace
 }
 
 // SetupWithManager sets up the controller with the Manager.

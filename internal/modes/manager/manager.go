@@ -19,7 +19,9 @@ package manager
 import (
 	"crypto/tls"
 	"flag"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -50,6 +52,43 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(hsmv1alpha1.AddToScheme(scheme))
+}
+
+// getCurrentNamespace returns the namespace the operator is running in
+func getCurrentNamespace() string {
+	// Try to read namespace from service account mount
+	if ns, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
+		return strings.TrimSpace(string(ns))
+	}
+
+	// Fallback to default namespace if we can't determine it
+	setupLog.Info("Could not determine current namespace, using 'default'")
+	return "default"
+}
+
+// getOperatorName returns the operator deployment name
+// This can be overridden via environment variable or falls back to default
+func getOperatorName() string {
+	// Check if operator name is provided via environment variable
+	if name := os.Getenv("OPERATOR_NAME"); name != "" {
+		return name
+	}
+
+	// Check if deployment name is provided via downward API
+	if hostname := os.Getenv("HOSTNAME"); hostname != "" {
+		// Kubernetes deployment pods have hostname like: deployment-name-replicaset-hash-pod-hash
+		// Extract just the deployment name part
+		parts := strings.Split(hostname, "-")
+		if len(parts) >= 2 {
+			// Return the first two parts as deployment name (e.g., "controller-manager")
+			return strings.Join(parts[:2], "-")
+		}
+		return hostname
+	}
+
+	// Fallback to default deployment name
+	setupLog.Info("Could not determine operator name, using 'controller-manager'")
+	return "controller-manager"
 }
 
 // Run starts the manager mode
@@ -212,6 +251,11 @@ func Run(args []string) error {
 	// HSM mirroring is now handled by the sync package and HSMSyncReconciler
 	// Device discovery is handled by separate discovery daemon
 
+	// Get current operator namespace and name
+	operatorNamespace := getCurrentNamespace()
+	operatorName := getOperatorName()
+	setupLog.Info("Detected operator details", "namespace", operatorNamespace, "name", operatorName)
+
 	// Agent manager will detect the current namespace automatically
 	imageResolver := controller.NewImageResolver(mgr.GetClient())
 	agentManager := agent.NewManager(mgr.GetClient(), "", imageResolver)
@@ -237,9 +281,11 @@ func Run(args []string) error {
 	}
 
 	if err := (&controller.HSMSecretReconciler{
-		Client:       mgr.GetClient(),
-		Scheme:       mgr.GetScheme(),
-		AgentManager: agentManager,
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		AgentManager:      agentManager,
+		OperatorNamespace: operatorNamespace,
+		OperatorName:      operatorName,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "HSMSecret")
 		return err
