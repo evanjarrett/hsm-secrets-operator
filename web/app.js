@@ -41,10 +41,14 @@ class HSMSecretsAPI {
         return this.request(`/hsm/secrets/${encodeURIComponent(secretName)}`);
     }
 
-    async createSecret(secretName, data) {
+    async createSecret(secretName, data, metadata = null) {
+        const requestBody = { data };
+        if (metadata) {
+            requestBody.metadata = metadata;
+        }
         return this.request(`/hsm/secrets/${encodeURIComponent(secretName)}`, {
             method: 'POST',
-            body: JSON.stringify({ data })
+            body: JSON.stringify(requestBody)
         });
     }
 
@@ -64,6 +68,7 @@ class HSMSecretsUI {
 
     init() {
         this.kvPairCounter = 0;
+        this.labelPairCounter = 0;
         this.setupEventListeners();
         this.loadInitialData();
         this.initializeCreateForm();
@@ -72,6 +77,8 @@ class HSMSecretsUI {
     initializeCreateForm() {
         // Add initial empty key-value pair to the form
         this.addKeyValuePair();
+        // Add initial empty label pair to the metadata form
+        this.addLabelPair();
     }
 
     setupEventListeners() {
@@ -207,6 +214,18 @@ class HSMSecretsUI {
         kvPairs.innerHTML = '';
         this.kvPairCounter = 0;
         this.addKeyValuePair(); // Add one empty pair
+        
+        // Reset label pairs and advanced section
+        const labelPairs = document.getElementById('labelPairs');
+        labelPairs.innerHTML = '';
+        this.labelPairCounter = 0;
+        this.addLabelPair(); // Add one empty label pair
+        
+        // Close advanced section
+        const advancedContent = document.getElementById('advancedContent');
+        const advancedToggle = document.querySelector('.advanced-toggle');
+        advancedContent.classList.remove('show');
+        advancedToggle.classList.remove('expanded');
     }
 
     hideViewSection() {
@@ -274,6 +293,99 @@ class HSMSecretsUI {
         return data;
     }
 
+    toggleAdvanced() {
+        const content = document.getElementById('advancedContent');
+        const toggle = document.querySelector('.advanced-toggle');
+        
+        content.classList.toggle('show');
+        toggle.classList.toggle('expanded');
+    }
+
+    addLabelPair(key = '', value = '') {
+        const labelPairs = document.getElementById('labelPairs');
+        
+        const pairId = this.labelPairCounter++;
+        const pairDiv = document.createElement('div');
+        pairDiv.className = 'tag-pair';
+        pairDiv.id = `labelPair${pairId}`;
+        
+        pairDiv.innerHTML = `
+            <input type="text" name="labelKey${pairId}" placeholder="Label key (e.g., app, environment)" value="${this.escapeHtml(key)}">
+            <input type="text" name="labelValue${pairId}" placeholder="Label value (e.g., backend, production)" value="${this.escapeHtml(value)}">
+            <button type="button" class="btn btn-remove btn-small" onclick="ui.removeLabelPair('labelPair${pairId}')" title="Remove this label">
+                ➖
+            </button>
+        `;
+        
+        labelPairs.appendChild(pairDiv);
+        
+        // Focus on the key input for new pairs (but not during initial load)
+        if (!key && labelPairs.children.length > 1) {
+            pairDiv.querySelector('input[name^="labelKey"]').focus();
+        }
+    }
+
+    removeLabelPair(pairId) {
+        const labelPairs = document.getElementById('labelPairs');
+        const pairElement = document.getElementById(pairId);
+        
+        // Don't allow removing the last pair
+        if (labelPairs.children.length <= 1) {
+            return;
+        }
+        
+        if (pairElement) {
+            pairElement.remove();
+        }
+    }
+
+    collectLabelPairs() {
+        const labelPairs = document.getElementById('labelPairs');
+        const pairs = labelPairs.querySelectorAll('.tag-pair');
+        const labels = {};
+        
+        for (const pair of pairs) {
+            const keyInput = pair.querySelector('input[name^="labelKey"]');
+            const valueInput = pair.querySelector('input[name^="labelValue"]');
+            
+            if (keyInput && valueInput) {
+                const key = keyInput.value.trim();
+                const value = valueInput.value.trim();
+                
+                if (key && value) {
+                    labels[key] = value;
+                }
+            }
+        }
+        
+        return labels;
+    }
+
+    collectMetadata() {
+        const description = document.getElementById('metadataDescription').value.trim();
+        const format = document.getElementById('metadataFormat').value.trim();
+        const dataType = document.getElementById('metadataDataType').value.trim();
+        const source = document.getElementById('metadataSource').value.trim();
+        const labels = this.collectLabelPairs();
+        
+        // Only return metadata if at least one field is filled
+        if (!description && !format && !dataType && !source && Object.keys(labels).length === 0) {
+            return null;
+        }
+        
+        const metadata = {};
+        if (description) metadata.description = description;
+        if (format) metadata.format = format;
+        if (dataType) metadata.data_type = dataType;
+        if (source) metadata.source = source;
+        if (Object.keys(labels).length > 0) metadata.labels = labels;
+        
+        // Add creation timestamp
+        metadata.created_at = new Date().toISOString();
+        
+        return metadata;
+    }
+
     async handleCreateSecret(event) {
         event.preventDefault();
         
@@ -296,6 +408,9 @@ class HSMSecretsUI {
             this.showError(messageElement, 'At least one key-value pair is required');
             return;
         }
+        
+        // Collect metadata if any is provided
+        const metadata = this.collectMetadata();
 
         // Validate key names (no spaces, no special chars except underscore)
         for (const key of Object.keys(secretData)) {
@@ -305,14 +420,16 @@ class HSMSecretsUI {
             }
         }
 
+        // Get submit button and store original text
+        const submitBtn = event.target.querySelector('button[type="submit"]');
+        const originalText = submitBtn.textContent;
+
         try {
             // Show loading state
-            const submitBtn = event.target.querySelector('button[type="submit"]');
-            const originalText = submitBtn.textContent;
             submitBtn.textContent = 'Creating...';
             submitBtn.disabled = true;
 
-            await this.api.createSecret(secretName, secretData);
+            await this.api.createSecret(secretName, secretData, metadata);
             
             this.showSuccess(messageElement, `Secret "${secretName}" created successfully!`);
             
@@ -327,8 +444,7 @@ class HSMSecretsUI {
             this.showError(messageElement, `Failed to create secret: ${error.message}`);
         } finally {
             // Restore button state
-            const submitBtn = event.target.querySelector('button[type="submit"]');
-            submitBtn.textContent = 'Create Secret';
+            submitBtn.textContent = originalText;
             submitBtn.disabled = false;
         }
     }
@@ -394,6 +510,8 @@ let ui;
 
 window.addEventListener('DOMContentLoaded', () => {
     ui = new HSMSecretsUI();
+    // Expose ui object globally for onclick handlers
+    window.ui = ui;
 });
 
 // Expose functions globally for onclick handlers
@@ -401,3 +519,4 @@ window.refreshSecrets = () => ui.refreshSecrets();
 window.showCreateForm = () => ui.showCreateForm();
 window.hideCreateForm = () => ui.hideCreateForm();
 window.hideViewSection = () => ui.hideViewSection();
+

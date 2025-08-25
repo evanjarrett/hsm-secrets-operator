@@ -37,11 +37,10 @@ type HSMInfo struct {
 
 // SecretMetadata contains metadata about an HSM secret
 type SecretMetadata struct {
-	Label       string            `json:"label,omitempty"`
 	Description string            `json:"description,omitempty"`
-	Tags        map[string]string `json:"tags,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
 	Format      string            `json:"format,omitempty"`
-	DataType    SecretDataType    `json:"dataType,omitempty"`
+	DataType    string            `json:"dataType,omitempty"`
 	CreatedAt   string            `json:"createdAt,omitempty"`
 	Source      string            `json:"source,omitempty"`
 }

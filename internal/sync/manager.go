@@ -172,7 +172,7 @@ func (sm *SyncManager) readFromDevice(ctx context.Context, deviceName, secretPat
 	// Get metadata to extract version (if available)
 	metadata, err := grpcClient.ReadMetadata(ctx, secretPath)
 	if err == nil && metadata != nil {
-		if versionStr, exists := metadata.Tags["sync.version"]; exists {
+		if versionStr, exists := metadata.Labels["sync.version"]; exists {
 			if version, parseErr := parseVersion(versionStr); parseErr == nil {
 				result.Version = version
 			}
@@ -279,7 +279,7 @@ func (sm *SyncManager) syncToSecondaryDevices(ctx context.Context, devices []str
 
 		// Write data with updated version metadata
 		metadata := &hsm.SecretMetadata{
-			Tags: map[string]string{
+			Labels: map[string]string{
 				"sync.version":   fmt.Sprintf("%d", time.Now().Unix()),
 				"sync.primary":   primaryDevice,
 				"sync.timestamp": time.Now().Format(time.RFC3339),

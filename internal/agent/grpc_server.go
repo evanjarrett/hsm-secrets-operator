@@ -217,11 +217,10 @@ func (s *GRPCServer) WriteSecretWithMetadata(ctx context.Context, req *hsmv1.Wri
 	var metadata *hsm.SecretMetadata
 	if req.Metadata != nil {
 		metadata = &hsm.SecretMetadata{
-			Label:       req.Metadata.Label,
 			Description: req.Metadata.Description,
-			Tags:        req.Metadata.Tags,
+			Labels:      req.Metadata.Labels,
 			Format:      req.Metadata.Format,
-			DataType:    hsm.SecretDataType(req.Metadata.DataType),
+			DataType:    req.Metadata.DataType,
 			CreatedAt:   req.Metadata.CreatedAt,
 			Source:      req.Metadata.Source,
 		}
@@ -254,11 +253,10 @@ func (s *GRPCServer) ReadMetadata(ctx context.Context, req *hsmv1.ReadMetadataRe
 	var pbMetadata *hsmv1.SecretMetadata
 	if metadata != nil {
 		pbMetadata = &hsmv1.SecretMetadata{
-			Label:       metadata.Label,
 			Description: metadata.Description,
-			Tags:        metadata.Tags,
+			Labels:      metadata.Labels,
 			Format:      metadata.Format,
-			DataType:    string(metadata.DataType),
+			DataType:    metadata.DataType,
 			CreatedAt:   metadata.CreatedAt,
 			Source:      metadata.Source,
 		}

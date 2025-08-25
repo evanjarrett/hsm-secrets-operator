@@ -322,11 +322,10 @@ func TestGRPCClientOperations(t *testing.T) {
 			"data": []byte("test-data"),
 		}
 		metadata := &hsm.SecretMetadata{
-			Label:       "Test Secret",
 			Description: "A test secret",
-			Tags:        map[string]string{"category": "test", "env": "demo"},
+			Labels:      map[string]string{"category": "test", "env": "demo"},
 			Format:      "raw",
-			DataType:    hsm.DataTypePlaintext,
+			DataType:    "plaintext",
 			CreatedAt:   "2025-01-01T00:00:00Z",
 			Source:      "test",
 		}
@@ -339,11 +338,10 @@ func TestGRPCClientOperations(t *testing.T) {
 		// First write secret with metadata
 		secretData := hsm.SecretData{"data": []byte("test")}
 		metadata := &hsm.SecretMetadata{
-			Label:       "Metadata Test",
 			Description: "Test metadata reading",
-			Tags:        map[string]string{"type": "metadata"},
+			Labels:      map[string]string{"type": "metadata"},
 			Format:      "json",
-			DataType:    hsm.DataTypeJson,
+			DataType:    "json",
 			CreatedAt:   "2025-01-01T12:00:00Z",
 			Source:      "unit-test",
 		}
@@ -354,11 +352,10 @@ func TestGRPCClientOperations(t *testing.T) {
 		readMetadata, err := client.ReadMetadata(ctx, "metadata-read-test")
 		require.NoError(t, err)
 		require.NotNil(t, readMetadata)
-		assert.Equal(t, "Metadata Test", readMetadata.Label)
 		assert.Equal(t, "Test metadata reading", readMetadata.Description)
-		assert.Equal(t, map[string]string{"type": "metadata"}, readMetadata.Tags)
+		assert.Equal(t, map[string]string{"type": "metadata"}, readMetadata.Labels)
 		assert.Equal(t, "json", readMetadata.Format)
-		assert.Equal(t, hsm.DataTypeJson, readMetadata.DataType)
+		assert.Equal(t, "json", readMetadata.DataType)
 	})
 
 	t.Run("DeleteSecret", func(t *testing.T) {

@@ -144,13 +144,12 @@ func (x *SecretData) GetData() map[string][]byte {
 
 type SecretMetadata struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Label         string                 `protobuf:"bytes,1,opt,name=label,proto3" json:"label,omitempty"`
-	Description   string                 `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
-	Tags          map[string]string      `protobuf:"bytes,3,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Format        string                 `protobuf:"bytes,4,opt,name=format,proto3" json:"format,omitempty"`
-	DataType      string                 `protobuf:"bytes,5,opt,name=data_type,json=dataType,proto3" json:"data_type,omitempty"`
-	CreatedAt     string                 `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	Source        string                 `protobuf:"bytes,7,opt,name=source,proto3" json:"source,omitempty"`
+	Description   string                 `protobuf:"bytes,1,opt,name=description,proto3" json:"description,omitempty"`
+	Labels        map[string]string      `protobuf:"bytes,2,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Format        string                 `protobuf:"bytes,3,opt,name=format,proto3" json:"format,omitempty"`
+	DataType      string                 `protobuf:"bytes,4,opt,name=data_type,json=dataType,proto3" json:"data_type,omitempty"`
+	CreatedAt     string                 `protobuf:"bytes,5,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	Source        string                 `protobuf:"bytes,6,opt,name=source,proto3" json:"source,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -185,13 +184,6 @@ func (*SecretMetadata) Descriptor() ([]byte, []int) {
 	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *SecretMetadata) GetLabel() string {
-	if x != nil {
-		return x.Label
-	}
-	return ""
-}
-
 func (x *SecretMetadata) GetDescription() string {
 	if x != nil {
 		return x.Description
@@ -199,9 +191,9 @@ func (x *SecretMetadata) GetDescription() string {
 	return ""
 }
 
-func (x *SecretMetadata) GetTags() map[string]string {
+func (x *SecretMetadata) GetLabels() map[string]string {
 	if x != nil {
-		return x.Tags
+		return x.Labels
 	}
 	return nil
 }
@@ -1115,17 +1107,16 @@ const file_hsm_v1_hsm_proto_rawDesc = "" +
 	"\x04data\x18\x01 \x03(\v2\x1c.hsm.v1.SecretData.DataEntryR\x04data\x1a7\n" +
 	"\tDataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"\xa3\x02\n" +
-	"\x0eSecretMetadata\x12\x14\n" +
-	"\x05label\x18\x01 \x01(\tR\x05label\x12 \n" +
-	"\vdescription\x18\x02 \x01(\tR\vdescription\x124\n" +
-	"\x04tags\x18\x03 \x03(\v2 .hsm.v1.SecretMetadata.TagsEntryR\x04tags\x12\x16\n" +
-	"\x06format\x18\x04 \x01(\tR\x06format\x12\x1b\n" +
-	"\tdata_type\x18\x05 \x01(\tR\bdataType\x12\x1d\n" +
+	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"\x95\x02\n" +
+	"\x0eSecretMetadata\x12 \n" +
+	"\vdescription\x18\x01 \x01(\tR\vdescription\x12:\n" +
+	"\x06labels\x18\x02 \x03(\v2\".hsm.v1.SecretMetadata.LabelsEntryR\x06labels\x12\x16\n" +
+	"\x06format\x18\x03 \x01(\tR\x06format\x12\x1b\n" +
+	"\tdata_type\x18\x04 \x01(\tR\bdataType\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\x06 \x01(\tR\tcreatedAt\x12\x16\n" +
-	"\x06source\x18\a \x01(\tR\x06source\x1a7\n" +
-	"\tTagsEntry\x12\x10\n" +
+	"created_at\x18\x05 \x01(\tR\tcreatedAt\x12\x16\n" +
+	"\x06source\x18\x06 \x01(\tR\x06source\x1a9\n" +
+	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x10\n" +
 	"\x0eGetInfoRequest\"=\n" +
@@ -1220,11 +1211,11 @@ var file_hsm_v1_hsm_proto_goTypes = []any{
 	(*HealthRequest)(nil),                   // 21: hsm.v1.HealthRequest
 	(*HealthResponse)(nil),                  // 22: hsm.v1.HealthResponse
 	nil,                                     // 23: hsm.v1.SecretData.DataEntry
-	nil,                                     // 24: hsm.v1.SecretMetadata.TagsEntry
+	nil,                                     // 24: hsm.v1.SecretMetadata.LabelsEntry
 }
 var file_hsm_v1_hsm_proto_depIdxs = []int32{
 	23, // 0: hsm.v1.SecretData.data:type_name -> hsm.v1.SecretData.DataEntry
-	24, // 1: hsm.v1.SecretMetadata.tags:type_name -> hsm.v1.SecretMetadata.TagsEntry
+	24, // 1: hsm.v1.SecretMetadata.labels:type_name -> hsm.v1.SecretMetadata.LabelsEntry
 	0,  // 2: hsm.v1.GetInfoResponse.hsm_info:type_name -> hsm.v1.HSMInfo
 	1,  // 3: hsm.v1.ReadSecretResponse.secret_data:type_name -> hsm.v1.SecretData
 	1,  // 4: hsm.v1.WriteSecretRequest.secret_data:type_name -> hsm.v1.SecretData

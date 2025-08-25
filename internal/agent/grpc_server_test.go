@@ -209,9 +209,8 @@ func TestGRPCServerWriteSecretWithMetadata(t *testing.T) {
 				},
 			},
 			Metadata: &hsmv1.SecretMetadata{
-				Label:       "SSL Certificate",
 				Description: "Production SSL certificate",
-				Tags:        map[string]string{"env": "prod", "type": "ssl"},
+				Labels:      map[string]string{"env": "prod", "type": "ssl"},
 				Format:      "pem",
 				DataType:    "pem",
 				CreatedAt:   "2025-01-01T00:00:00Z",
@@ -232,9 +231,8 @@ func TestGRPCServerWriteSecretWithMetadata(t *testing.T) {
 		metadata, err := mockClient.ReadMetadata(ctx, "secret-with-metadata")
 		require.NoError(t, err)
 		require.NotNil(t, metadata)
-		assert.Equal(t, "SSL Certificate", metadata.Label)
 		assert.Equal(t, "Production SSL certificate", metadata.Description)
-		assert.Equal(t, map[string]string{"env": "prod", "type": "ssl"}, metadata.Tags)
+		assert.Equal(t, map[string]string{"env": "prod", "type": "ssl"}, metadata.Labels)
 		assert.Equal(t, "pem", metadata.Format)
 	})
 
@@ -291,11 +289,10 @@ func TestGRPCServerReadMetadata(t *testing.T) {
 	// Write secret with metadata
 	testData := hsm.SecretData{"data": []byte("test")}
 	metadata := &hsm.SecretMetadata{
-		Label:       "Test Metadata",
 		Description: "Test description",
-		Tags:        map[string]string{"type": "test"},
+		Labels:      map[string]string{"type": "test"},
 		Format:      "json",
-		DataType:    hsm.DataTypeJson,
+		DataType:    "json",
 		CreatedAt:   "2025-01-01T12:00:00Z",
 		Source:      "unit-test",
 	}
@@ -307,9 +304,8 @@ func TestGRPCServerReadMetadata(t *testing.T) {
 		resp, err := server.ReadMetadata(ctx, req)
 		require.NoError(t, err)
 		require.NotNil(t, resp.Metadata)
-		assert.Equal(t, "Test Metadata", resp.Metadata.Label)
 		assert.Equal(t, "Test description", resp.Metadata.Description)
-		assert.Equal(t, map[string]string{"type": "test"}, resp.Metadata.Tags)
+		assert.Equal(t, map[string]string{"type": "test"}, resp.Metadata.Labels)
 		assert.Equal(t, "json", resp.Metadata.Format)
 		assert.Equal(t, "json", resp.Metadata.DataType)
 	})

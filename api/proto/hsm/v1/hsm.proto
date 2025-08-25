@@ -51,13 +51,12 @@ message SecretData {
 }
 
 message SecretMetadata {
-  string label = 1;
-  string description = 2;
-  map<string, string> tags = 3;
-  string format = 4;
-  string data_type = 5;
-  string created_at = 6;
-  string source = 7;
+  string description = 1;
+  map<string, string> labels = 2;
+  string format = 3;
+  string data_type = 4;
+  string created_at = 5;
+  string source = 6;
 }
 
 // Request/Response messages

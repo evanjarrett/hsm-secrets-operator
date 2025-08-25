@@ -137,11 +137,10 @@ func TestGRPCClientServerIntegration(t *testing.T) {
 			"certificate": []byte("-----BEGIN CERTIFICATE-----"),
 		}
 		metadata := &hsm.SecretMetadata{
-			Label:       "SSL Certificate",
 			Description: "Production SSL certificate",
-			Tags:        map[string]string{"env": "prod", "type": "ssl"},
+			Labels:      map[string]string{"env": "prod", "type": "ssl"},
 			Format:      "pem",
-			DataType:    hsm.DataTypePem,
+			DataType:    "pem",
 			CreatedAt:   "2025-01-01T00:00:00Z",
 			Source:      "integration-test",
 		}
@@ -158,11 +157,10 @@ func TestGRPCClientServerIntegration(t *testing.T) {
 		readMetadata, err := client.ReadMetadata(ctx, "ssl-cert")
 		require.NoError(t, err)
 		require.NotNil(t, readMetadata)
-		assert.Equal(t, "SSL Certificate", readMetadata.Label)
 		assert.Equal(t, "Production SSL certificate", readMetadata.Description)
-		assert.Equal(t, map[string]string{"env": "prod", "type": "ssl"}, readMetadata.Tags)
+		assert.Equal(t, map[string]string{"env": "prod", "type": "ssl"}, readMetadata.Labels)
 		assert.Equal(t, "pem", readMetadata.Format)
-		assert.Equal(t, hsm.DataTypePem, readMetadata.DataType)
+		assert.Equal(t, "pem", readMetadata.DataType)
 	})
 
 	t.Run("ListSecrets", func(t *testing.T) {

@@ -181,6 +181,13 @@ func (r *HSMSecretReconciler) reconcileNormal(ctx context.Context, hsmSecret *hs
 		return ctrl.Result{RequeueAfter: time.Minute * 2}, err
 	}
 
+	// Read metadata from HSM via agent
+	hsmMetadata, err := hsmClient.ReadMetadata(ctx, hsmSecret.Name)
+	if err != nil {
+		logger.V(1).Info("Failed to read metadata from HSM (this is normal if no metadata exists)", "path", hsmSecret.Name, "error", err)
+		hsmMetadata = nil
+	}
+
 	// Calculate HSM checksum
 	hsmChecksum := hsm.CalculateChecksum(hsmData)
 
@@ -195,7 +202,7 @@ func (r *HSMSecretReconciler) reconcileNormal(ctx context.Context, hsmSecret *hs
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// Create new secret
-			k8sSecret = r.buildSecret(hsmSecret, secretName, hsmData)
+			k8sSecret = r.buildSecret(hsmSecret, secretName, hsmData, hsmMetadata)
 			if err := r.Create(ctx, &k8sSecret); err != nil {
 				logger.Error(err, "Failed to create Secret")
 				return ctrl.Result{}, err
@@ -207,7 +214,7 @@ func (r *HSMSecretReconciler) reconcileNormal(ctx context.Context, hsmSecret *hs
 		}
 	} else {
 		// Update existing secret if needed
-		k8sSecret.Data = r.convertHSMDataToSecretData(hsmData)
+		r.updateSecretWithMetadata(&k8sSecret, hsmSecret, hsmData, hsmMetadata)
 		if err := r.Update(ctx, &k8sSecret); err != nil {
 			logger.Error(err, "Failed to update Secret")
 			return ctrl.Result{}, err
@@ -286,21 +293,31 @@ func (r *HSMSecretReconciler) reconcileDelete(ctx context.Context, hsmSecret *hs
 	return ctrl.Result{}, nil
 }
 
-// buildSecret creates a new Kubernetes Secret from HSM data
-func (r *HSMSecretReconciler) buildSecret(hsmSecret *hsmv1alpha1.HSMSecret, secretName string, hsmData hsm.SecretData) corev1.Secret {
+// buildSecret creates a new Kubernetes Secret from HSM data and metadata
+func (r *HSMSecretReconciler) buildSecret(hsmSecret *hsmv1alpha1.HSMSecret, secretName string, hsmData hsm.SecretData, hsmMetadata *hsm.SecretMetadata) corev1.Secret {
 	secretType := hsmSecret.Spec.SecretType
 	if secretType == "" {
 		secretType = corev1.SecretTypeOpaque
 	}
 
+	// Build labels starting with default operator labels
+	labels := map[string]string{
+		"managed-by": "hsm-secrets-operator",
+		"hsm-path":   strings.ReplaceAll(hsmSecret.Name, "/", "_"),
+	}
+
+	// Build annotations starting with empty map
+	annotations := make(map[string]string)
+
+	// Add metadata labels and annotations if metadata exists
+	r.applyMetadataToLabelsAndAnnotations(labels, annotations, hsmMetadata)
+
 	secret := corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: hsmSecret.Namespace,
-			Labels: map[string]string{
-				"managed-by": "hsm-secrets-operator",
-				"hsm-path":   strings.ReplaceAll(hsmSecret.Name, "/", "_"),
-			},
+			Name:        secretName,
+			Namespace:   hsmSecret.Namespace,
+			Labels:      labels,
+			Annotations: annotations,
 		},
 		Type: secretType,
 		Data: r.convertHSMDataToSecretData(hsmData),
@@ -312,6 +329,108 @@ func (r *HSMSecretReconciler) buildSecret(hsmSecret *hsmv1alpha1.HSMSecret, secr
 	}
 
 	return secret
+}
+
+// updateSecretWithMetadata updates an existing Kubernetes Secret with HSM data and metadata
+func (r *HSMSecretReconciler) updateSecretWithMetadata(secret *corev1.Secret, hsmSecret *hsmv1alpha1.HSMSecret, hsmData hsm.SecretData, hsmMetadata *hsm.SecretMetadata) {
+	// Update data
+	secret.Data = r.convertHSMDataToSecretData(hsmData)
+
+	// Initialize labels if nil
+	if secret.Labels == nil {
+		secret.Labels = make(map[string]string)
+	}
+
+	// Initialize annotations if nil
+	if secret.Annotations == nil {
+		secret.Annotations = make(map[string]string)
+	}
+
+	// Ensure essential operator labels are present
+	secret.Labels["managed-by"] = "hsm-secrets-operator"
+	secret.Labels["hsm-path"] = strings.ReplaceAll(hsmSecret.Name, "/", "_")
+
+	// Apply metadata to labels and annotations
+	r.applyMetadataToLabelsAndAnnotations(secret.Labels, secret.Annotations, hsmMetadata)
+}
+
+// applyMetadataToLabelsAndAnnotations applies HSM metadata to Kubernetes labels and annotations
+func (r *HSMSecretReconciler) applyMetadataToLabelsAndAnnotations(labels map[string]string, annotations map[string]string, hsmMetadata *hsm.SecretMetadata) {
+	if hsmMetadata == nil {
+		return
+	}
+
+	// Apply metadata labels directly to Kubernetes labels
+	if hsmMetadata.Labels != nil {
+		for key, value := range hsmMetadata.Labels {
+			// Validate Kubernetes label format
+			if r.isValidKubernetesLabelKey(key) && r.isValidKubernetesLabelValue(value) {
+				labels[key] = value
+			}
+		}
+	}
+
+	// Apply other metadata fields as annotations with hsm.j5t.io prefix
+	if hsmMetadata.Description != "" {
+		annotations["hsm.j5t.io/description"] = hsmMetadata.Description
+	}
+	if hsmMetadata.Format != "" {
+		annotations["hsm.j5t.io/format"] = hsmMetadata.Format
+	}
+	if hsmMetadata.DataType != "" {
+		annotations["hsm.j5t.io/data-type"] = hsmMetadata.DataType
+	}
+	if hsmMetadata.Source != "" {
+		annotations["hsm.j5t.io/source"] = hsmMetadata.Source
+	}
+	if hsmMetadata.CreatedAt != "" {
+		annotations["hsm.j5t.io/created-at"] = hsmMetadata.CreatedAt
+	}
+}
+
+// isValidKubernetesLabelKey validates a Kubernetes label key
+func (r *HSMSecretReconciler) isValidKubernetesLabelKey(key string) bool {
+	// Basic validation - more comprehensive validation could be added
+	if len(key) == 0 || len(key) > 63 {
+		return false
+	}
+	// Should start and end with alphanumeric, can contain alphanumeric, dash, underscore, and dot
+	for i, char := range key {
+		isAlphaNumeric := (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9')
+		isAllowedSymbol := char == '-' || char == '_' || char == '.'
+
+		if !isAlphaNumeric && !isAllowedSymbol {
+			return false
+		}
+		if (i == 0 || i == len(key)-1) && !isAlphaNumeric {
+			return false
+		}
+	}
+	return true
+}
+
+// isValidKubernetesLabelValue validates a Kubernetes label value
+func (r *HSMSecretReconciler) isValidKubernetesLabelValue(value string) bool {
+	// Basic validation
+	if len(value) > 63 {
+		return false
+	}
+	if len(value) == 0 {
+		return true // Empty values are allowed
+	}
+	// Should start and end with alphanumeric, can contain alphanumeric, dash, underscore, and dot
+	for i, char := range value {
+		isAlphaNumeric := (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9')
+		isAllowedSymbol := char == '-' || char == '_' || char == '.'
+
+		if !isAlphaNumeric && !isAllowedSymbol {
+			return false
+		}
+		if (i == 0 || i == len(value)-1) && !isAlphaNumeric {
+			return false
+		}
+	}
+	return true
 }
 
 // convertHSMDataToSecretData converts HSM data format to Kubernetes Secret data format

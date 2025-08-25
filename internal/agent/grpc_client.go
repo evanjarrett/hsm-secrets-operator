@@ -183,11 +183,10 @@ func (c *GRPCClient) WriteSecretWithMetadata(ctx context.Context, path string, d
 	// Convert metadata if provided
 	if metadata != nil {
 		req.Metadata = &hsmv1.SecretMetadata{
-			Label:       metadata.Label,
 			Description: metadata.Description,
-			Tags:        metadata.Tags,
+			Labels:      metadata.Labels,
 			Format:      metadata.Format,
-			DataType:    string(metadata.DataType),
+			DataType:    metadata.DataType,
 			CreatedAt:   metadata.CreatedAt,
 			Source:      metadata.Source,
 		}
@@ -218,11 +217,10 @@ func (c *GRPCClient) ReadMetadata(ctx context.Context, path string) (*hsm.Secret
 	}
 
 	return &hsm.SecretMetadata{
-		Label:       resp.Metadata.Label,
 		Description: resp.Metadata.Description,
-		Tags:        resp.Metadata.Tags,
+		Labels:      resp.Metadata.Labels,
 		Format:      resp.Metadata.Format,
-		DataType:    hsm.SecretDataType(resp.Metadata.DataType),
+		DataType:    resp.Metadata.DataType,
 		CreatedAt:   resp.Metadata.CreatedAt,
 		Source:      resp.Metadata.Source,
 	}, nil

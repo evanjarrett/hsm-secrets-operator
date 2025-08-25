@@ -282,14 +282,14 @@ func (p *ProxyClient) WriteSecret(c *gin.Context) {
 		// Add mirroring metadata
 		metadata := req.Metadata
 		if metadata == nil {
-			metadata = &hsm.SecretMetadata{Tags: make(map[string]string)}
+			metadata = &hsm.SecretMetadata{Labels: make(map[string]string)}
 		}
-		if metadata.Tags == nil {
-			metadata.Tags = make(map[string]string)
+		if metadata.Labels == nil {
+			metadata.Labels = make(map[string]string)
 		}
-		metadata.Tags["sync.version"] = fmt.Sprintf("%d", time.Now().Unix())
-		metadata.Tags["sync.timestamp"] = time.Now().Format(time.RFC3339)
-		metadata.Tags["sync.mirrored"] = "true"
+		metadata.Labels["sync.version"] = fmt.Sprintf("%d", time.Now().Unix())
+		metadata.Labels["sync.timestamp"] = time.Now().Format(time.RFC3339)
+		metadata.Labels["sync.mirrored"] = "true"
 
 		// Write to all devices in parallel
 		results := p.writeToAllDevices(c.Request.Context(), clients, path, data, metadata)
