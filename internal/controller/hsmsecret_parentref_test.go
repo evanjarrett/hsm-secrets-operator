@@ -31,7 +31,7 @@ func stringPtr(s string) *string {
 func TestShouldHandleSecret(t *testing.T) {
 	reconciler := &HSMSecretReconciler{
 		OperatorNamespace: "hsm-operator-system",
-		OperatorName:      "controller-manager",
+		OperatorName:      "hsm-secrets-operator-controller-manager",
 	}
 
 	tests := []struct {
@@ -61,7 +61,7 @@ func TestShouldHandleSecret(t *testing.T) {
 				},
 				Spec: hsmv1alpha1.HSMSecretSpec{
 					ParentRef: &hsmv1alpha1.ParentReference{
-						Name:      "controller-manager",
+						Name:      "hsm-secrets-operator-controller-manager",
 						Namespace: stringPtr("hsm-operator-system"),
 					},
 				},
@@ -93,7 +93,7 @@ func TestShouldHandleSecret(t *testing.T) {
 				},
 				Spec: hsmv1alpha1.HSMSecretSpec{
 					ParentRef: &hsmv1alpha1.ParentReference{
-						Name:      "controller-manager",
+						Name:      "hsm-secrets-operator-controller-manager",
 						Namespace: stringPtr("other-operator-system"),
 					},
 				},
@@ -109,7 +109,7 @@ func TestShouldHandleSecret(t *testing.T) {
 				},
 				Spec: hsmv1alpha1.HSMSecretSpec{
 					ParentRef: &hsmv1alpha1.ParentReference{
-						Name: "controller-manager",
+						Name: "hsm-secrets-operator-controller-manager",
 						// Namespace is nil, should default to operator namespace
 					},
 				},

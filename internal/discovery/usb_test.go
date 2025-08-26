@@ -407,26 +407,21 @@ func TestFindCommonDevicePath(t *testing.T) {
 		logger: logr.Discard(),
 	}
 
-	// Test with no devices present - should return empty
-	path := discoverer.findCommonDevicePath("20a0", "4230")
-	// In a clean test environment, this should return empty since no devices exist
-	// But since we can't control the actual filesystem, let's test the logic differently
-
 	// Test with unknown vendor ID - this should always return empty since no known paths exist for it
-	path = discoverer.findCommonDevicePath("unknown", "unknown")
+	unknownPath := discoverer.findCommonDevicePath("unknown", "unknown")
 
 	// The function checks actual filesystem paths, so we can't guarantee it returns empty
 	// Instead, let's verify it returns a string (empty or path)
-	assert.IsType(t, "", path)
+	assert.IsType(t, "", unknownPath)
 
 	// Test that if a path is returned, it's one of the expected common paths
-	if path != "" {
+	if unknownPath != "" {
 		expectedPaths := []string{
 			"/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/ttyUSB2", "/dev/ttyUSB3",
 			"/dev/ttyACM0", "/dev/ttyACM1", "/dev/ttyACM2", "/dev/ttyACM3",
 			"/dev/sc-hsm", "/dev/pkcs11",
 		}
-		assert.Contains(t, expectedPaths, path)
+		assert.Contains(t, expectedPaths, unknownPath)
 	}
 }
 

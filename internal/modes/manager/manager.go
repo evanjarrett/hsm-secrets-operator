@@ -77,11 +77,12 @@ func getOperatorName() string {
 	// Check if deployment name is provided via downward API
 	if hostname := os.Getenv("HOSTNAME"); hostname != "" {
 		// Kubernetes deployment pods have hostname like: deployment-name-replicaset-hash-pod-hash
-		// Extract just the deployment name part
+		// Extract the deployment name by removing the last two parts (replicaset-hash and pod-hash)
 		parts := strings.Split(hostname, "-")
-		if len(parts) >= 2 {
-			// Return the first two parts as deployment name (e.g., "controller-manager")
-			return strings.Join(parts[:2], "-")
+		if len(parts) >= 3 {
+			// Remove last two parts (replicaset hash and pod hash) to get deployment name
+			deploymentParts := parts[:len(parts)-2]
+			return strings.Join(deploymentParts, "-")
 		}
 		return hostname
 	}
