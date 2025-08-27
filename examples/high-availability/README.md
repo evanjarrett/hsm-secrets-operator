@@ -9,9 +9,8 @@ The HSM Secrets Operator supports high availability through cross-node device mi
 ## Examples
 
 1. **[mirrored-hsm-device.yaml](mirrored-hsm-device.yaml)** - HSM device with mirroring enabled
-2. **[ha-deployment.yaml](ha-deployment.yaml)** - Complete HA deployment example
-3. **[multi-region.yaml](multi-region.yaml)** - Multi-region deployment with mirroring
-4. **[failover-testing.yaml](failover-testing.yaml)** - Failover testing scenarios
+
+> **Additional HA Examples:** See the [deployment/complete-setup.yaml](../deployment/complete-setup.yaml) for production HA configurations and the [advanced](../advanced/) directory for multi-environment setups.
 
 ## Architecture
 
@@ -152,7 +151,9 @@ kubectl get hsmdevice -o wide
 # Review mirroring status
 kubectl describe hsmdevice hsm-primary
 
-# Check secret sync status
+# Check secret sync status (multiple options)
+kubectl hsm health                                    # via kubectl-hsm plugin
+kubectl hsm list                                      # shows all secrets with status
 kubectl get hsmsecret -o custom-columns=NAME:.metadata.name,STATUS:.status.syncStatus,LAST-SYNC:.status.lastSyncTime
 
 # Monitor failover events

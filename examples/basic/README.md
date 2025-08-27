@@ -27,14 +27,26 @@ kubectl describe hsmdevice pico-hsm
 
 ### Step 2: Create Your First Secret
 
-Create a database secret stored on the HSM:
+**Option A: Using kubectl-hsm plugin (recommended for interactive use):**
+```bash
+kubectl hsm create database-credentials \
+  --from-literal=database_url="postgresql://user:pass@db:5432/mydb" \
+  --from-literal=username="dbuser" \
+  --from-literal=password="secret123"
+```
 
+**Option B: Using CRD resources (recommended for GitOps):**
 ```bash
 kubectl apply -f database-secret.yaml
 ```
 
 Verify the secret was created:
 ```bash
+# Using kubectl-hsm
+kubectl hsm get database-credentials
+kubectl hsm list
+
+# Using standard kubectl
 kubectl get hsmsecret database-credentials
 kubectl get secret database-credentials
 ```
@@ -104,8 +116,13 @@ kubectl apply -f database-secret.yaml -n staging
 Update secrets directly on the HSM, and they'll automatically sync:
 
 ```bash
-# The operator detects HSM changes and updates Kubernetes Secrets
-# No manual intervention required
+# Option 1: Update via kubectl-hsm (writes to HSM, then syncs to K8s)
+kubectl hsm create database-credentials \
+  --from-literal=password="new-secret123" \
+  --dry-run=false
+
+# Option 2: Direct HSM update (via pkcs11-tool or HSM tools)
+# The operator detects HSM changes and updates Kubernetes Secrets automatically
 ```
 
 ### Multiple Applications

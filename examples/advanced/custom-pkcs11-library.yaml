@@ -41,14 +41,22 @@ metadata:
 spec:
   deviceType: Generic  # Use Generic for custom devices
   
-  # Custom USB device
-  usb:
-    vendorId: "1234"  # Your vendor ID
-    productId: "5678"  # Your product ID
-    # serialNumber: "CUSTOM-001"  # Optional specific device
+  # Discovery configuration
+  discovery:
+    # Custom USB device
+    usb:
+      vendorId: "1234"  # Your vendor ID
+      productId: "5678"  # Your product ID
+      # serialNumber: "CUSTOM-001"  # Optional specific device
   
-  # Custom PKCS#11 library path
-  pkcs11LibraryPath: "/opt/custom-hsm/lib/libcustomhsm-pkcs11.so"
+  # PKCS#11 configuration
+  pkcs11:
+    libraryPath: "/opt/custom-hsm/lib/libcustomhsm-pkcs11.so"
+    slotId: 0
+    pinSecret:
+      name: "custom-hsm-pin"
+      key: "pin"
+    tokenLabel: "CustomHSM"
   
   nodeSelector:
     hsm.vendor: "custom-vendor"  # Only deploy on nodes with this vendor
@@ -63,13 +71,21 @@ metadata:
 spec:
   deviceType: Generic
   
-  # Use device path instead of USB discovery
-  devicePath:
-    path: "/dev/custom-hsm*"
-    permissions: "0666"
+  # Discovery configuration
+  discovery:
+    # Use device path instead of USB discovery
+    devicePath:
+      path: "/dev/custom-hsm*"
+      permissions: "0666"
   
-  # Custom library path
-  pkcs11LibraryPath: "/usr/local/lib/libcustomhsm.so"
+  # PKCS#11 configuration
+  pkcs11:
+    libraryPath: "/usr/local/lib/libcustomhsm.so"
+    slotId: 0
+    pinSecret:
+      name: "custom-hsm-pin"
+      key: "pin"
+    tokenLabel: "CustomHSM"
   
   nodeSelector:
     custom-hsm.enabled: "true"

@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # Advanced bulk import script with validation and rollback
+# Automatically uses kubectl-hsm plugin if available, falls back to REST API
 # Usage: ./advanced-bulk-import.sh [config-file] [options]
 
 set -e
@@ -187,6 +188,15 @@ check_existing_secrets() {
     local conflicts=()
     
     while IFS= read -r label; do
+        # Try kubectl-hsm first if available
+        if command -v kubectl >/dev/null && kubectl hsm --help >/dev/null 2>&1; then
+            if kubectl hsm get "$label" >/dev/null 2>&1; then
+                conflicts+=("$label")
+                continue
+            fi
+        fi
+        
+        # Fallback to API
         response=$(curl -s "$API_BASE_URL/api/v1/hsm/secrets/$label")
         success=$(echo "$response" | jq -r '.success')
         
@@ -259,7 +269,14 @@ rollback_secrets() {
     
     for label in "${imported_secrets[@]}"; do
         log "Rolling back: $label"
-        curl -s -X DELETE "$API_BASE_URL/api/v1/hsm/secrets/$label" > /dev/null
+        
+        # Try kubectl-hsm first if available
+        if command -v kubectl >/dev/null && kubectl hsm --help >/dev/null 2>&1; then
+            kubectl hsm delete "$label" --force >/dev/null 2>&1 || \
+            curl -s -X DELETE "$API_BASE_URL/api/v1/hsm/secrets/$label" > /dev/null
+        else
+            curl -s -X DELETE "$API_BASE_URL/api/v1/hsm/secrets/$label" > /dev/null
+        fi
     done
     
     warning "Rollback completed"

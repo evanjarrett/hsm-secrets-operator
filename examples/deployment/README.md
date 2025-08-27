@@ -5,8 +5,8 @@ This directory contains complete deployment examples for the HSM Secrets Operato
 ## Files
 
 - **[complete-setup.yaml](complete-setup.yaml)** - Full production deployment with all components
-- **[operator-deployment.yaml](operator-deployment.yaml)** - Just the operator deployment
-- **[monitoring-setup.yaml](monitoring-setup.yaml)** - Prometheus monitoring configuration
+
+> **Additional Configurations:** See the [config](../../config/) directory for CRDs, RBAC, and operator deployments, or the [helm](../../helm/) directory for Helm chart deployments.
 
 ## Complete Setup
 
@@ -75,14 +75,30 @@ kubectl get pods -n hsm-secrets-operator-system
 # Check HSM devices
 kubectl get hsmdevice
 
-# Check secrets
-kubectl get hsmsecret
-kubectl get secret
+# Check secrets (multiple ways)
+kubectl hsm list                # via kubectl-hsm plugin
+kubectl get hsmsecret          # via CRDs
+kubectl get secret             # via K8s secrets
 ```
 
-### 5. Test the API
+### 5. Test Secret Operations
 
-If API is enabled:
+**Option A: Using kubectl-hsm plugin (recommended):**
+```bash
+# Check health
+kubectl hsm health
+
+# Create a test secret
+kubectl hsm create test-secret --from-literal=key=value
+
+# List secrets
+kubectl hsm list
+
+# Get secret details
+kubectl hsm get test-secret
+```
+
+**Option B: Using REST API (advanced):**
 ```bash
 # Port forward to access API locally
 kubectl port-forward -n hsm-secrets-operator-system service/hsm-secrets-operator-api 8090:8090

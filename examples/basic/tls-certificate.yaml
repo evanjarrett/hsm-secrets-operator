@@ -9,9 +9,14 @@ metadata:
   annotations:
     hsm.j5t.io/description: "TLS certificate and key for webapp.example.com"
 spec:
-  # Path on the HSM where the TLS cert/key is stored
+  # HSM path is automatically set to the metadata.name (webapp-tls-cert)
   
-  # Name of the TLS Secret to create
+  # ParentRef identifies which operator instance should handle this HSMSecret
+  parentRef:
+    name: controller-manager
+    namespace: hsm-secrets-operator-system
+  
+  # Name of the TLS Secret to create (optional, defaults to metadata.name)
   secretName: "webapp-tls"
   
   # Enable automatic sync

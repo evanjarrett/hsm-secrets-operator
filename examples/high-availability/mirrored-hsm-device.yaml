@@ -1,51 +1,41 @@
 ---
-# Primary HSM Device with Mirroring Configuration
+# High Availability HSM Device Configuration
+# The operator automatically discovers devices on multiple nodes for HA
 apiVersion: hsm.j5t.io/v1alpha1
 kind: HSMDevice
 metadata:
-  name: hsm-primary
+  name: ha-pico-hsm
   namespace: default
   labels:
-    role: primary
+    role: production
     environment: production
     ha.enabled: "true"
 spec:
   deviceType: PicoHSM
   
-  # USB discovery for Pico HSM
-  usb:
-    vendorId: "20a0"
-    productId: "4230"
+  # Discovery configuration
+  discovery:
+    # USB discovery for Pico HSM
+    usb:
+      vendorId: "20a0"
+      productId: "4230"
+  
+  # PKCS#11 configuration
+  pkcs11:
+    libraryPath: "/usr/lib/opensc-pkcs11.so"  # Use OpenSC for Pico HSM
+    slotId: 0
+    pinSecret:
+      name: "pico-hsm-pin"
+      key: "pin"
+    tokenLabel: "PicoHSM"
   
   # Deploy on nodes with HSM hardware
   nodeSelector:
     hsm.j5t.io/hardware: "available"
     kubernetes.io/arch: "amd64"
   
-  # PKCS#11 library configuration
-  pkcs11LibraryPath: "/usr/lib/x86_64-linux-gnu/pkcs11/opensc-pkcs11.so"
-  
-  # Maximum devices to discover
+  # Allow multiple devices for HA
   maxDevices: 3
-  
-  # High Availability Mirroring Configuration
-  mirroring:
-    # Enable readonly mirroring
-    policy: "ReadOnly"
-    
-    # Sync every 5 minutes
-    syncInterval: 300
-    
-    # Enable automatic failover
-    autoFailover: true
-    
-    # Preferred primary node (optional)
-    primaryNode: "worker-1"
-    
-    # Target nodes for mirroring (empty = all available nodes)
-    targetNodes:
-      - "worker-2"
-      - "worker-3"
 
 ---
 # Service Monitor for Prometheus (if using)
@@ -119,17 +109,18 @@ metadata:
     criticality: high
     ha.enabled: "true"
   annotations:
-    hsm.j5t.io/description: "HA database credentials with mirroring support"
+    hsm.j5t.io/description: "HA database credentials for high availability"
 spec:
-  secretName: "ha-database-credentials"
+  # HSM path is automatically set to the metadata.name (ha-database-credentials)
+  parentRef:
+    name: controller-manager
+    namespace: hsm-secrets-operator-system
   
   # Enable auto-sync for HA
   autoSync: true
   
   # More frequent sync for critical secrets
   syncInterval: 180  # 3 minutes
-  
-  secretType: Opaque
 
 ---
 # Deployment using HA secrets

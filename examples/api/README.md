@@ -23,21 +23,54 @@ The API currently supports:
 - Kubernetes ServiceAccount tokens (when deployed in cluster)
 - Future: OAuth2, API keys, mTLS
 
-## Examples
+## kubectl-hsm Plugin (Recommended)
 
-1. **[health-check.sh](health-check.sh)** - Check API and HSM health
-2. **[create-secret.json](create-secret.json)** - Create a new secret via API
-3. **[create-secret.sh](create-secret.sh)** - Script to create secrets
-4. **[import-from-k8s.sh](import-from-k8s.sh)** - Import existing Kubernetes secrets
-5. **[list-secrets.sh](list-secrets.sh)** - List all HSM secrets
-6. **[update-secret.sh](update-secret.sh)** - Update existing secrets
-7. **[bulk-operations.sh](bulk-operations.sh)** - Bulk secret operations
+The easiest way to interact with HSM secrets is through the `kubectl-hsm` plugin. This provides a native kubectl experience while automatically handling port forwarding and API communication.
 
-## Quick Start
+### Quick Start with kubectl-hsm
 
-1. **Start the API server** (if running locally):
+1. **Install the plugin**:
    ```bash
-   ./bin/manager --enable-api=true --api-port=8090
+   cd kubectl-hsm && make install
+   ```
+
+2. **Check health**:
+   ```bash
+   kubectl hsm health
+   ```
+
+3. **Create a secret**:
+   ```bash
+   kubectl hsm create my-secret --from-literal=password=secret123
+   ```
+
+4. **List secrets**:
+   ```bash
+   kubectl hsm list
+   ```
+
+5. **Get a secret**:
+   ```bash
+   kubectl hsm get my-secret
+   ```
+
+See the [kubectl-hsm documentation](../../kubectl-hsm/README.md) for full usage.
+
+## REST API Examples
+
+For advanced use cases or automation that requires direct API access, the following scripts demonstrate REST API usage:
+
+1. **[import-from-k8s.sh](import-from-k8s.sh)** - Import existing Kubernetes secrets
+2. **[bulk-operations.sh](bulk-operations.sh)** - Bulk secret operations (auto-detects kubectl-hsm)
+3. **[advanced-bulk-import.sh](advanced-bulk-import.sh)** - Advanced import with validation and rollback
+4. **[create-secret.json](create-secret.json)** - Sample secret data structure
+5. **[production-import.json](production-import.json)** - Production-ready import configuration
+
+## Quick Start with REST API
+
+1. **Port forward to API server**:
+   ```bash
+   kubectl port-forward -n hsm-secrets-operator-system svc/hsm-secrets-operator-api 8090:8090
    ```
 
 2. **Check health**:
@@ -91,24 +124,21 @@ Error responses:
 ## Common Use Cases
 
 ### 1. Development Workflow
-- Create secrets during development
-- Import from existing sources
-- Test secret rotation
+- **kubectl-hsm**: Interactive secret management during development
+- **REST API**: Automated testing and CI/CD integration
 
 ### 2. CI/CD Integration
-- Automated secret provisioning
-- Environment-specific deployments
-- Secret validation and testing
+- **kubectl-hsm**: Simple command-line operations in pipelines
+- **REST API**: Complex automation and bulk operations
 
 ### 3. Secret Migration
-- Import from Kubernetes Secrets
-- Migrate from other secret stores
-- Bulk operations for large environments
+- **bulk-operations.sh**: Mass import/export operations
+- **advanced-bulk-import.sh**: Production migrations with validation
+- **import-from-k8s.sh**: Migrate existing Kubernetes secrets
 
 ### 4. Monitoring and Operations
-- Health monitoring
-- Secret inventory management
-- Troubleshooting sync issues
+- **kubectl-hsm health**: Quick health checks
+- **REST API**: Detailed monitoring and troubleshooting
 
 ## Error Handling
 

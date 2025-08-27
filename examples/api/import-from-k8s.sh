@@ -91,6 +91,9 @@ if [ "$success" = "true" ]; then
     
     echo ""
     echo "🔍 Verification commands:"
+    echo "   # Check HSM secret via kubectl plugin:"
+    echo "   kubectl hsm get $label"
+    echo ""
     echo "   # Check HSM secret via API:"
     echo "   curl $API_BASE_URL/api/v1/hsm/secrets/$label"
     echo ""

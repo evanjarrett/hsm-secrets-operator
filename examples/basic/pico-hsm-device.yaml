@@ -10,24 +10,32 @@ spec:
   # Device type for auto-discovery
   deviceType: PicoHSM
   
-  # USB device specifications for Pico HSM
-  usb:
-    vendorId: "20a0"
-    productId: "4230"
-    # serialNumber: "12345"  # Optional: specific device serial
+  # Discovery configuration
+  discovery:
+    # USB device specifications for Pico HSM
+    usb:
+      vendorId: "20a0"
+      productId: "4230"
+      # serialNumber: "12345"  # Optional: specific device serial
+    
+    # Alternative: Manual path specification
+    # devicePath:
+    #   path: "/dev/sc-hsm*"
+    #   permissions: "0666"
   
-  # Alternative: Manual path specification
-  # devicePath:
-  #   path: "/dev/sc-hsm*"
-  #   permissions: "0666"
+  # PKCS#11 configuration
+  pkcs11:
+    libraryPath: "/usr/lib/opensc-pkcs11.so"  # Use OpenSC for Pico HSM
+    slotId: 0
+    pinSecret:
+      name: "pico-hsm-pin"
+      key: "pin"
+    tokenLabel: "PicoHSM"
   
   # Node selection (optional - runs on all nodes if not specified)
   nodeSelector:
     # kubernetes.io/hostname: "worker-node-1"
     hsm.j5t.io/enabled: "true"
-  
-  # PKCS#11 library path (auto-detected for known devices)
-  pkcs11LibraryPath: "/usr/lib/x86_64-linux-gnu/pkcs11/opensc-pkcs11.so"
   
   # Maximum number of devices to discover
   maxDevices: 2

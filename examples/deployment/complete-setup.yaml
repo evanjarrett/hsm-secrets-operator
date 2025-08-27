@@ -24,17 +24,25 @@ metadata:
     device-type: pico-hsm
 spec:
   deviceType: PicoHSM
-  usb:
-    vendorId: "20a0"
-    productId: "4230"
+  
+  # Discovery configuration
+  discovery:
+    usb:
+      vendorId: "20a0"
+      productId: "4230"
+  
+  # PKCS#11 configuration
+  pkcs11:
+    libraryPath: "/usr/lib/opensc-pkcs11.so"
+    slotId: 0
+    pinSecret:
+      name: "production-hsm-pin"
+      key: "pin"
+    tokenLabel: "PicoHSM"
+  
   nodeSelector:
     hsm.j5t.io/enabled: "true"
-  pkcs11LibraryPath: "/usr/lib/x86_64-linux-gnu/pkcs11/opensc-pkcs11.so"
   maxDevices: 2
-  mirroring:
-    policy: "ReadOnly"
-    syncInterval: 300
-    autoFailover: true
 
 ---
 # Production Database Secret
@@ -48,6 +56,10 @@ metadata:
     type: database
     criticality: high
 spec:
+  # HSM path is automatically set to the metadata.name (production-database)
+  parentRef:
+    name: controller-manager
+    namespace: hsm-secrets-operator-system
   secretName: "webapp-database-credentials"
   autoSync: true
   syncInterval: 600  # 10 minutes
@@ -64,6 +76,10 @@ metadata:
     app: webapp
     type: tls
 spec:
+  # HSM path is automatically set to the metadata.name (webapp-tls)
+  parentRef:
+    name: controller-manager
+    namespace: hsm-secrets-operator-system
   secretName: "webapp-tls-cert"
   autoSync: true
   syncInterval: 3600  # 1 hour

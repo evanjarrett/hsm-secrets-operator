@@ -4,19 +4,42 @@ This directory contains practical examples demonstrating how to use the HSM Secr
 
 ## Directory Structure
 
-- **[basic/](basic/)** - Basic usage examples for getting started
+- **[basic/](basic/)** - Basic CRD resource examples for getting started
 - **[advanced/](advanced/)** - Advanced configurations and use cases
-- **[api/](api/)** - REST API usage examples
+- **[api/](api/)** - REST API usage examples and bulk operation scripts
+- **[deployment/](deployment/)** - Complete deployment configurations
 - **[high-availability/](high-availability/)** - High availability and mirroring setups
 
 ## Quick Start
 
+### Method 1: kubectl-hsm Plugin (Recommended)
+
 1. **Install the Operator**
    ```bash
-   # Install CRDs
-   kubectl apply -f config/crd/bases/
-   
-   # Deploy the operator
+   # Install CRDs and deploy the operator
+   kubectl apply -f config/default/
+   ```
+
+2. **Install kubectl-hsm plugin**
+   ```bash
+   cd kubectl-hsm && make install
+   ```
+
+3. **Create your first secret**
+   ```bash
+   kubectl hsm create my-secret --from-literal=password=secret123
+   ```
+
+4. **List and get secrets**
+   ```bash
+   kubectl hsm list
+   kubectl hsm get my-secret
+   ```
+
+### Method 2: CRD Resources
+
+1. **Install the Operator**
+   ```bash
    kubectl apply -f config/default/
    ```
 
@@ -30,16 +53,21 @@ This directory contains practical examples demonstrating how to use the HSM Secr
    kubectl apply -f examples/basic/database-secret.yaml
    ```
 
-4. **Use the REST API**
-   ```bash
-   # Check health
-   curl http://localhost:8090/api/v1/health
-   
-   # Create a secret via API
-   curl -X POST http://localhost:8090/api/v1/hsm/secrets \
-     -H "Content-Type: application/json" \
-     -d @examples/api/create-secret.json
-   ```
+### Method 3: REST API (Advanced)
+
+For automation and bulk operations:
+```bash
+# Port forward to API
+kubectl port-forward -n hsm-secrets-operator-system svc/hsm-secrets-operator-api 8090:8090
+
+# Check health
+curl http://localhost:8090/api/v1/health
+
+# Create a secret via API
+curl -X POST http://localhost:8090/api/v1/hsm/secrets \
+  -H "Content-Type: application/json" \
+  -d @examples/api/create-secret.json
+```
 
 ## Prerequisites
 

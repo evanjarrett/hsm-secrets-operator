@@ -21,7 +21,10 @@ metadata:
     app: myapp
     environment: development
 spec:
-  secretName: "database-credentials"
+  # HSM path is automatically set to the metadata.name (database-credentials)
+  parentRef:
+    name: controller-manager
+    namespace: hsm-secrets-operator-system
   autoSync: true
   syncInterval: 300  # 5 minutes - frequent sync for dev
 
@@ -45,7 +48,10 @@ metadata:
     app: myapp
     environment: staging
 spec:
-  secretName: "database-credentials"
+  # HSM path is automatically set to the metadata.name (database-credentials)
+  parentRef:
+    name: controller-manager
+    namespace: hsm-secrets-operator-system
   autoSync: true
   syncInterval: 600  # 10 minutes
 
@@ -73,7 +79,10 @@ metadata:
   annotations:
     hsm.j5t.io/description: "Production database credentials - HIGH SECURITY"
 spec:
-  secretName: "database-credentials"
+  # HSM path is automatically set to the metadata.name (database-credentials)
+  parentRef:
+    name: controller-manager
+    namespace: hsm-secrets-operator-system
   autoSync: true
   syncInterval: 1800  # 30 minutes - less frequent for stability
 
@@ -98,6 +107,10 @@ metadata:
     type: tls
     scope: global
 spec:
+  # HSM path is automatically set to the metadata.name (wildcard-tls-cert)
+  parentRef:
+    name: controller-manager
+    namespace: hsm-secrets-operator-system
   secretName: "wildcard-tls"
   autoSync: true
   syncInterval: 86400  # Daily sync for certificates

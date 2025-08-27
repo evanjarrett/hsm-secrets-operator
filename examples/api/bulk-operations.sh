@@ -1,6 +1,7 @@
 #!/bin/bash
 
-# Bulk operations for HSM secrets via REST API
+# Bulk operations for HSM secrets
+# Automatically uses kubectl-hsm plugin if available, falls back to REST API
 # Usage: ./bulk-operations.sh [operation] [config-file]
 
 set -e
@@ -74,6 +75,23 @@ create_secret() {
     
     echo "  Creating secret: $label"
     
+    # Try using kubectl-hsm first if available, fallback to API
+    if command -v kubectl >/dev/null && kubectl hsm --help >/dev/null 2>&1; then
+        # Convert secret_data to create command format
+        local temp_file=$(mktemp)
+        echo "$secret_data" | jq '.data' > "$temp_file"
+        
+        if kubectl hsm create "$label" --from-file="$temp_file" >/dev/null 2>&1; then
+            rm "$temp_file"
+            echo "    ✅ Created successfully (kubectl-hsm)"
+            return 0
+        else
+            rm "$temp_file"
+            echo "    ⚠️  kubectl-hsm failed, trying API..."
+        fi
+    fi
+    
+    # Fallback to API
     response=$(curl -s -X POST \
       -H "Content-Type: application/json" \
       -d "$secret_data" \
@@ -81,7 +99,7 @@ create_secret() {
     
     success=$(echo "$response" | jq -r '.success')
     if [ "$success" = "true" ]; then
-        echo "    ✅ Created successfully"
+        echo "    ✅ Created successfully (API)"
         return 0
     else
         error_message=$(echo "$response" | jq -r '.error.message // "Unknown error"')
@@ -96,11 +114,22 @@ delete_secret() {
     
     echo "  Deleting secret: $label"
     
+    # Try using kubectl-hsm first if available, fallback to API
+    if command -v kubectl >/dev/null && kubectl hsm --help >/dev/null 2>&1; then
+        if kubectl hsm delete "$label" --force >/dev/null 2>&1; then
+            echo "    ✅ Deleted successfully (kubectl-hsm)"
+            return 0
+        else
+            echo "    ⚠️  kubectl-hsm failed, trying API..."
+        fi
+    fi
+    
+    # Fallback to API
     response=$(curl -s -X DELETE "$API_BASE_URL/api/v1/hsm/secrets/$label")
     
     success=$(echo "$response" | jq -r '.success')
     if [ "$success" = "true" ]; then
-        echo "    ✅ Deleted successfully"
+        echo "    ✅ Deleted successfully (API)"
         return 0
     else
         error_message=$(echo "$response" | jq -r '.error.message // "Unknown error"')
@@ -113,6 +142,15 @@ delete_secret() {
 get_secret() {
     local label="$1"
     
+    # Try using kubectl-hsm first if available, fallback to API
+    if command -v kubectl >/dev/null && kubectl hsm --help >/dev/null 2>&1; then
+        if kubectl hsm get "$label" >/dev/null 2>&1; then
+            echo "    ✅ $label (available via kubectl-hsm)"
+            return 0
+        fi
+    fi
+    
+    # Fallback to API for detailed status
     response=$(curl -s "$API_BASE_URL/api/v1/hsm/secrets/$label")
     success=$(echo "$response" | jq -r '.success')
     

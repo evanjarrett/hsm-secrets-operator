@@ -2,12 +2,15 @@
 
 This directory contains advanced configuration examples for complex use cases.
 
+> **Note:** For interactive secret management during development and testing, consider using the `kubectl hsm` plugin alongside these CRD configurations. See [kubectl-hsm documentation](../../kubectl-hsm/README.md) for details.
+
 ## Examples Overview
 
-1. **[custom-discovery.yaml](custom-discovery.yaml)** - Custom USB device discovery
-2. **[multi-environment.yaml](multi-environment.yaml)** - Multi-environment secret management
-3. **[secret-rotation.yaml](secret-rotation.yaml)** - Automated secret rotation
-4. **[monitoring.yaml](monitoring.yaml)** - Prometheus monitoring setup
+1. **[custom-pkcs11-library.yaml](custom-pkcs11-library.yaml)** - Custom PKCS#11 library configuration
+2. **[multi-environment.yaml](multi-environment.yaml)** - Multi-environment secret management  
+3. **[custom-library-guide.md](custom-library-guide.md)** - Guide for using custom PKCS#11 libraries
+
+> **Additional Examples:** See the [deployment](../deployment/) directory for monitoring configurations and [high-availability](../high-availability/) directory for advanced failover setups.
 
 ## Advanced Use Cases
 

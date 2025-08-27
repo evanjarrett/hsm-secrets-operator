@@ -9,19 +9,18 @@ metadata:
   annotations:
     hsm.j5t.io/description: "API keys for external services (Stripe, AWS, etc.)"
 spec:
-  # Path on the HSM where API keys are stored
+  # HSM path is automatically set to the metadata.name (external-api-keys)
   
-  # Name of the Secret containing API keys
-  secretName: "external-api-keys"
+  # ParentRef identifies which operator instance should handle this HSMSecret
+  parentRef:
+    name: controller-manager
+    namespace: hsm-secrets-operator-system
   
   # Enable automatic synchronization
   autoSync: true
   
   # Sync every 10 minutes (API keys might rotate frequently)
   syncInterval: 600
-  
-  # Standard opaque secret type
-  secretType: Opaque
 
 ---
 # Example application using the API keys
