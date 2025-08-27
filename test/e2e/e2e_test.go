@@ -49,6 +49,23 @@ var _ = Describe("Manager", Ordered, func() {
 	// enforce the restricted security policy to the namespace, installing CRDs,
 	// and deploying the controller.
 	BeforeAll(func() {
+		// Set up cleanup that runs even if BeforeAll fails partway through
+		DeferCleanup(func() {
+			By("cleaning up resources from BeforeAll setup")
+
+			By("undeploying the controller-manager")
+			cmd := exec.Command("make", "undeploy")
+			_, _ = utils.Run(cmd)
+
+			By("uninstalling CRDs")
+			cmd = exec.Command("make", "uninstall")
+			_, _ = utils.Run(cmd)
+
+			By("removing manager namespace")
+			cmd = exec.Command("kubectl", "delete", "ns", namespace, "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+		})
+
 		By("creating manager namespace")
 		cmd := exec.Command("kubectl", "create", "ns", namespace)
 		_, err := utils.Run(cmd)
@@ -71,46 +88,55 @@ var _ = Describe("Manager", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 	})
 
-	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
-	// and deleting the namespace.
-	AfterAll(func() {
-		By("cleaning up the curl pod for metrics")
-		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
-		_, _ = utils.Run(cmd)
-
-		By("cleaning up the metrics ClusterRoleBinding")
-		cmd = exec.Command("kubectl", "delete", "clusterrolebinding", metricsRoleBindingName)
-		_, _ = utils.Run(cmd)
-
-		By("undeploying the controller-manager")
-		cmd = exec.Command("make", "undeploy")
-		_, _ = utils.Run(cmd)
-
-		By("uninstalling CRDs")
-		cmd = exec.Command("make", "uninstall")
-		_, _ = utils.Run(cmd)
-
-		By("removing manager namespace")
-		cmd = exec.Command("kubectl", "delete", "ns", namespace)
-		_, _ = utils.Run(cmd)
-	})
+	// Note: Main cleanup is handled by DeferCleanup in BeforeAll
 
 	// After each test, check for failures and collect logs, events,
-	// and pod descriptions for debugging.
+	// and pod descriptions for debugging, then clean up test-specific resources.
 	AfterEach(func() {
+		// Clean up test-specific resources regardless of success/failure
+		DeferCleanup(func() {
+			By("cleaning up the curl pod for metrics")
+			cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace, "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+
+			By("cleaning up the metrics ClusterRoleBinding")
+			cmd = exec.Command("kubectl", "delete", "clusterrolebinding", metricsRoleBindingName, "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+		})
+
 		specReport := CurrentSpecReport()
 		if specReport.Failed() {
 			By("Fetching controller manager pod logs")
-			cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", namespace)
-			controllerLogs, err := utils.Run(cmd)
-			if err == nil {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerLogs)
+			if controllerPodName != "" {
+				cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", namespace)
+				controllerLogs, err := utils.Run(cmd)
+				if err == nil {
+					_, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerLogs)
+				} else {
+					_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Controller logs: %s", err)
+				}
+
+				By("Fetching controller manager pod description")
+				cmd = exec.Command("kubectl", "describe", "pod", controllerPodName, "-n", namespace)
+				podDescription, err := utils.Run(cmd)
+				if err == nil {
+					fmt.Println("Pod description:\n", podDescription)
+				} else {
+					fmt.Println("Failed to describe controller pod")
+				}
 			} else {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Controller logs: %s", err)
+				_, _ = fmt.Fprintf(GinkgoWriter, "Controller pod name not available for logs\n")
+
+				By("Fetching all pods in namespace for debugging")
+				cmd := exec.Command("kubectl", "get", "pods", "-n", namespace, "-o", "wide")
+				podsOutput, err := utils.Run(cmd)
+				if err == nil {
+					_, _ = fmt.Fprintf(GinkgoWriter, "All pods in namespace:\n%s", podsOutput)
+				}
 			}
 
 			By("Fetching Kubernetes events")
-			cmd = exec.Command("kubectl", "get", "events", "-n", namespace, "--sort-by=.lastTimestamp")
+			cmd := exec.Command("kubectl", "get", "events", "-n", namespace, "--sort-by=.lastTimestamp")
 			eventsOutput, err := utils.Run(cmd)
 			if err == nil {
 				_, _ = fmt.Fprintf(GinkgoWriter, "Kubernetes events:\n%s", eventsOutput)
@@ -119,21 +145,12 @@ var _ = Describe("Manager", Ordered, func() {
 			}
 
 			By("Fetching curl-metrics logs")
-			cmd = exec.Command("kubectl", "logs", "curl-metrics", "-n", namespace)
+			cmd = exec.Command("kubectl", "logs", "curl-metrics", "-n", namespace, "--ignore-not-found=true")
 			metricsOutput, err := utils.Run(cmd)
-			if err == nil {
+			if err == nil && metricsOutput != "" {
 				_, _ = fmt.Fprintf(GinkgoWriter, "Metrics logs:\n %s", metricsOutput)
-			} else {
+			} else if err != nil {
 				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get curl-metrics logs: %s", err)
-			}
-
-			By("Fetching controller manager pod description")
-			cmd = exec.Command("kubectl", "describe", "pod", controllerPodName, "-n", namespace)
-			podDescription, err := utils.Run(cmd)
-			if err == nil {
-				fmt.Println("Pod description:\n", podDescription)
-			} else {
-				fmt.Println("Failed to describe controller pod")
 			}
 		}
 	})
