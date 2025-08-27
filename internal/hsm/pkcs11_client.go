@@ -325,6 +325,11 @@ func (c *PKCS11Client) ReadSecret(ctx context.Context, path string) (SecretData,
 			continue // Skip objects that don't match our path
 		}
 
+		// Skip metadata objects when reading secrets
+		if strings.HasSuffix(label, metadataKeySuffix) {
+			continue
+		}
+
 		matchingObjects++
 
 		// Extract key name from label (remove path prefix)
