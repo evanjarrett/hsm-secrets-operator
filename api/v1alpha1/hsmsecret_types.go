@@ -61,7 +61,7 @@ type HSMSecretSpec struct {
 	// +optional
 	SecretName string `json:"secretName,omitempty"`
 
-	// AutoSync enables bidirectional synchronization between HSM and Kubernetes Secret
+	// AutoSync enables automatic synchronization from HSM to Kubernetes Secret
 	// +kubebuilder:default=true
 	// +optional
 	AutoSync bool `json:"autoSync,omitempty"`

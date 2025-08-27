@@ -4,12 +4,12 @@ A Kubernetes operator that bridges Hardware Security Module (HSM) data storage w
 
 ## Description
 
-The HSM Secrets Operator implements a controller pattern that maintains bidirectional synchronization between HSM binary data files and Kubernetes Secret objects. It uses a four-binary architecture with gRPC communication, automatic USB device discovery, and dynamic agent deployment to provide secure, hardware-backed secret management in Kubernetes environments.
+The HSM Secrets Operator implements a controller pattern that synchronizes HSM binary data files to Kubernetes Secret objects. It uses a unified binary architecture with gRPC communication, automatic USB device discovery, and dynamic agent deployment to provide secure, hardware-backed secret management in Kubernetes environments.
 
 ### Key Features
 
 - **Hardware Security**: Leverages Pico HSM and other PKCS#11 compatible devices for tamper-resistant secret storage
-- **Bidirectional Sync**: Automatic synchronization between HSM storage and Kubernetes Secrets
+- **Automatic Sync**: Synchronization from HSM storage to Kubernetes Secrets
 - **Device Discovery**: Automatic USB HSM device detection with support for multiple device types
 - **Agent Architecture**: Dynamic deployment of HSM agent pods with node affinity for direct hardware access
 - **gRPC Communication**: High-performance gRPC protocol for manager-agent communication with fallback to HTTP

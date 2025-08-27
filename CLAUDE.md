@@ -6,9 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Remote Kubernetes Environment**: The Kubernetes cluster is running remotely, NOT on this local development system. Any local device checks (like `ls /dev/tty*` or local USB device detection) will NOT work and will not reflect the actual state of devices on the remote cluster nodes.
 
+**Sync Architecture**: The operator implements **unidirectional sync from HSM to Kubernetes Secrets only**. HSM is the authoritative source of truth. K8s Secrets are read-only replicas that get updated when HSM data changes. There is no K8s → HSM sync functionality.
+
 ## Project Overview
 
-A Kubernetes operator that bridges Hardware Security Module (HSM) data storage with Kubernetes Secrets, providing true secret portability through hardware-based security. The operator implements a controller pattern that maintains bidirectional synchronization between HSM binary data files and Kubernetes Secret objects using a unified binary architecture with gRPC communication, automatic USB device discovery, and dynamic agent deployment.
+A Kubernetes operator that bridges Hardware Security Module (HSM) data storage with Kubernetes Secrets, providing true secret portability through hardware-based security. The operator implements a controller pattern that synchronizes HSM binary data files to Kubernetes Secret objects using a unified binary architecture with gRPC communication, automatic USB device discovery, and dynamic agent deployment.
 
 ## Architecture: Unified Binary with Mode-Based Operation
 
@@ -55,7 +57,7 @@ The project uses a **unified binary** (`cmd/hsm-operator/main.go`) that operates
 **Controller Hierarchy:**
 ```
 Manager Controllers:
-├── HSMSecretReconciler - Bidirectional HSM/K8s Secret sync
+├── HSMSecretReconciler - HSM to K8s Secret sync
 ├── HSMPoolReconciler - Aggregates discovery reports from pod annotations  
 ├── HSMPoolAgentReconciler - Deploys agents when pools are ready
 └── DiscoveryDaemonSetReconciler - Manages discovery DaemonSet lifecycle
@@ -142,7 +144,7 @@ kind: HSMSecret
 metadata:
   name: my-secret                   # HSM path = metadata.name
 spec:
-  autoSync: true                    # Bidirectional sync (default)
+  autoSync: true                    # Automatic sync from HSM to K8s (default)
   syncInterval: 30                  # Sync interval in seconds  
 status:
   syncStatus: "InSync"              # InSync|OutOfSync|Error|Pending
@@ -275,6 +277,7 @@ kubectl get pods -l app.kubernetes.io/component=discovery \
 - **Agent crash loop**: Check library path and PIN secret configuration
 - **gRPC connection failed**: Verify agent on port 9090, check service/endpoint configuration
 - **Proto generation issues**: Install buf tool (`go install github.com/bufbuild/buf/cmd/buf@latest`)
+- **Metadata keys in K8s Secrets**: If you see `_metadata` keys in Kubernetes Secrets, this indicates a bug in the PKCS#11 client filtering (should be excluded in `ReadSecret`)
 
 ## Manual HSM Access
 
@@ -295,6 +298,27 @@ kubectl exec $AGENT_POD -- pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" -I
 **Secret Storage Structure:**
 - Each K8s Secret becomes multiple PKCS#11 data objects
 - Object naming: `secret-name/key-name` (e.g., `user-credentials/api_key`)
+- Metadata stored separately with `/_metadata` suffix (filtered out from K8s Secrets)
 - Private objects require PIN authentication to access
+
+## Code Architecture Critical Points
+
+**Controller Interaction Flow:**
+1. `HSMSecretReconciler` reads from HSM via gRPC agents
+2. `HSMPoolReconciler` aggregates device discovery reports from pod annotations (race-free)
+3. `HSMPoolAgentReconciler` deploys agents dynamically when devices are ready
+4. `HSMSyncReconciler` handles multi-device HSM synchronization (HSM ↔ HSM only)
+
+**PKCS#11 Client Implementation:**
+- Production: `internal/hsm/pkcs11_client.go` with CGO
+- Testing: `internal/hsm/pkcs11_client_nocgo.go` and `mock_client.go`
+- **Critical**: ReadSecret must filter out `metadataKeySuffix` ("/_metadata") objects
+- Build tags control which client is compiled
+
+**Protocol Buffer Workflow:**
+1. Modify `api/proto/hsm/v1/hsm.proto`
+2. Run `buf generate` to update Go code
+3. Implement in `internal/agent/grpc_server.go`
+4. Update client calls in controller or agent code
 
 This operator provides secure, hardware-backed secret management that integrates seamlessly with Kubernetes while maintaining the security benefits of HSM-based storage.

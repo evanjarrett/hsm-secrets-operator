@@ -77,7 +77,7 @@ Represents a physical HSM device and handles:
 
 ### HSMSecret
 Represents a secret stored on the HSM and manages:
-- Bidirectional sync with Kubernetes Secrets
+- Sync from HSM to Kubernetes Secrets
 - Data integrity with checksums
 - Automatic updates when HSM data changes
 
