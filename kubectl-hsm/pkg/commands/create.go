@@ -29,6 +29,7 @@ type CreateOptions struct {
 	CommonOptions
 	FromLiteral  []string
 	FromFile     []string
+	FromJsonFile string
 	Interactive  bool
 }
 
@@ -62,11 +63,17 @@ Examples:
 	}
 
 	cmd.Flags().StringArrayVar(&opts.FromLiteral, "from-literal", nil, "Specify a key and literal value to insert in secret (i.e. --from-literal key=value)")
-	cmd.Flags().StringArrayVar(&opts.FromFile, "from-file", nil, "Key files can be specified using their file path, in which case a default name will be given to them, or optionally with a name and file path, in which case the given name will be used")
+	cmd.Flags().StringArrayVar(&opts.FromFile, "from-file", nil, "Load secret data from files. Use 'key=file' or just 'file' (uses filename without extension as key)")
+	cmd.Flags().StringVar(&opts.FromJsonFile, "from-json-file", "", "Load secret data from a JSON file with structure {\"name\":\"secret-name\",\"secrets\":[{\"key\":\"k\",\"value\":\"v\"}]}")
 	cmd.Flags().BoolVar(&opts.Interactive, "interactive", false, "Prompt for secret values interactively")
 	cmd.Flags().StringVarP(&opts.Namespace, "namespace", "n", "", "Override the default namespace")
 	cmd.Flags().StringVarP(&opts.Output, "output", "o", "text", "Output format (text, json, yaml)")
 	cmd.Flags().BoolVarP(&opts.Verbose, "verbose", "v", false, "Show verbose output including port forward details")
+
+	// Add completion for output flag
+	cmd.RegisterFlagCompletionFunc("output", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"text", "json", "yaml"}, cobra.ShellCompDirectiveNoFileComp
+	})
 
 	return cmd
 }
@@ -86,15 +93,18 @@ func (opts *CreateOptions) Run(ctx context.Context, secretName string) error {
 	if len(opts.FromFile) > 0 {
 		methods++
 	}
+	if opts.FromJsonFile != "" {
+		methods++
+	}
 	if opts.Interactive {
 		methods++
 	}
 
 	if methods == 0 {
-		return fmt.Errorf("must specify one of --from-literal, --from-file, or --interactive")
+		return fmt.Errorf("must specify one of --from-literal, --from-file, --from-json-file, or --interactive")
 	}
 	if methods > 1 {
-		return fmt.Errorf("cannot specify multiple input methods (--from-literal, --from-file, --interactive)")
+		return fmt.Errorf("cannot specify multiple input methods (--from-literal, --from-file, --from-json-file, --interactive)")
 	}
 
 	// Collect secret data
@@ -118,15 +128,25 @@ func (opts *CreateOptions) Run(ctx context.Context, secretName string) error {
 				filename = parts[0]
 			}
 
-			fileData, err := readFromFile(key, filename)
+			fileData, err := readFromFileImproved(key, filename)
 			if err != nil {
 				return err
 			}
 
-			// Merge file data
+			// Merge file data with collision detection
 			for k, v := range fileData {
+				if existingValue, exists := secretData[k]; exists {
+					fmt.Printf("Warning: Key '%s' already exists (from previous file), overwriting with value from '%s'\n", k, filename)
+					fmt.Printf("  Previous value: %s...\n", truncateString(existingValue.(string), 50))
+					fmt.Printf("  New value: %s...\n", truncateString(v.(string), 50))
+				}
 				secretData[k] = v
 			}
+		}
+	} else if opts.FromJsonFile != "" {
+		secretData, err = readFromJsonFile(opts.FromJsonFile)
+		if err != nil {
+			return err
 		}
 	} else if opts.Interactive {
 		secretData, err = promptForInteractiveInput()

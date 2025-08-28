@@ -83,6 +83,9 @@ https://github.com/evanjarrett/hsm-secrets-operator`,
 	// Add operational commands
 	cmd.AddCommand(commands.NewHealthCmd())
 
+	// Add completion command
+	cmd.AddCommand(newCompletionCmd())
+
 	return cmd
 }
 
@@ -97,4 +100,82 @@ func newVersionCmd() *cobra.Command {
 			fmt.Printf("Plugin type: kubectl plugin\n")
 		},
 	}
+}
+
+func newCompletionCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "completion [bash|zsh|fish|powershell]",
+		Short: "Generate completion script",
+		Long: `Generate the autocompletion script for kubectl-hsm for the specified shell.
+See each sub-command's help for details on how to use the generated script.`,
+		DisableFlagsInUseLine: true,
+		ValidArgs:             []string{"bash", "zsh", "fish", "powershell"},
+		Args:                  cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			switch args[0] {
+			case "bash":
+				return cmd.Root().GenBashCompletion(os.Stdout)
+			case "zsh":
+				return cmd.Root().GenZshCompletion(os.Stdout)
+			case "fish":
+				return cmd.Root().GenFishCompletion(os.Stdout, true)
+			case "powershell":
+				return cmd.Root().GenPowerShellCompletionWithDesc(os.Stdout)
+			default:
+				return fmt.Errorf("unsupported shell type: %s", args[0])
+			}
+		},
+	}
+
+	// Add subcommands for each shell
+	cmd.AddCommand(&cobra.Command{
+		Use:   "bash",
+		Short: "Generate the autocompletion script for bash",
+		Long: `Generate the autocompletion script for the bash shell.
+
+To load completions in your current shell session:
+
+	source <(kubectl hsm completion bash)
+
+To load completions for every new session, execute once:
+
+### Linux:
+	kubectl hsm completion bash > /etc/bash_completion.d/kubectl-hsm
+
+### macOS:
+	kubectl hsm completion bash > $(brew --prefix)/etc/bash_completion.d/kubectl-hsm
+
+You will need to start a new shell for this setup to take effect.`,
+		DisableFlagsInUseLine: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Root().GenBashCompletion(os.Stdout)
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "zsh",
+		Short: "Generate the autocompletion script for zsh",
+		Long: `Generate the autocompletion script for the zsh shell.
+
+To load completions in your current shell session:
+
+	source <(kubectl hsm completion zsh)
+
+To load completions for every new session, execute once:
+
+### zsh completion system:
+	kubectl hsm completion zsh > "${fpath[1]}/_kubectl-hsm"
+
+### Using oh-my-zsh:
+	mkdir -p ~/.oh-my-zsh/completions
+	kubectl hsm completion zsh > ~/.oh-my-zsh/completions/_kubectl-hsm
+
+You will need to start a new shell for this setup to take effect.`,
+		DisableFlagsInUseLine: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Root().GenZshCompletion(os.Stdout)
+		},
+	})
+
+	return cmd
 }

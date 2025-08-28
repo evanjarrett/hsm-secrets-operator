@@ -64,6 +64,9 @@ Examples:
 	cmd.Flags().StringVarP(&opts.Namespace, "namespace", "n", "", "Override the default namespace")
 	cmd.Flags().BoolVarP(&opts.Verbose, "verbose", "v", false, "Show verbose output including port forward details")
 
+	// Add completion for secret names
+	cmd.ValidArgsFunction = CompletionSecretNames
+
 	return cmd
 }
 

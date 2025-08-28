@@ -18,13 +18,14 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 
+	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
 	"github.com/evanjarrett/hsm-secrets-operator/kubectl-hsm/pkg/client"
@@ -130,29 +131,6 @@ func parseFromLiteral(literals []string) (map[string]any, error) {
 	return data, nil
 }
 
-// readFromFile reads content from a file for --from-file flags
-func readFromFile(key, filename string) (map[string]any, error) {
-	// Handle both "key=file" and "file" formats
-	if filename == "" {
-		filename = key
-		key = filepath.Base(filename)
-		// Remove file extension for the key
-		if ext := filepath.Ext(key); ext != "" {
-			key = strings.TrimSuffix(key, ext)
-		}
-	}
-
-	content, err := os.ReadFile(filename)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read file %s: %w", filename, err)
-	}
-
-	data := map[string]any{
-		key: string(content),
-	}
-
-	return data, nil
-}
 
 // promptForInteractiveInput prompts the user for secret values interactively
 func promptForInteractiveInput() (map[string]any, error) {
@@ -191,16 +169,104 @@ func promptForInteractiveInput() (map[string]any, error) {
 	return data, nil
 }
 
-// formatDuration formats a time duration in a human-readable way
-func formatDuration(d time.Duration) string {
-	if d < time.Minute {
-		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+// JsonSecretImport represents the structure of a JSON secret import file
+type JsonSecretImport struct {
+	Name    string             `json:"name"`
+	Secrets []JsonSecretKVPair `json:"secrets"`
+}
+
+// JsonSecretKVPair represents a key-value pair in the JSON import
+type JsonSecretKVPair struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// readFromJsonFile reads secret data from a JSON file
+func readFromJsonFile(filename string) (map[string]any, error) {
+	content, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read JSON file %s: %w", filename, err)
 	}
-	if d < time.Hour {
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+
+	var importData JsonSecretImport
+	if err := json.Unmarshal(content, &importData); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON file %s: %w", filename, err)
 	}
-	if d < 24*time.Hour {
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
+
+	data := make(map[string]any)
+	for _, kv := range importData.Secrets {
+		if kv.Key == "" {
+			return nil, fmt.Errorf("empty key found in JSON file %s", filename)
+		}
+		data[kv.Key] = kv.Value
 	}
-	return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+
+	return data, nil
+}
+
+// readFromFileImproved reads from file with improved key derivation logic
+func readFromFileImproved(key, filename string) (map[string]any, error) {
+	// Handle both "key=file" and "file" formats
+	if key == "" {
+		// Only filename provided (no explicit key)
+		key = filepath.Base(filename)
+		
+		// Remove file extension for the key
+		if ext := filepath.Ext(key); ext != "" {
+			key = strings.TrimSuffix(key, ext)
+		}
+	}
+
+	content, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file %s: %w", filename, err)
+	}
+
+	data := map[string]any{
+		key: string(content),
+	}
+
+	return data, nil
+}
+
+// truncateString truncates a string to the specified length with "..." suffix
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
+}
+
+// CompletionSecretNames provides bash completion for secret names
+func CompletionSecretNames(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	// If we already have a secret name, don't complete more
+	if len(args) >= 1 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+
+	// Get namespace from flag or use default
+	namespace, _ := cmd.Flags().GetString("namespace")
+	verbose, _ := cmd.Flags().GetBool("verbose")
+	
+	// Create client manager
+	cm, err := NewClientManager(namespace, verbose)
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveError
+	}
+	defer cm.Close()
+
+	// Get HSM client
+	ctx := cmd.Context()
+	hsmClient, err := cm.GetClient(ctx)
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveError
+	}
+
+	// List secrets
+	secretList, err := hsmClient.ListSecrets(ctx, 0, 0)
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveError
+	}
+
+	return secretList.Secrets, cobra.ShellCompDirectiveNoFileComp
 }

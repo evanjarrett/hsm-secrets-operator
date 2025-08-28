@@ -68,6 +68,14 @@ Examples:
 	cmd.Flags().StringVarP(&opts.Output, "output", "o", "text", "Output format (text, json, yaml)")
 	cmd.Flags().BoolVarP(&opts.Verbose, "verbose", "v", false, "Show verbose output including port forward details")
 
+	// Add completion for secret names
+	cmd.ValidArgsFunction = CompletionSecretNames
+
+	// Add completion for output flag
+	cmd.RegisterFlagCompletionFunc("output", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"text", "json", "yaml"}, cobra.ShellCompDirectiveNoFileComp
+	})
+
 	return cmd
 }
 

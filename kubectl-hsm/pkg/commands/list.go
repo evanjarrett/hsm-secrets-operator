@@ -69,6 +69,11 @@ Examples:
 	cmd.Flags().StringVarP(&opts.Output, "output", "o", "text", "Output format (text, json, yaml)")
 	cmd.Flags().BoolVarP(&opts.Verbose, "verbose", "v", false, "Show verbose output including port forward details")
 
+	// Add completion for output flag
+	cmd.RegisterFlagCompletionFunc("output", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"text", "json", "yaml"}, cobra.ShellCompDirectiveNoFileComp
+	})
+
 	return cmd
 }
 
@@ -96,13 +101,23 @@ func (opts *ListOptions) Run(ctx context.Context) error {
 	// Handle output formatting
 	switch opts.Output {
 	case "json":
-		jsonBytes, err := json.MarshalIndent(secretList, "", "  ")
+		// Create clean output without pagination fields
+		cleanOutput := map[string]interface{}{
+			"count":   secretList.Count,
+			"secrets": secretList.Secrets,
+		}
+		jsonBytes, err := json.MarshalIndent(cleanOutput, "", "  ")
 		if err != nil {
 			return fmt.Errorf("failed to marshal secrets to JSON: %w", err)
 		}
 		fmt.Println(string(jsonBytes))
 	case "yaml":
-		yamlBytes, err := yaml.Marshal(secretList)
+		// Create clean output without pagination fields  
+		cleanOutput := map[string]interface{}{
+			"count":   secretList.Count,
+			"secrets": secretList.Secrets,
+		}
+		yamlBytes, err := yaml.Marshal(cleanOutput)
 		if err != nil {
 			return fmt.Errorf("failed to marshal secrets to YAML: %w", err)
 		}

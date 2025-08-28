@@ -11,7 +11,11 @@ The `kubectl-hsm` plugin integrates with the [HSM Secrets Operator](https://gith
 - **Kubernetes-native**: Works seamlessly with kubectl and respects namespace context
 - **Secure**: All secrets stored in HSM hardware for maximum security
 - **Interactive**: Support for secure password input and interactive secret creation
-- **Flexible**: Multiple input methods (literals, files, interactive prompts)
+- **Flexible**: Multiple input methods (literals, files, JSON import, interactive prompts)
+- **Simple naming**: Uses filenames (without extension) as secret keys - just add `.txt` for clean domain names
+- **Collision detection**: Warns when file imports would overwrite existing keys
+- **Bulk import**: JSON file support for migrating secrets from other systems
+- **Shell completion**: Tab completion for commands, flags, and secret names (bash/zsh/fish/powershell)
 - **Cross-platform**: Supports Linux, macOS, and Windows
 
 ## Installation
@@ -37,6 +41,51 @@ cd hsm-secrets-operator/cmd/kubectl-hsm
 make build
 make install
 ```
+
+## Shell Completion
+
+The plugin supports bash, zsh, fish, and PowerShell completion for commands, flags, and secret names.
+
+### Bash Completion
+
+```bash
+# Load completions in your current shell session
+source <(kubectl hsm completion bash)
+
+# Install completions for all sessions
+## Linux:
+kubectl hsm completion bash > /etc/bash_completion.d/kubectl-hsm
+
+## macOS:
+kubectl hsm completion bash > $(brew --prefix)/etc/bash_completion.d/kubectl-hsm
+
+# Restart your shell
+```
+
+### Zsh Completion
+
+```bash
+# Load completions in your current shell session
+source <(kubectl hsm completion zsh)
+
+# Install completions for all sessions
+## Using zsh completion system:
+kubectl hsm completion zsh > "${fpath[1]}/_kubectl-hsm"
+
+## Using oh-my-zsh:
+mkdir -p ~/.oh-my-zsh/completions
+kubectl hsm completion zsh > ~/.oh-my-zsh/completions/_kubectl-hsm
+
+# Restart your shell
+```
+
+### Features
+
+Completion provides:
+- **Command completion**: `kubectl hsm <TAB>` shows available commands
+- **Secret name completion**: `kubectl hsm get <TAB>` shows your actual secrets
+- **Flag completion**: `kubectl hsm get --<TAB>` shows available flags  
+- **Value completion**: `kubectl hsm get secret -o <TAB>` shows `text`, `json`, `yaml`
 
 ## Prerequisites
 
@@ -66,10 +115,19 @@ kubectl hsm create api-config \
   --from-literal api_key=sk_test_123 \
   --from-literal endpoint=https://api.example.com
 
-# Load secret values from files
+# Load secret values from files (explicit key names)
 kubectl hsm create tls-cert \
   --from-file cert=server.crt \
   --from-file key=server.key
+
+# Load files using filename as key (extensions removed)
+kubectl hsm create dns-config \
+  --from-file ./example.com.txt \
+  --from-file ./j5t.io.txt \
+  --from-file ./config.txt
+
+# Load from JSON file (bulk import)
+kubectl hsm create my-secrets --from-json-file=secrets.json
 
 # Get a secret (shows metadata, not values)
 kubectl hsm get database-creds
@@ -122,6 +180,56 @@ kubectl hsm create database-creds --interactive
 ```
 
 This will prompt you for each key-value pair. Fields that look like passwords (containing "password", "secret", "token", or "key") will hide input for security.
+
+### File Loading Options
+
+The plugin supports several ways to load secrets from files:
+
+#### 1. Explicit Key Names (Recommended)
+```bash
+# Specify both key name and file path
+kubectl hsm create tls-cert \
+  --from-file cert=./server.crt \
+  --from-file key=./private.key
+```
+
+#### 2. Filename as Key
+```bash  
+# Uses filename (without extension) as key name
+kubectl hsm create config --from-file ./database.conf
+# Creates key "database" with contents of database.conf
+
+# Extensions are removed from filename to create key
+kubectl hsm create dns-zones \
+  --from-file ./example.com.txt \
+  --from-file ./j5t.io.txt
+# Creates keys "example.com" and "j5t.io" (extension .txt removed)
+```
+
+#### 3. JSON Import (New!)
+```bash
+# Import from structured JSON file
+kubectl hsm create bulk-secrets --from-json-file=import.json
+```
+
+**JSON format:**
+```json
+{
+  "name": "secret-name-in-file", 
+  "secrets": [
+    {"key": "api_key", "value": "sk_123"},
+    {"key": "endpoint", "value": "https://api.example.com"},
+    {"key": "config.yaml", "value": "server:\n  port: 8080"}
+  ]
+}
+```
+
+#### Key Collision Detection
+When using multiple `--from-file` arguments, the plugin warns about key conflicts:
+```bash
+kubectl hsm create test --from-file ./config.txt --from-file ./backup/config.txt
+# Warning: Key 'config' already exists, overwriting with value from './backup/config.txt'
+```
 
 ## How It Works
 
@@ -196,14 +304,52 @@ kubectl hsm get stripe-config
 ### TLS Certificates
 
 ```bash
-# Load certificate files
+# Method 1: Explicit key names (recommended)
 kubectl hsm create tls-server \
   --from-file tls.crt=server.crt \
   --from-file tls.key=server.key \
   --from-file ca.crt=ca.crt
 
+# Method 2: Use filenames as keys (extension removed)
+kubectl hsm create tls-domains \
+  --from-file ./example.com.crt \
+  --from-file ./example.com.key \
+  --from-file ./api.example.com.crt
+# Creates keys: "example.com", "example.com", "api.example.com" (extensions removed)
+
 # Check certificate info
 kubectl hsm get tls-server
+```
+
+### DNS Configuration (New Use Case)
+
+Perfect for managing DNS zone files with domain names as keys:
+
+```bash
+# Load DNS zone files - use .txt extension for clean keys
+kubectl hsm create dns-zones \
+  --from-file ./j5t.io.txt \
+  --from-file ./example.com.txt \
+  --from-file ./internal.net.txt
+
+# Results in keys: "j5t.io", "example.com", "internal.net"
+kubectl hsm get dns-zones
+```
+
+### Bulk Import from JSON
+
+```bash  
+# Import multiple secrets from JSON (useful for migrations)
+kubectl hsm create imported-secrets --from-json-file=bitwarden-export.json
+
+# JSON structure matches your export format:
+# {
+#   "name": "dns-config",
+#   "secrets": [
+#     {"key": "j5t.io", "value": "@ IN SOA ns.j5t.io..."},
+#     {"key": "jarrett.net", "value": "@ IN SOA ns.jarrett.net..."} 
+#   ]
+# }
 ```
 
 ## Troubleshooting
