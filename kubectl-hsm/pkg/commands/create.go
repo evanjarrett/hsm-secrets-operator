@@ -31,6 +31,7 @@ type CreateOptions struct {
 	FromFile     []string
 	FromJsonFile string
 	Interactive  bool
+	Replace      bool
 }
 
 // NewCreateCmd creates the create command
@@ -39,8 +40,11 @@ func NewCreateCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "create SECRET_NAME [flags]",
-		Short: "Create a new HSM secret",
-		Long: `Create a new secret in the HSM.
+		Short: "Create or update an HSM secret",
+		Long: `Create a new secret in the HSM, or add keys to an existing secret.
+
+By default, if the secret already exists, new keys will be added and existing keys with the same name will be updated.
+Existing keys not specified in the command will be preserved. Use --replace to completely replace the secret instead.
 
 The secret data can be provided in several ways:
 - --from-literal key=value: Specify key-value pairs directly
@@ -50,6 +54,12 @@ The secret data can be provided in several ways:
 Examples:
   # Create secret with literal values
   kubectl hsm create database-creds --from-literal username=admin --from-literal password=secret123
+
+  # Add a new key to existing secret (preserves username and password)
+  kubectl hsm create database-creds --from-literal connection_string="postgres://..."
+
+  # Replace entire secret (removes username and password, only keeps api_key)
+  kubectl hsm create database-creds --from-literal api_key=xyz123 --replace
 
   # Load values from files
   kubectl hsm create tls-cert --from-file cert=server.crt --from-file key=server.key
@@ -66,6 +76,7 @@ Examples:
 	cmd.Flags().StringArrayVar(&opts.FromFile, "from-file", nil, "Load secret data from files. Use 'key=file' or just 'file' (uses filename without extension as key)")
 	cmd.Flags().StringVar(&opts.FromJsonFile, "from-json-file", "", "Load secret data from a JSON file with structure {\"name\":\"secret-name\",\"secrets\":[{\"key\":\"k\",\"value\":\"v\"}]}")
 	cmd.Flags().BoolVar(&opts.Interactive, "interactive", false, "Prompt for secret values interactively")
+	cmd.Flags().BoolVar(&opts.Replace, "replace", false, "Replace the entire secret instead of merging with existing data")
 	cmd.Flags().StringVarP(&opts.Namespace, "namespace", "n", "", "Override the default namespace")
 	cmd.Flags().StringVarP(&opts.Output, "output", "o", "text", "Output format (text, json, yaml)")
 	cmd.Flags().BoolVarP(&opts.Verbose, "verbose", "v", false, "Show verbose output including port forward details")
@@ -168,13 +179,22 @@ func (opts *CreateOptions) Run(ctx context.Context, secretName string) error {
 		return err
 	}
 
-	// Create the secret
-	fmt.Printf("Creating secret '%s' in namespace '%s'...\n", secretName, cm.GetCurrentNamespace())
-	if err := hsmClient.CreateSecret(ctx, secretName, secretData); err != nil {
-		return fmt.Errorf("failed to create secret: %w", err)
+	// Create the secret (with merge or replace behavior)
+	if opts.Replace {
+		fmt.Printf("Replacing secret '%s' in namespace '%s'...\n", secretName, cm.GetCurrentNamespace())
+	} else {
+		fmt.Printf("Creating/updating secret '%s' in namespace '%s'...\n", secretName, cm.GetCurrentNamespace())
+	}
+	
+	if err := hsmClient.CreateSecretWithOptions(ctx, secretName, secretData, opts.Replace); err != nil {
+		return fmt.Errorf("failed to create/update secret: %w", err)
 	}
 
-	fmt.Printf("Secret '%s' created successfully.\n", secretName)
+	if opts.Replace {
+		fmt.Printf("Secret '%s' replaced successfully.\n", secretName)
+	} else {
+		fmt.Printf("Secret '%s' created/updated successfully.\n", secretName)
+	}
 
 	// Show how to retrieve the secret
 	fmt.Printf("\nTo view the secret:\n")

@@ -44,8 +44,36 @@ func NewClient(baseURL string) *Client {
 	}
 }
 
-// CreateSecret creates a new secret in the HSM
+// CreateSecret creates a new secret in the HSM, merging with existing data if present
 func (c *Client) CreateSecret(ctx context.Context, name string, data map[string]any) error {
+	return c.CreateSecretWithOptions(ctx, name, data, false)
+}
+
+// CreateSecretWithOptions creates a new secret in the HSM with replace option
+func (c *Client) CreateSecretWithOptions(ctx context.Context, name string, data map[string]any, replace bool) error {
+	// Only merge if replace is false
+	if !replace {
+		// Try to read existing secret first for merge behavior
+		existing, err := c.GetSecret(ctx, name)
+		if err == nil && existing != nil {
+			// Merge existing data with new data (new data takes precedence)
+			mergedData := make(map[string]any)
+			
+			// Start with existing data
+			for k, v := range existing.Data {
+				mergedData[k] = v
+			}
+			
+			// Override/add with new data
+			for k, v := range data {
+				mergedData[k] = v
+			}
+			
+			data = mergedData
+		}
+		// If error reading existing secret, continue with original data (new secret)
+	}
+
 	req := CreateSecretRequest{
 		Data: data,
 	}
