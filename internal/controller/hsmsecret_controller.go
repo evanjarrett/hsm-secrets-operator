@@ -148,7 +148,7 @@ func (r *HSMSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Handle deletion
 	if hsmSecret.DeletionTimestamp != nil {
-		return r.reconcileDelete(ctx, &hsmSecret)
+		return ctrl.Result{}, r.reconcileDelete(ctx, &hsmSecret)
 	}
 
 	// Add finalizer if not present
@@ -281,7 +281,6 @@ func (r *HSMSecretReconciler) reconcileSecret(ctx context.Context, hsmSecret *hs
 
 	return r.updateKubernetesSecret(ctx, hsmSecret, secretName, hsmData, hsmMetadata, syncInterval)
 }
-
 
 // readFromAllDevices reads the secret from all devices with version information
 func (r *HSMSecretReconciler) readFromAllDevices(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret, deviceClients *HSMDeviceClients) (map[string]*DeviceInfo, string, error) {
@@ -519,7 +518,7 @@ func (r *HSMSecretReconciler) updateKubernetesSecret(ctx context.Context, hsmSec
 }
 
 // reconcileDelete handles HSMSecret deletion
-func (r *HSMSecretReconciler) reconcileDelete(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret) (ctrl.Result, error) {
+func (r *HSMSecretReconciler) reconcileDelete(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret) error {
 	logger := log.FromContext(ctx)
 
 	if controllerutil.ContainsFinalizer(hsmSecret, HSMSecretFinalizer) {
@@ -540,7 +539,7 @@ func (r *HSMSecretReconciler) reconcileDelete(ctx context.Context, hsmSecret *hs
 		if err := r.Get(ctx, secretKey, &k8sSecret); err == nil {
 			if err := r.Delete(ctx, &k8sSecret); err != nil {
 				logger.Error(err, "Failed to delete associated Secret")
-				return ctrl.Result{}, err
+				return err
 			}
 			logger.Info("Deleted associated Secret", "secret", secretKey)
 		}
@@ -549,11 +548,11 @@ func (r *HSMSecretReconciler) reconcileDelete(ctx context.Context, hsmSecret *hs
 		controllerutil.RemoveFinalizer(hsmSecret, HSMSecretFinalizer)
 		if err := r.Update(ctx, hsmSecret); err != nil {
 			logger.Error(err, "Failed to remove finalizer")
-			return ctrl.Result{}, err
+			return err
 		}
 	}
 
-	return ctrl.Result{}, nil
+	return nil
 }
 
 // buildSecret creates a new Kubernetes Secret from HSM data and metadata
