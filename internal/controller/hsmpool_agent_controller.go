@@ -76,8 +76,12 @@ func (r *HSMPoolAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request
 				continue
 			}
 
-			if err := r.AgentManager.EnsureAgent(ctx, &hsmDevice, nil); err != nil {
-				logger.Error(err, "Failed to ensure HSM agents for pool", "device", deviceRef)
+			if r.AgentManager != nil {
+				if err := r.AgentManager.EnsureAgent(ctx, &hsmDevice, nil); err != nil {
+					logger.Error(err, "Failed to ensure HSM agents for pool", "device", deviceRef)
+				}
+			} else {
+				logger.Error(fmt.Errorf("agent manager not configured"), "Cannot ensure agents without agent manager")
 			}
 		}
 	} else {

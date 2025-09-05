@@ -149,7 +149,7 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 			}
 
 			// Clean up any agent deployments that might have been created
-			agentName := fmt.Sprintf("hsm-agent-%s", hsmDeviceName)
+			agentName := fmt.Sprintf("hsm-agent-%s-0", hsmDeviceName)
 			deployment := &appsv1.Deployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      agentName,
@@ -184,7 +184,7 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Checking that agent deployment was created")
-			agentName := fmt.Sprintf("hsm-agent-%s", hsmDeviceName)
+			agentName := fmt.Sprintf("hsm-agent-%s-0", hsmDeviceName)
 			deployment := &appsv1.Deployment{}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
@@ -256,7 +256,7 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Checking that no agent deployment was created")
-			agentName := fmt.Sprintf("hsm-agent-%s", hsmDeviceName)
+			agentName := fmt.Sprintf("hsm-agent-%s-0", hsmDeviceName)
 			deployment := &appsv1.Deployment{}
 			Consistently(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
@@ -296,7 +296,7 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Checking that no agent deployment was created")
-			agentName := fmt.Sprintf("hsm-agent-%s", hsmDeviceName)
+			agentName := fmt.Sprintf("hsm-agent-%s-0", hsmDeviceName)
 			deployment := &appsv1.Deployment{}
 			Consistently(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
@@ -391,7 +391,7 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Checking that no agent deployment was created")
-			agentName := fmt.Sprintf("hsm-agent-%s", hsmDeviceName)
+			agentName := fmt.Sprintf("hsm-agent-%s-0", hsmDeviceName)
 			deployment := &appsv1.Deployment{}
 			Consistently(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
@@ -418,7 +418,7 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Verifying agent deployment exists")
-			agentName := fmt.Sprintf("hsm-agent-%s", hsmDeviceName)
+			agentName := fmt.Sprintf("hsm-agent-%s-0", hsmDeviceName)
 			deployment := &appsv1.Deployment{}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
