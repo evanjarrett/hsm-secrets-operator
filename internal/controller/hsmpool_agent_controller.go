@@ -64,7 +64,7 @@ func (r *HSMPoolAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	// Only deploy agents for ready pools with discovered hardware
 	if hsmPool.Status.Phase == hsmv1alpha1.HSMPoolPhaseReady && len(hsmPool.Status.AggregatedDevices) > 0 {
-		// For each HSMDevice referenced by this pool, ensure an agent exists
+		// For each HSMDevice referenced by this pool, ensure agents exist for all aggregated devices
 		for _, deviceRef := range hsmPool.Spec.HSMDeviceRefs {
 			// Get the HSMDevice to pass to agent manager
 			var hsmDevice hsmv1alpha1.HSMDevice
@@ -76,8 +76,8 @@ func (r *HSMPoolAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request
 				continue
 			}
 
-			if err := r.ensureHSMAgent(ctx, &hsmDevice); err != nil {
-				logger.Error(err, "Failed to ensure HSM agent", "device", deviceRef)
+			if err := r.AgentManager.EnsureAgent(ctx, &hsmDevice, nil); err != nil {
+				logger.Error(err, "Failed to ensure HSM agents for pool", "device", deviceRef)
 			}
 		}
 	} else {
@@ -93,24 +93,6 @@ func (r *HSMPoolAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	return ctrl.Result{}, nil
-}
-
-// ensureHSMAgent ensures an HSM agent pod is running for the given device
-func (r *HSMPoolAgentReconciler) ensureHSMAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice) error {
-	logger := log.FromContext(ctx)
-
-	if r.AgentManager == nil {
-		return fmt.Errorf("agent manager not configured")
-	}
-
-	// Ensure agent pod is running for this device
-	agentEndpoint, err := r.AgentManager.EnsureAgent(ctx, hsmDevice, nil)
-	if err != nil {
-		return fmt.Errorf("failed to ensure HSM agent: %w", err)
-	}
-
-	logger.Info("HSM agent ensured", "device", hsmDevice.Name, "endpoint", agentEndpoint)
-	return nil
 }
 
 // cleanupStaleAgents removes agent deployments for devices that have been unavailable for too long

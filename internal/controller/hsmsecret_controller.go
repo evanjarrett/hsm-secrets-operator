@@ -192,8 +192,8 @@ func (r *HSMSecretReconciler) ensureHSMAgents(ctx context.Context, hsmSecret *hs
 
 	// Ensure agent pods are running for all devices and create clients
 	for _, hsmDevice := range hsmDevices {
-		// EnsureAgent now returns HTTP endpoint for backward compatibility, but we'll use gRPC
-		_, err = r.AgentManager.EnsureAgent(ctx, hsmDevice, hsmSecret)
+		// EnsureAgent ensures agents for all devices in the pool
+		err = r.AgentManager.EnsureAgent(ctx, hsmDevice, hsmSecret)
 		if err != nil {
 			// Clean up any successful connections before returning error
 			if err := deviceClients.Close(); err != nil {

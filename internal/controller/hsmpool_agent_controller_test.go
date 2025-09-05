@@ -456,8 +456,8 @@ type MockAgentManager struct {
 	CleanupCalls []string // Track which devices were cleaned up
 }
 
-func (m *MockAgentManager) EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, hsmSecret *hsmv1alpha1.HSMSecret) (string, error) {
-	return "mock-endpoint", nil
+func (m *MockAgentManager) EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, hsmSecret *hsmv1alpha1.HSMSecret) error {
+	return nil
 }
 
 func (m *MockAgentManager) CleanupAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice) error {

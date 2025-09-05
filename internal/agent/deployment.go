@@ -19,6 +19,8 @@ package agent
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,7 +42,7 @@ import (
 // ManagerInterface defines the interface for HSM agent management
 // This allows for easier testing with mocks
 type ManagerInterface interface {
-	EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, hsmSecret *hsmv1alpha1.HSMSecret) (string, error)
+	EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, hsmSecret *hsmv1alpha1.HSMSecret) error
 	CleanupAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice) error
 }
 
@@ -131,109 +133,113 @@ func NewTestManager(k8sClient client.Client, namespace string, imageResolver Ima
 	return m
 }
 
-// EnsureAgent ensures an HSM agent pod exists for the given HSM device
-func (m *Manager) EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, hsmSecret *hsmv1alpha1.HSMSecret) (string, error) {
+// EnsureAgent ensures HSM agents are deployed for all available devices in the pool
+func (m *Manager) EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, hsmSecret *hsmv1alpha1.HSMSecret) error {
+	// Get the HSMPool for this device to find all aggregated devices
+	poolName := hsmDevice.Name + "-pool"
+	var hsmPool hsmv1alpha1.HSMPool
+	if err := m.Get(ctx, types.NamespacedName{
+		Name:      poolName,
+		Namespace: hsmDevice.Namespace,
+	}, &hsmPool); err != nil {
+		return fmt.Errorf("failed to get HSMPool %s: %w", poolName, err)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	deviceName := hsmDevice.Name
-	agentName := m.generateAgentName(hsmDevice)
-	agentNamespace := hsmDevice.Namespace
-
-	// Check if we already have this agent tracked
-	if agentInfo, exists := m.activeAgents[deviceName]; exists {
-		// Agent exists in tracking, verify it's still healthy
-		if m.isAgentHealthy(ctx, agentInfo) {
-			// Return the first pod IP as endpoint for backward compatibility
-			if len(agentInfo.PodIPs) > 0 {
-				return fmt.Sprintf("http://%s:%d", agentInfo.PodIPs[0], AgentPort), nil
-			}
+	// Ensure agents for each available aggregated device in the pool
+	for i, aggregatedDevice := range hsmPool.Status.AggregatedDevices {
+		if !aggregatedDevice.Available {
+			continue
 		}
-		// Agent unhealthy, remove from tracking and recreate
-		m.removeAgentFromTracking(deviceName)
-	}
 
-	// Check if deployment exists in Kubernetes
-	var deployment appsv1.Deployment
-	err := m.Get(ctx, types.NamespacedName{
-		Name:      agentName,
-		Namespace: agentNamespace,
-	}, &deployment)
+		// Create unique agent name for each physical device
+		agentName := fmt.Sprintf("%s-%s-%d", AgentNamePrefix, hsmDevice.Name, i)
+		agentKey := fmt.Sprintf("%s-%d", hsmDevice.Name, i) // Unique key for tracking
 
-	if err == nil {
-		// Agent exists, but check if volume mounts need updating due to device path changes
-		needsUpdate, err := m.agentNeedsUpdate(ctx, &deployment, hsmDevice)
+		// Check if we already have this specific agent tracked
+		if agentInfo, exists := m.activeAgents[agentKey]; exists {
+			// Agent exists in tracking, verify it's still healthy
+			if m.isAgentHealthy(ctx, agentInfo) {
+				continue // Agent is healthy, skip
+			}
+			// Agent unhealthy, remove from tracking and recreate
+			m.removeAgentFromTracking(agentKey)
+		}
+
+		// Check if deployment exists in Kubernetes
+		var deployment appsv1.Deployment
+		err := m.Get(ctx, types.NamespacedName{
+			Name:      agentName,
+			Namespace: hsmDevice.Namespace,
+		}, &deployment)
+
+		if err == nil {
+			// Agent exists, but check if it's still targeting the right device/node
+			needsUpdate := m.deploymentNeedsUpdateForDevice(&deployment, &aggregatedDevice)
+
+			if needsUpdate {
+				// Delete existing deployment to trigger recreation
+				if err := m.Delete(ctx, &deployment); err != nil {
+					return fmt.Errorf("failed to delete outdated agent deployment %s: %w", agentName, err)
+				}
+			} else {
+				// Agent exists and is correct - wait for it and track it
+				podIPs, err := m.waitForAgentReady(ctx, agentName, hsmDevice.Namespace)
+				if err != nil {
+					return fmt.Errorf("failed waiting for existing agent pods %s: %w", agentName, err)
+				}
+
+				// Track the existing agent
+				agentInfo := &AgentInfo{
+					DeviceName:      agentKey,
+					PodIPs:          podIPs,
+					CreatedAt:       time.Now(),
+					LastHealthCheck: time.Now(),
+					Status:          AgentStatusReady,
+					AgentName:       agentName,
+					Namespace:       hsmDevice.Namespace,
+				}
+
+				m.activeAgents[agentKey] = agentInfo
+				continue
+			}
+		} else if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to check agent deployment %s: %w", agentName, err)
+		}
+
+		// Create agent deployment for this specific device
+		if err := m.createAgentDeployment(ctx, hsmDevice, nil, hsmDevice.Namespace, &aggregatedDevice, agentName); err != nil {
+			return fmt.Errorf("failed to create agent deployment %s: %w", agentName, err)
+		}
+
+		// Wait for agent pods to be ready and get their IPs
+		podIPs, err := m.waitForAgentReady(ctx, agentName, hsmDevice.Namespace)
 		if err != nil {
-			return "", fmt.Errorf("failed to check if agent needs update: %w", err)
+			return fmt.Errorf("failed waiting for agent pods %s: %w", agentName, err)
 		}
 
-		if needsUpdate {
-			// Delete existing deployment to trigger recreation with new volume mounts
-			if err := m.Delete(ctx, &deployment); err != nil {
-				return "", fmt.Errorf("failed to delete outdated agent deployment: %w", err)
-			}
-			// Continue to create new deployment below
-		} else {
-			// Agent exists in K8s but not tracked - wait for it and track it
-			podIPs, err := m.waitForAgentReady(ctx, agentName, agentNamespace)
-			if err != nil {
-				return "", fmt.Errorf("failed waiting for existing agent pods: %w", err)
-			}
-
-			// Track the existing agent
-			agentInfo := &AgentInfo{
-				DeviceName:      deviceName,
-				PodIPs:          podIPs,
-				CreatedAt:       time.Now(),
-				LastHealthCheck: time.Now(),
-				Status:          AgentStatusReady,
-				AgentName:       agentName,
-				Namespace:       agentNamespace,
-			}
-
-			m.activeAgents[deviceName] = agentInfo
-			return fmt.Sprintf("http://%s:%d", podIPs[0], AgentPort), nil
+		// Track the new agent
+		agentInfo := &AgentInfo{
+			DeviceName:      agentKey,
+			PodIPs:          podIPs,
+			CreatedAt:       time.Now(),
+			LastHealthCheck: time.Now(),
+			Status:          AgentStatusReady,
+			AgentName:       agentName,
+			Namespace:       hsmDevice.Namespace,
 		}
+
+		m.activeAgents[agentKey] = agentInfo
 	}
 
-	if !errors.IsNotFound(err) {
-		return "", fmt.Errorf("failed to check agent deployment: %w", err)
-	}
-
-	// Create agent deployment
-	if err := m.createAgentDeployment(ctx, hsmDevice, hsmSecret, agentNamespace); err != nil {
-		return "", fmt.Errorf("failed to create agent deployment: %w", err)
-	}
-
-	// Wait for agent pods to be ready and get their IPs
-	podIPs, err := m.waitForAgentReady(ctx, agentName, agentNamespace)
-	if err != nil {
-		return "", fmt.Errorf("failed waiting for agent pods: %w", err)
-	}
-
-	// Track the new agent
-	agentInfo := &AgentInfo{
-		DeviceName:      deviceName,
-		PodIPs:          podIPs,
-		CreatedAt:       time.Now(),
-		LastHealthCheck: time.Now(),
-		Status:          AgentStatusReady,
-		AgentName:       agentName,
-		Namespace:       agentNamespace,
-	}
-
-	m.activeAgents[deviceName] = agentInfo
-
-	// For backward compatibility, still return HTTP endpoint (will change to gRPC later)
-	return fmt.Sprintf("http://%s:%d", podIPs[0], AgentPort), nil
+	return nil
 }
 
-// CleanupAgent removes the HSM agent for the given device when no longer needed
+// CleanupAgent removes all HSM agents for the given device when no longer needed
 func (m *Manager) CleanupAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	agentName := m.generateAgentName(hsmDevice)
 
 	// Check if any HSMSecrets still reference this device
 	var hsmSecretList hsmv1alpha1.HSMSecretList
@@ -254,18 +260,69 @@ func (m *Manager) CleanupAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDe
 		return nil
 	}
 
-	// Remove from internal tracking
-	m.removeAgentFromTracking(hsmDevice.Name)
-
-	// Delete deployment
-	deployment := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      agentName,
-			Namespace: hsmDevice.Namespace,
-		},
+	// Get the HSMPool to find all agent deployments to clean up
+	poolName := hsmDevice.Name + "-pool"
+	var hsmPool hsmv1alpha1.HSMPool
+	if err := m.Get(ctx, types.NamespacedName{
+		Name:      poolName,
+		Namespace: hsmDevice.Namespace,
+	}, &hsmPool); err != nil {
+		// If pool doesn't exist, try to clean up any remaining tracked agents
+		return m.cleanupTrackedAgents(ctx, hsmDevice)
 	}
-	if err := m.Delete(ctx, deployment); err != nil && !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete agent deployment: %w", err)
+
+	// Clean up all agent deployments (one per aggregated device)
+	for i := range hsmPool.Status.AggregatedDevices {
+		agentName := fmt.Sprintf("%s-%s-%d", AgentNamePrefix, hsmDevice.Name, i)
+		agentKey := fmt.Sprintf("%s-%d", hsmDevice.Name, i)
+
+		// Remove from internal tracking
+		m.removeAgentFromTracking(agentKey)
+
+		// Delete deployment
+		deployment := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      agentName,
+				Namespace: hsmDevice.Namespace,
+			},
+		}
+		if err := m.Delete(ctx, deployment); err != nil && !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete agent deployment %s: %w", agentName, err)
+		}
+	}
+
+	return nil
+}
+
+// cleanupTrackedAgents cleans up any remaining tracked agents when HSMPool is not available
+func (m *Manager) cleanupTrackedAgents(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice) error {
+	// Find all tracked agents for this device
+	var agentsToCleanup []string
+	devicePrefix := hsmDevice.Name + "-"
+
+	for agentKey := range m.activeAgents {
+		if strings.HasPrefix(agentKey, devicePrefix) {
+			agentsToCleanup = append(agentsToCleanup, agentKey)
+		}
+	}
+
+	// Clean up each tracked agent
+	for _, agentKey := range agentsToCleanup {
+		agentInfo := m.activeAgents[agentKey]
+
+		// Remove from tracking
+		m.removeAgentFromTracking(agentKey)
+
+		// Delete deployment
+		deployment := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      agentInfo.AgentName,
+				Namespace: agentInfo.Namespace,
+			},
+		}
+		if err := m.Delete(ctx, deployment); err != nil && !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete agent deployment %s: %w", agentInfo.AgentName, err)
+		}
 	}
 
 	return nil
@@ -276,15 +333,21 @@ func (m *Manager) generateAgentName(hsmDevice *hsmv1alpha1.HSMDevice) string {
 	return fmt.Sprintf("%s-%s", AgentNamePrefix, hsmDevice.Name)
 }
 
-// createAgentDeployment creates the HSM agent deployment
-func (m *Manager) createAgentDeployment(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, hsmSecret *hsmv1alpha1.HSMSecret, namespace string) error {
-	agentName := m.generateAgentName(hsmDevice)
-
-	// Find the node where the HSM device is located
-	targetNode := m.findTargetNode(hsmDevice)
-	if targetNode == "" {
-		return fmt.Errorf("no target node found for HSM device %s", hsmDevice.Name)
+// createAgentDeployment creates the HSM agent deployment for a specific device
+func (m *Manager) createAgentDeployment(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, hsmSecret *hsmv1alpha1.HSMSecret, namespace string, specificDevice *hsmv1alpha1.DiscoveredDevice, customAgentName string) error {
+	if specificDevice == nil {
+		return fmt.Errorf("specificDevice is required")
 	}
+
+	var agentName string
+	if customAgentName != "" {
+		agentName = customAgentName
+	} else {
+		agentName = m.generateAgentName(hsmDevice)
+	}
+
+	targetNode := specificDevice.NodeName
+	devicePath := specificDevice.DevicePath
 
 	// Get discovery image from environment, manager image, or use default
 	agentImage := m.ImageResolver.GetImage(ctx, "AGENT_IMAGE")
@@ -420,10 +483,10 @@ func (m *Manager) createAgentDeployment(ctx context.Context, hsmDevice *hsmv1alp
 								RunAsNonRoot:           boolPtr(false),
 								RunAsUser:              int64Ptr(0),
 							},
-							VolumeMounts: m.buildAgentVolumeMounts(hsmDevice),
+							VolumeMounts: m.buildAgentVolumeMounts(),
 						},
 					},
-					Volumes: m.buildAgentVolumes(hsmDevice),
+					Volumes: m.buildAgentVolumes(devicePath),
 				},
 			},
 		},
@@ -437,45 +500,6 @@ func (m *Manager) createAgentDeployment(ctx context.Context, hsmDevice *hsmv1alp
 	}
 
 	return m.Create(ctx, deployment)
-}
-
-// findTargetNode finds the node where the HSM device is located by checking the HSMPool
-func (m *Manager) findTargetNode(hsmDevice *hsmv1alpha1.HSMDevice) string {
-	// Find the HSMPool for this device
-	poolName := hsmDevice.Name + "-pool"
-	pool := &hsmv1alpha1.HSMPool{}
-
-	ctx := context.Background()
-	err := m.Get(ctx, types.NamespacedName{
-		Name:      poolName,
-		Namespace: hsmDevice.Namespace,
-	}, pool)
-
-	if err != nil {
-		// Fallback: if no pool found, use node selector if present
-		if hsmDevice.Spec.NodeSelector != nil {
-			// This would need more sophisticated logic to map selectors to actual nodes
-			// For now, return empty to indicate no target found
-			return ""
-		}
-		return ""
-	}
-
-	// Look for discovered devices in the pool status
-	for _, device := range pool.Status.AggregatedDevices {
-		if device.Available && device.NodeName != "" {
-			return device.NodeName
-		}
-	}
-
-	// Fallback: if no specific node found, use node selector if present
-	if hsmDevice.Spec.NodeSelector != nil {
-		// This would need more sophisticated logic to map selectors to actual nodes
-		// For now, return empty to indicate no target found
-		return ""
-	}
-
-	return ""
 }
 
 // secretReferencesDevice checks if an HSMSecret references the given device
@@ -544,78 +568,38 @@ func (m *Manager) buildAgentEnv(hsmDevice *hsmv1alpha1.HSMDevice) []corev1.EnvVa
 }
 
 // buildAgentVolumeMounts builds volume mounts for the HSM agent
-func (m *Manager) buildAgentVolumeMounts(hsmDevice *hsmv1alpha1.HSMDevice) []corev1.VolumeMount {
-	mounts := []corev1.VolumeMount{
+func (m *Manager) buildAgentVolumeMounts() []corev1.VolumeMount {
+	return []corev1.VolumeMount{
 		{
 			Name:      "tmp",
 			MountPath: "/tmp",
 		},
+		{
+			Name:      "hsm-device",
+			MountPath: "/dev/hsm",
+		},
 	}
-
-	// Add device mounts if needed - get from HSMPool
-	poolName := hsmDevice.Name + "-pool"
-	pool := &hsmv1alpha1.HSMPool{}
-
-	ctx := context.Background()
-	err := m.Get(ctx, types.NamespacedName{
-		Name:      poolName,
-		Namespace: hsmDevice.Namespace,
-	}, pool)
-
-	if err == nil {
-		for _, device := range pool.Status.AggregatedDevices {
-			if device.DevicePath != "" {
-				mounts = append(mounts, corev1.VolumeMount{
-					Name:      "hsm-device",
-					MountPath: "/dev/hsm",
-				})
-				break // Only need one mount point
-			}
-		}
-	}
-
-	return mounts
 }
 
 // buildAgentVolumes builds volumes for the HSM agent
-func (m *Manager) buildAgentVolumes(hsmDevice *hsmv1alpha1.HSMDevice) []corev1.Volume {
-	volumes := []corev1.Volume{
+func (m *Manager) buildAgentVolumes(devicePath string) []corev1.Volume {
+	return []corev1.Volume{
 		{
 			Name: "tmp",
 			VolumeSource: corev1.VolumeSource{
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
 		},
+		{
+			Name: "hsm-device",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: devicePath,
+					Type: hostPathTypePtr(corev1.HostPathCharDev),
+				},
+			},
+		},
 	}
-
-	// Add device volumes if needed - get from HSMPool
-	poolName := hsmDevice.Name + "-pool"
-	pool := &hsmv1alpha1.HSMPool{}
-
-	ctx := context.Background()
-	err := m.Get(ctx, types.NamespacedName{
-		Name:      poolName,
-		Namespace: hsmDevice.Namespace,
-	}, pool)
-
-	if err == nil {
-		for _, device := range pool.Status.AggregatedDevices {
-			if device.DevicePath != "" {
-				volumes = append(volumes, corev1.Volume{
-					Name: "hsm-device",
-					VolumeSource: corev1.VolumeSource{
-						HostPath: &corev1.HostPathVolumeSource{
-							Path: device.DevicePath,
-							Type: hostPathTypePtr(corev1.HostPathCharDev),
-						},
-					},
-				})
-				break // Only need one volume
-			}
-		}
-	}
-
-	return volumes
 }
 
 // agentNeedsUpdate checks if the agent deployment needs to be updated due to device path or image changes
@@ -701,6 +685,50 @@ func (m *Manager) agentNeedsUpdate(ctx context.Context, deployment *appsv1.Deplo
 	}
 
 	return false, nil
+}
+
+// deploymentNeedsUpdateForDevice checks if a deployment needs to be updated for a specific device
+// This is a simplified check that only validates device-specific configuration
+func (m *Manager) deploymentNeedsUpdateForDevice(deployment *appsv1.Deployment, aggregatedDevice *hsmv1alpha1.DiscoveredDevice) bool {
+	// Check node affinity - ensure agent is pinned to the correct node
+	if deployment.Spec.Template.Spec.Affinity == nil ||
+		deployment.Spec.Template.Spec.Affinity.NodeAffinity == nil ||
+		deployment.Spec.Template.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+		return true // Missing required node affinity
+	}
+
+	// Check if the node name matches the aggregated device's node
+	nodeSelector := deployment.Spec.Template.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+	if len(nodeSelector.NodeSelectorTerms) == 0 {
+		return true
+	}
+
+	// Check if hostname requirement matches the device's node
+	nodeMatches := false
+	for _, term := range nodeSelector.NodeSelectorTerms {
+		for _, expr := range term.MatchExpressions {
+			if expr.Key == "kubernetes.io/hostname" && expr.Operator == corev1.NodeSelectorOpIn {
+				if slices.Contains(expr.Values, aggregatedDevice.NodeName) {
+					nodeMatches = true
+				}
+			}
+		}
+	}
+
+	if !nodeMatches {
+		return true // Node doesn't match
+	}
+
+	// Check device path in volume mounts
+	for _, vol := range deployment.Spec.Template.Spec.Volumes {
+		if vol.Name == "hsm-device" && vol.HostPath != nil {
+			if vol.HostPath.Path != aggregatedDevice.DevicePath {
+				return true // Device path changed
+			}
+		}
+	}
+
+	return false
 }
 
 // Helper functions
