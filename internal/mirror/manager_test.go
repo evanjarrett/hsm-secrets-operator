@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package sync
+package mirror
 
 import (
 	"context"
@@ -37,36 +37,36 @@ func (m *MockAgentManager) CreateSingleGRPCClient(ctx context.Context, deviceNam
 	return hsm.NewMockClient(), nil
 }
 
-func TestNewSyncManager(t *testing.T) {
+func TestNewMirrorManager(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = hsmv1alpha1.AddToScheme(scheme)
 
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 	mockAgentManager := &MockAgentManager{}
 
-	syncManager := NewSyncManager(client, mockAgentManager, logr.Discard())
+	mirrorManager := NewMirrorManager(client, mockAgentManager, logr.Discard(), "test-namespace")
 
-	assert.NotNil(t, syncManager)
-	assert.NotNil(t, syncManager.client)
-	assert.NotNil(t, syncManager.agentManager)
-	assert.NotNil(t, syncManager.logger)
+	assert.NotNil(t, mirrorManager)
+	assert.NotNil(t, mirrorManager.client)
+	assert.NotNil(t, mirrorManager.agentManager)
+	assert.NotNil(t, mirrorManager.logger)
 }
 
-func TestSyncResult_Structure(t *testing.T) {
-	// Test the new SyncResult structure
-	result := &SyncResult{
+func TestMirrorResult_Structure(t *testing.T) {
+	// Test the new MirrorResult structure
+	result := &MirrorResult{
 		Success:          true,
 		SecretsProcessed: 3,
 		SecretsUpdated:   1,
 		SecretsCreated:   1,
 		MetadataRestored: 1,
-		SecretResults: map[string]SecretSyncResult{
+		SecretResults: map[string]SecretMirrorResult{
 			"secret1": {
 				SecretPath:    "secret1",
 				SourceDevice:  "device1",
 				SourceVersion: 123,
 				TargetDevices: []string{"device2"},
-				SyncType:      SyncTypeUpdate,
+				MirrorType:    MirrorTypeUpdate,
 				Success:       true,
 				Error:         nil,
 			},
@@ -75,7 +75,7 @@ func TestSyncResult_Structure(t *testing.T) {
 				SourceDevice:  "device2",
 				SourceVersion: 456,
 				TargetDevices: []string{"device1"},
-				SyncType:      SyncTypeCreate,
+				MirrorType:    MirrorTypeCreate,
 				Success:       true,
 				Error:         nil,
 			},
@@ -96,26 +96,26 @@ func TestSyncResult_Structure(t *testing.T) {
 	assert.Equal(t, "secret1", secret1Result.SecretPath)
 	assert.Equal(t, "device1", secret1Result.SourceDevice)
 	assert.Equal(t, int64(123), secret1Result.SourceVersion)
-	assert.Equal(t, SyncTypeUpdate, secret1Result.SyncType)
+	assert.Equal(t, MirrorTypeUpdate, secret1Result.MirrorType)
 	assert.True(t, secret1Result.Success)
 }
 
-func TestSyncTypes(t *testing.T) {
-	// Test that SyncType constants are correctly defined
-	assert.Equal(t, SyncType(0), SyncTypeSkip)
-	assert.Equal(t, SyncType(1), SyncTypeUpdate)
-	assert.Equal(t, SyncType(2), SyncTypeCreate)
-	assert.Equal(t, SyncType(3), SyncTypeRestoreMetadata)
+func TestMirrorTypes(t *testing.T) {
+	// Test that MirrorType constants are correctly defined
+	assert.Equal(t, MirrorType(0), MirrorTypeSkip)
+	assert.Equal(t, MirrorType(1), MirrorTypeUpdate)
+	assert.Equal(t, MirrorType(2), MirrorTypeCreate)
+	assert.Equal(t, MirrorType(3), MirrorTypeRestoreMetadata)
 }
 
-func TestSecretSyncResult_Structure(t *testing.T) {
-	// Test that SecretSyncResult has the expected fields
-	result := SecretSyncResult{
+func TestSecretMirrorResult_Structure(t *testing.T) {
+	// Test that SecretMirrorResult has the expected fields
+	result := SecretMirrorResult{
 		SecretPath:    "test-secret",
 		SourceDevice:  "device1",
 		SourceVersion: 123,
 		TargetDevices: []string{"device2", "device3"},
-		SyncType:      SyncTypeCreate,
+		MirrorType:    MirrorTypeCreate,
 		Success:       true,
 		Error:         nil,
 	}
@@ -124,7 +124,7 @@ func TestSecretSyncResult_Structure(t *testing.T) {
 	assert.Equal(t, "device1", result.SourceDevice)
 	assert.Equal(t, int64(123), result.SourceVersion)
 	assert.Equal(t, []string{"device2", "device3"}, result.TargetDevices)
-	assert.Equal(t, SyncTypeCreate, result.SyncType)
+	assert.Equal(t, MirrorTypeCreate, result.MirrorType)
 	assert.True(t, result.Success)
 	assert.Nil(t, result.Error)
 }

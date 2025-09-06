@@ -175,8 +175,16 @@ func (m *Manager) EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDev
 		}, &deployment)
 
 		if err == nil {
-			// Agent exists, but check if it's still targeting the right device/node
-			needsUpdate := m.deploymentNeedsUpdateForDevice(&deployment, &aggregatedDevice)
+			// Agent exists, but check if it needs updating (image version, device/node configuration)
+			needsUpdate, err := m.agentNeedsUpdate(ctx, &deployment, hsmDevice)
+			if err != nil {
+				return fmt.Errorf("failed to check if agent deployment %s needs update: %w", agentName, err)
+			}
+
+			// Also check device-specific configuration
+			if !needsUpdate {
+				needsUpdate = m.deploymentNeedsUpdateForDevice(&deployment, &aggregatedDevice)
+			}
 
 			if needsUpdate {
 				// Delete existing deployment to trigger recreation

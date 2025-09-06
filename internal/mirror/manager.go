@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package sync
+package mirror
 
 import (
 	"context"
@@ -31,45 +31,47 @@ import (
 	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
 )
 
-// AgentManagerInterface defines the interface for HSM agent management used by sync
+// AgentManagerInterface defines the interface for HSM agent management used by mirror
 type AgentManagerInterface interface {
 	CreateSingleGRPCClient(ctx context.Context, deviceName, namespace string, logger logr.Logger) (hsm.Client, error)
 }
 
-// SyncManager handles multi-device HSM synchronization and conflict resolution
-type SyncManager struct {
-	client       client.Client
-	agentManager AgentManagerInterface
-	logger       logr.Logger
+// MirrorManager handles multi-device HSM mirroring and conflict resolution
+type MirrorManager struct {
+	client            client.Client
+	agentManager      AgentManagerInterface
+	logger            logr.Logger
+	operatorNamespace string
 }
 
-// NewSyncManager creates a new sync manager
-func NewSyncManager(k8sClient client.Client, agentManager AgentManagerInterface, logger logr.Logger) *SyncManager {
-	return &SyncManager{
-		client:       k8sClient,
-		agentManager: agentManager,
-		logger:       logger.WithName("sync-manager"),
+// NewMirrorManager creates a new mirror manager
+func NewMirrorManager(k8sClient client.Client, agentManager AgentManagerInterface, logger logr.Logger, operatorNamespace string) *MirrorManager {
+	return &MirrorManager{
+		client:            k8sClient,
+		agentManager:      agentManager,
+		logger:            logger.WithName("mirror-manager"),
+		operatorNamespace: operatorNamespace,
 	}
 }
 
-// SyncResult represents the result of a per-secret synchronization operation
-type SyncResult struct {
+// MirrorResult represents the result of a per-secret mirroring operation
+type MirrorResult struct {
 	Success          bool
 	SecretsProcessed int
 	SecretsUpdated   int
 	SecretsCreated   int
 	MetadataRestored int
-	SecretResults    map[string]SecretSyncResult
+	SecretResults    map[string]SecretMirrorResult
 	Errors           []string
 }
 
-// SecretSyncResult represents the result of syncing a specific secret
-type SecretSyncResult struct {
+// SecretMirrorResult represents the result of mirroring a specific secret
+type SecretMirrorResult struct {
 	SecretPath    string
 	SourceDevice  string
 	SourceVersion int64
 	TargetDevices []string
-	SyncType      SyncType
+	MirrorType    MirrorType
 	Success       bool
 	Error         error
 }
@@ -90,61 +92,61 @@ type SecretState struct {
 	Error       error
 }
 
-// SecretSyncPlan represents the plan for syncing a specific secret
-type SecretSyncPlan struct {
+// SecretMirrorPlan represents the plan for mirroring a specific secret
+type SecretMirrorPlan struct {
 	SecretPath    string
 	SourceDevice  string
 	SourceVersion int64
 	TargetDevices []string
-	SyncType      SyncType
+	MirrorType    MirrorType
 }
 
-// SyncType represents the type of sync operation needed
-type SyncType int
+// MirrorType represents the type of mirror operation needed
+type MirrorType int
 
 const (
-	SyncTypeSkip            SyncType = iota // Already in sync
-	SyncTypeUpdate                          // Update existing secret
-	SyncTypeCreate                          // Create missing secret
-	SyncTypeRestoreMetadata                 // Add metadata to existing secret
+	MirrorTypeSkip            MirrorType = iota // Already in sync
+	MirrorTypeUpdate                            // Update existing secret
+	MirrorTypeCreate                            // Create missing secret
+	MirrorTypeRestoreMetadata                   // Add metadata to existing secret
 )
 
-// SyncSecret performs per-secret synchronization across all HSM devices
-func (sm *SyncManager) SyncSecret(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret) (*SyncResult, error) {
-	logger := sm.logger.WithValues("secret", hsmSecret.Name, "namespace", hsmSecret.Namespace)
+// MirrorSecret performs per-secret mirroring across all HSM devices
+func (mm *MirrorManager) MirrorSecret(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret) (*MirrorResult, error) {
+	logger := mm.logger.WithValues("secret", hsmSecret.Name, "namespace", hsmSecret.Namespace)
 	secretPath := hsmSecret.Name
 
-	// Get all available HSM devices from HSMPools
-	devices, err := sm.getAvailableDevices(ctx, hsmSecret.Namespace)
+	// Get all available HSM devices from HSMPools in the operator namespace
+	devices, err := mm.getAvailableDevices(ctx, mm.operatorNamespace)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get available devices: %w", err)
 	}
 
 	if len(devices) == 0 {
-		return &SyncResult{
+		return &MirrorResult{
 			Success:       false,
-			SecretResults: make(map[string]SecretSyncResult),
+			SecretResults: make(map[string]SecretMirrorResult),
 			Errors:        []string{"no HSM devices available"},
 		}, fmt.Errorf("no HSM devices available")
 	}
 
-	logger.Info("Starting per-secret sync", "devices", len(devices), "secretPath", secretPath)
+	logger.Info("Starting per-secret mirror", "devices", len(devices), "secretPath", secretPath)
 
 	// Build inventory of all secrets across all devices
-	inventory, err := sm.buildSecretInventory(ctx, []string{secretPath}, devices, hsmSecret.Namespace, logger)
+	inventory, err := mm.buildSecretInventory(ctx, []string{secretPath}, devices, mm.operatorNamespace, logger)
 	if err != nil {
-		return &SyncResult{
+		return &MirrorResult{
 			Success:       false,
-			SecretResults: make(map[string]SecretSyncResult),
+			SecretResults: make(map[string]SecretMirrorResult),
 			Errors:        []string{fmt.Sprintf("failed to build secret inventory: %v", err)},
 		}, fmt.Errorf("failed to build secret inventory: %w", err)
 	}
 
-	// Create sync plan for the single secret
-	syncPlans := sm.createSyncPlans(inventory, logger)
+	// Create mirror plan for the single secret
+	mirrorPlans := mm.createMirrorPlans(inventory, logger)
 
-	// Execute sync operations
-	result := sm.executeSyncPlans(ctx, syncPlans, hsmSecret.Namespace, logger)
+	// Execute mirror operations
+	result := mm.executeMirrorPlans(ctx, mirrorPlans, mm.operatorNamespace, logger)
 
 	logger.Info("Per-secret sync completed",
 		"secretsProcessed", result.SecretsProcessed,
@@ -157,7 +159,7 @@ func (sm *SyncManager) SyncSecret(ctx context.Context, hsmSecret *hsmv1alpha1.HS
 }
 
 // buildSecretInventory builds a comprehensive inventory of secrets across all devices
-func (sm *SyncManager) buildSecretInventory(ctx context.Context, secretPaths []string, devices []string, namespace string, logger logr.Logger) (map[string]*SecretInventory, error) {
+func (mm *MirrorManager) buildSecretInventory(ctx context.Context, secretPaths []string, devices []string, operatorNamespace string, logger logr.Logger) (map[string]*SecretInventory, error) {
 	inventory := make(map[string]*SecretInventory)
 
 	// Initialize inventory entries for requested secrets
@@ -172,8 +174,8 @@ func (sm *SyncManager) buildSecretInventory(ctx context.Context, secretPaths []s
 	for _, deviceName := range devices {
 		logger.Info("Checking device for secrets", "device", deviceName, "secretCount", len(secretPaths))
 
-		// Create gRPC client for this device
-		grpcClient, err := sm.agentManager.CreateSingleGRPCClient(ctx, deviceName, namespace, logger)
+		// Create gRPC client for this device (agents are in operator namespace)
+		grpcClient, err := mm.agentManager.CreateSingleGRPCClient(ctx, deviceName, operatorNamespace, logger)
 		if err != nil {
 			logger.Error(err, "Failed to create gRPC client", "device", deviceName)
 			// Mark all secrets as having an error on this device
@@ -232,7 +234,7 @@ func (sm *SyncManager) buildSecretInventory(ctx context.Context, secretPaths []s
 			} else {
 				// Secret exists, calculate checksum
 				state.Present = true
-				state.Checksum = sm.calculateChecksum(data)
+				state.Checksum = mm.calculateChecksum(data)
 				logger.V(1).Info("Secret found on device", "device", deviceName, "secret", secretPath, "checksum", state.Checksum[:8])
 
 				// Try to read metadata
@@ -264,12 +266,12 @@ func (sm *SyncManager) buildSecretInventory(ctx context.Context, secretPaths []s
 	return inventory, nil
 }
 
-// createSyncPlans analyzes secret inventory and creates sync plans for each secret
-func (sm *SyncManager) createSyncPlans(inventory map[string]*SecretInventory, logger logr.Logger) []*SecretSyncPlan {
-	var plans []*SecretSyncPlan
+// createMirrorPlans analyzes secret inventory and creates sync plans for each secret
+func (mm *MirrorManager) createMirrorPlans(inventory map[string]*SecretInventory, logger logr.Logger) []*SecretMirrorPlan {
+	var plans []*SecretMirrorPlan
 
 	for secretPath, secretInventory := range inventory {
-		plan := sm.createSyncPlanForSecret(secretPath, secretInventory, logger)
+		plan := mm.createMirrorPlanForSecret(secretPath, secretInventory, logger)
 		if plan != nil {
 			plans = append(plans, plan)
 		}
@@ -278,8 +280,8 @@ func (sm *SyncManager) createSyncPlans(inventory map[string]*SecretInventory, lo
 	return plans
 }
 
-// createSyncPlanForSecret creates a sync plan for a specific secret across all devices
-func (sm *SyncManager) createSyncPlanForSecret(secretPath string, inventory *SecretInventory, logger logr.Logger) *SecretSyncPlan {
+// createMirrorPlanForSecret creates a sync plan for a specific secret across all devices
+func (mm *MirrorManager) createMirrorPlanForSecret(secretPath string, inventory *SecretInventory, logger logr.Logger) *SecretMirrorPlan {
 	// Find the authoritative source device (highest version, most recent timestamp)
 	var sourceDevice string
 	var sourceVersion int64 = -1
@@ -345,30 +347,30 @@ func (sm *SyncManager) createSyncPlanForSecret(secretPath string, inventory *Sec
 
 		if allInSync {
 			logger.V(1).Info("Secret already in sync across all devices", "secret", secretPath)
-			return &SecretSyncPlan{
+			return &SecretMirrorPlan{
 				SecretPath:    secretPath,
 				SourceDevice:  sourceDevice,
 				SourceVersion: sourceVersion,
 				TargetDevices: []string{}, // No targets needed
-				SyncType:      SyncTypeSkip,
+				MirrorType:    MirrorTypeSkip,
 			}
 		}
 	}
 
 	// Determine target devices that need updates
 	var targetDevices []string
-	var syncType SyncType
+	var syncType MirrorType
 
 	// Add devices that need the secret created
 	targetDevices = append(targetDevices, devicesNeedingSecret...)
 	if len(devicesNeedingSecret) > 0 {
-		syncType = SyncTypeCreate
+		syncType = MirrorTypeCreate
 	}
 
 	// Add devices that need metadata restoration
 	targetDevices = append(targetDevices, devicesNeedingMetadata...)
-	if len(devicesNeedingMetadata) > 0 && syncType != SyncTypeCreate {
-		syncType = SyncTypeRestoreMetadata
+	if len(devicesNeedingMetadata) > 0 && syncType != MirrorTypeCreate {
+		syncType = MirrorTypeRestoreMetadata
 	}
 
 	// Add devices that have outdated versions
@@ -377,8 +379,8 @@ func (sm *SyncManager) createSyncPlanForSecret(secretPath string, inventory *Sec
 			if state.Version < sourceVersion {
 				// This device has an older version
 				targetDevices = append(targetDevices, deviceName)
-				if syncType != SyncTypeCreate && syncType != SyncTypeRestoreMetadata {
-					syncType = SyncTypeUpdate
+				if syncType != MirrorTypeCreate && syncType != MirrorTypeRestoreMetadata {
+					syncType = MirrorTypeUpdate
 				}
 			}
 		}
@@ -392,12 +394,12 @@ func (sm *SyncManager) createSyncPlanForSecret(secretPath string, inventory *Sec
 
 	if len(targetDevices) == 0 {
 		// No targets needed
-		return &SecretSyncPlan{
+		return &SecretMirrorPlan{
 			SecretPath:    secretPath,
 			SourceDevice:  sourceDevice,
 			SourceVersion: sourceVersion,
 			TargetDevices: []string{},
-			SyncType:      SyncTypeSkip,
+			MirrorType:    MirrorTypeSkip,
 		}
 	}
 
@@ -405,12 +407,12 @@ func (sm *SyncManager) createSyncPlanForSecret(secretPath string, inventory *Sec
 		"sourceDevice", sourceDevice, "sourceVersion", sourceVersion,
 		"targetDevices", len(targetDevices), "syncType", syncType)
 
-	return &SecretSyncPlan{
+	return &SecretMirrorPlan{
 		SecretPath:    secretPath,
 		SourceDevice:  sourceDevice,
 		SourceVersion: sourceVersion,
 		TargetDevices: targetDevices,
-		SyncType:      syncType,
+		MirrorType:    syncType,
 	}
 }
 
@@ -442,29 +444,29 @@ func removeDevice(devices []string, deviceToRemove string) []string {
 	return result
 }
 
-// executeSyncPlans executes sync operations for all planned secret synchronizations
-func (sm *SyncManager) executeSyncPlans(ctx context.Context, plans []*SecretSyncPlan, namespace string, logger logr.Logger) *SyncResult {
-	result := &SyncResult{
+// executeMirrorPlans executes sync operations for all planned secret synchronizations
+func (mm *MirrorManager) executeMirrorPlans(ctx context.Context, plans []*SecretMirrorPlan, operatorNamespace string, logger logr.Logger) *MirrorResult {
+	result := &MirrorResult{
 		Success:          true,
 		SecretsProcessed: len(plans),
 		SecretsUpdated:   0,
 		SecretsCreated:   0,
 		MetadataRestored: 0,
-		SecretResults:    make(map[string]SecretSyncResult),
+		SecretResults:    make(map[string]SecretMirrorResult),
 		Errors:           []string{},
 	}
 
 	for _, plan := range plans {
-		secretResult := sm.executeSyncPlan(ctx, plan, namespace, logger)
+		secretResult := mm.executeMirrorPlan(ctx, plan, operatorNamespace, logger)
 		result.SecretResults[plan.SecretPath] = secretResult
 
 		if secretResult.Success {
-			switch secretResult.SyncType {
-			case SyncTypeCreate:
+			switch secretResult.MirrorType {
+			case MirrorTypeCreate:
 				result.SecretsCreated++
-			case SyncTypeUpdate:
+			case MirrorTypeUpdate:
 				result.SecretsUpdated++
-			case SyncTypeRestoreMetadata:
+			case MirrorTypeRestoreMetadata:
 				result.MetadataRestored++
 			}
 		} else {
@@ -478,27 +480,27 @@ func (sm *SyncManager) executeSyncPlans(ctx context.Context, plans []*SecretSync
 	return result
 }
 
-// executeSyncPlan executes a single secret sync plan
-func (sm *SyncManager) executeSyncPlan(ctx context.Context, plan *SecretSyncPlan, namespace string, logger logr.Logger) SecretSyncResult {
-	result := SecretSyncResult{
+// executeMirrorPlan executes a single secret sync plan
+func (mm *MirrorManager) executeMirrorPlan(ctx context.Context, plan *SecretMirrorPlan, operatorNamespace string, logger logr.Logger) SecretMirrorResult {
+	result := SecretMirrorResult{
 		SecretPath:    plan.SecretPath,
 		SourceDevice:  plan.SourceDevice,
 		SourceVersion: plan.SourceVersion,
 		TargetDevices: plan.TargetDevices,
-		SyncType:      plan.SyncType,
+		MirrorType:    plan.MirrorType,
 		Success:       false,
 		Error:         nil,
 	}
 
 	// Skip if no sync needed
-	if plan.SyncType == SyncTypeSkip {
+	if plan.MirrorType == MirrorTypeSkip {
 		result.Success = true
 		logger.V(1).Info("Skipping sync - already in sync", "secret", plan.SecretPath)
 		return result
 	}
 
 	// Get source data and metadata
-	sourceData, sourceMetadata, err := sm.readSecretWithMetadata(ctx, plan.SourceDevice, plan.SecretPath, namespace, logger)
+	sourceData, sourceMetadata, err := mm.readSecretWithMetadata(ctx, plan.SourceDevice, plan.SecretPath, operatorNamespace, logger)
 	if err != nil {
 		result.Error = fmt.Errorf("failed to read source secret: %w", err)
 		logger.Error(err, "Failed to read source secret", "device", plan.SourceDevice, "secret", plan.SecretPath)
@@ -525,10 +527,10 @@ func (sm *SyncManager) executeSyncPlan(ctx context.Context, plan *SecretSyncPlan
 	}
 
 	// Handle metadata restoration on source device if needed
-	if plan.SyncType == SyncTypeRestoreMetadata {
+	if plan.MirrorType == MirrorTypeRestoreMetadata {
 		if sourceMetadata == nil || sourceMetadata.Labels == nil || sourceMetadata.Labels["sync.version"] == "" {
 			logger.Info("Restoring metadata on source device", "device", plan.SourceDevice, "secret", plan.SecretPath)
-			if err := sm.writeSecretWithMetadata(ctx, plan.SourceDevice, plan.SecretPath, sourceData, syncMetadata, namespace, logger); err != nil {
+			if err := mm.writeSecretWithMetadata(ctx, plan.SourceDevice, plan.SecretPath, sourceData, syncMetadata, operatorNamespace, logger); err != nil {
 				result.Error = fmt.Errorf("failed to restore metadata on source: %w", err)
 				return result
 			}
@@ -541,12 +543,12 @@ func (sm *SyncManager) executeSyncPlan(ctx context.Context, plan *SecretSyncPlan
 		logger.Info("Syncing secret to target device", "secret", plan.SecretPath, "source", plan.SourceDevice, "target", targetDevice, "version", newVersion)
 
 		var syncErr error
-		switch plan.SyncType {
-		case SyncTypeCreate, SyncTypeUpdate:
-			syncErr = sm.writeSecretWithMetadata(ctx, targetDevice, plan.SecretPath, sourceData, syncMetadata, namespace, logger)
-		case SyncTypeRestoreMetadata:
+		switch plan.MirrorType {
+		case MirrorTypeCreate, MirrorTypeUpdate:
+			syncErr = mm.writeSecretWithMetadata(ctx, targetDevice, plan.SecretPath, sourceData, syncMetadata, operatorNamespace, logger)
+		case MirrorTypeRestoreMetadata:
 			// For metadata restoration, we just update the metadata without changing the data
-			syncErr = sm.writeMetadataOnly(ctx, targetDevice, plan.SecretPath, syncMetadata, namespace, logger)
+			syncErr = mm.writeMetadataOnly(ctx, targetDevice, plan.SecretPath, syncMetadata, operatorNamespace, logger)
 		}
 
 		if syncErr != nil {
@@ -565,15 +567,15 @@ func (sm *SyncManager) executeSyncPlan(ctx context.Context, plan *SecretSyncPlan
 
 	if result.Success {
 		logger.Info("Sync plan executed successfully", "secret", plan.SecretPath,
-			"syncType", plan.SyncType, "targetCount", successfulTargets)
+			"syncType", plan.MirrorType, "targetCount", successfulTargets)
 	}
 
 	return result
 }
 
 // readSecretWithMetadata reads both secret data and metadata from a device
-func (sm *SyncManager) readSecretWithMetadata(ctx context.Context, deviceName, secretPath, namespace string, logger logr.Logger) (hsm.SecretData, *hsm.SecretMetadata, error) {
-	grpcClient, err := sm.agentManager.CreateSingleGRPCClient(ctx, deviceName, namespace, logger)
+func (mm *MirrorManager) readSecretWithMetadata(ctx context.Context, deviceName, secretPath, namespace string, logger logr.Logger) (hsm.SecretData, *hsm.SecretMetadata, error) {
+	grpcClient, err := mm.agentManager.CreateSingleGRPCClient(ctx, deviceName, namespace, logger)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create gRPC client: %w", err)
 	}
@@ -604,8 +606,8 @@ func (sm *SyncManager) readSecretWithMetadata(ctx context.Context, deviceName, s
 }
 
 // writeSecretWithMetadata writes both secret data and metadata to a device
-func (sm *SyncManager) writeSecretWithMetadata(ctx context.Context, deviceName, secretPath string, data hsm.SecretData, metadata *hsm.SecretMetadata, namespace string, logger logr.Logger) error {
-	grpcClient, err := sm.agentManager.CreateSingleGRPCClient(ctx, deviceName, namespace, logger)
+func (mm *MirrorManager) writeSecretWithMetadata(ctx context.Context, deviceName, secretPath string, data hsm.SecretData, metadata *hsm.SecretMetadata, namespace string, logger logr.Logger) error {
+	grpcClient, err := mm.agentManager.CreateSingleGRPCClient(ctx, deviceName, namespace, logger)
 	if err != nil {
 		return fmt.Errorf("failed to create gRPC client: %w", err)
 	}
@@ -628,8 +630,8 @@ func (sm *SyncManager) writeSecretWithMetadata(ctx context.Context, deviceName, 
 }
 
 // writeMetadataOnly updates only the metadata for an existing secret
-func (sm *SyncManager) writeMetadataOnly(ctx context.Context, deviceName, secretPath string, metadata *hsm.SecretMetadata, namespace string, logger logr.Logger) error {
-	grpcClient, err := sm.agentManager.CreateSingleGRPCClient(ctx, deviceName, namespace, logger)
+func (mm *MirrorManager) writeMetadataOnly(ctx context.Context, deviceName, secretPath string, metadata *hsm.SecretMetadata, namespace string, logger logr.Logger) error {
+	grpcClient, err := mm.agentManager.CreateSingleGRPCClient(ctx, deviceName, namespace, logger)
 	if err != nil {
 		return fmt.Errorf("failed to create gRPC client: %w", err)
 	}
@@ -657,11 +659,12 @@ func (sm *SyncManager) writeMetadataOnly(ctx context.Context, deviceName, secret
 	return nil
 }
 
-// getAvailableDevices gets list of available HSM devices from HSMPools
-func (sm *SyncManager) getAvailableDevices(ctx context.Context, namespace string) ([]string, error) {
+// getAvailableDevices gets list of available HSM devices from HSMPools in the operator namespace
+func (mm *MirrorManager) getAvailableDevices(ctx context.Context, operatorNamespace string) ([]string, error) {
 	var hsmPoolList hsmv1alpha1.HSMPoolList
-	if err := sm.client.List(ctx, &hsmPoolList, client.InNamespace(namespace)); err != nil {
-		return nil, fmt.Errorf("failed to list HSM pools: %w", err)
+	// HSMPools are always in the operator namespace (where controller-manager runs)
+	if err := mm.client.List(ctx, &hsmPoolList, client.InNamespace(operatorNamespace)); err != nil {
+		return nil, fmt.Errorf("failed to list HSM pools in operator namespace %s: %w", operatorNamespace, err)
 	}
 
 	deviceNames := make(map[string]bool)
@@ -683,8 +686,8 @@ func (sm *SyncManager) getAvailableDevices(ctx context.Context, namespace string
 	return devices, nil
 }
 
-// UpdateHSMSecretStatus updates the HSMSecret status with sync results
-func (sm *SyncManager) UpdateHSMSecretStatus(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret, result *SyncResult) error {
+// UpdateHSMSecretStatus updates the HSMSecret status with mirror results
+func (mm *MirrorManager) UpdateHSMSecretStatus(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret, result *MirrorResult) error {
 	now := metav1.NewTime(time.Now())
 
 	// Update overall status
@@ -712,9 +715,9 @@ func (sm *SyncManager) UpdateHSMSecretStatus(ctx context.Context, hsmSecret *hsm
 		// Calculate checksum from the source device if sync was successful
 		if secretResult.Success {
 			// Read the current data to calculate checksum
-			if devices, err := sm.getAvailableDevices(ctx, hsmSecret.Namespace); err == nil && len(devices) > 0 {
-				if data, _, err := sm.readSecretWithMetadata(ctx, devices[0], hsmSecret.Name, hsmSecret.Namespace, sm.logger); err == nil {
-					hsmSecret.Status.SecretChecksum = sm.calculateChecksum(data)
+			if devices, err := mm.getAvailableDevices(ctx, mm.operatorNamespace); err == nil && len(devices) > 0 {
+				if data, _, err := mm.readSecretWithMetadata(ctx, devices[0], hsmSecret.Name, mm.operatorNamespace, mm.logger); err == nil {
+					hsmSecret.Status.SecretChecksum = mm.calculateChecksum(data)
 				}
 			}
 		}
@@ -726,7 +729,7 @@ func (sm *SyncManager) UpdateHSMSecretStatus(ctx context.Context, hsmSecret *hsm
 	}
 
 	// Update device-specific sync status based on available devices
-	devices, err := sm.getAvailableDevices(ctx, hsmSecret.Namespace)
+	devices, err := mm.getAvailableDevices(ctx, mm.operatorNamespace)
 	if err == nil {
 		hsmSecret.Status.DeviceSyncStatus = make([]hsmv1alpha1.HSMDeviceSync, 0, len(devices))
 
@@ -778,11 +781,11 @@ func (sm *SyncManager) UpdateHSMSecretStatus(ctx context.Context, hsmSecret *hsm
 		}
 	}
 
-	return sm.client.Status().Update(ctx, hsmSecret)
+	return mm.client.Status().Update(ctx, hsmSecret)
 }
 
 // calculateChecksum calculates SHA256 checksum of secret data
-func (sm *SyncManager) calculateChecksum(data hsm.SecretData) string {
+func (mm *MirrorManager) calculateChecksum(data hsm.SecretData) string {
 	if data == nil {
 		return ""
 	}

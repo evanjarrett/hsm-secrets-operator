@@ -27,29 +27,29 @@ import (
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/sync"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/mirror"
 )
 
-// HSMSyncReconciler handles multi-device HSM synchronization and conflict resolution
-type HSMSyncReconciler struct {
+// HSMMirrorReconciler handles multi-device HSM mirroring and conflict resolution
+type HSMMirrorReconciler struct {
 	client.Client
-	Scheme      *runtime.Scheme
-	SyncManager *sync.SyncManager
+	Scheme        *runtime.Scheme
+	MirrorManager *mirror.MirrorManager
 
-	// SyncInterval controls how often to perform sync checks (default: 30 seconds)
-	SyncInterval time.Duration
+	// MirrorInterval controls how often to perform mirror checks (default: 30 seconds)
+	MirrorInterval time.Duration
 }
 
-// NewHSMSyncReconciler creates a new HSM sync reconciler
-func NewHSMSyncReconciler(k8sClient client.Client, scheme *runtime.Scheme, agentManager *agent.Manager) *HSMSyncReconciler {
-	logger := ctrl.Log.WithName("hsm-sync-controller")
-	syncManager := sync.NewSyncManager(k8sClient, agentManager, logger)
+// NewHSMMirrorReconciler creates a new HSM mirror reconciler
+func NewHSMMirrorReconciler(k8sClient client.Client, scheme *runtime.Scheme, agentManager *agent.Manager, operatorNamespace string) *HSMMirrorReconciler {
+	logger := ctrl.Log.WithName("hsm-mirror-controller")
+	mirrorManager := mirror.NewMirrorManager(k8sClient, agentManager, logger, operatorNamespace)
 
-	return &HSMSyncReconciler{
-		Client:       k8sClient,
-		Scheme:       scheme,
-		SyncManager:  syncManager,
-		SyncInterval: 30 * time.Second, // Default sync interval
+	return &HSMMirrorReconciler{
+		Client:         k8sClient,
+		Scheme:         scheme,
+		MirrorManager:  mirrorManager,
+		MirrorInterval: 30 * time.Second, // Default mirror interval
 	}
 }
 
@@ -58,8 +58,8 @@ func NewHSMSyncReconciler(k8sClient client.Client, scheme *runtime.Scheme, agent
 // +kubebuilder:rbac:groups=hsm.j5t.io,resources=hsmpools,verbs=get;list;watch
 // +kubebuilder:rbac:groups=hsm.j5t.io,resources=hsmdevices,verbs=get;list;watch
 
-// Reconcile performs HSM device synchronization and conflict resolution
-func (r *HSMSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+// Reconcile performs HSM device mirroring and conflict resolution
+func (r *HSMMirrorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	// Fetch the HSMSecret instance
@@ -74,12 +74,12 @@ func (r *HSMSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, nil
 	}
 
-	logger.Info("Starting multi-device HSM sync", "secret", hsmSecret.Name)
+	logger.Info("Starting multi-device HSM mirror", "secret", hsmSecret.Name)
 
-	// Perform the sync operation
-	result, err := r.SyncManager.SyncSecret(ctx, &hsmSecret)
+	// Perform the mirror operation
+	result, err := r.MirrorManager.MirrorSecret(ctx, &hsmSecret)
 	if err != nil {
-		logger.Error(err, "Failed to perform HSM sync", "secret", hsmSecret.Name)
+		logger.Error(err, "Failed to perform HSM mirror", "secret", hsmSecret.Name)
 
 		// Update status with error
 		hsmSecret.Status.SyncStatus = hsmv1alpha1.SyncStatusError
@@ -89,17 +89,17 @@ func (r *HSMSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 
 		// Retry sooner on error
-		return ctrl.Result{RequeueAfter: r.SyncInterval / 2}, nil
+		return ctrl.Result{RequeueAfter: r.MirrorInterval / 2}, nil
 	}
 
-	// Update HSMSecret status with sync results
-	if err := r.SyncManager.UpdateHSMSecretStatus(ctx, &hsmSecret, result); err != nil {
+	// Update HSMSecret status with mirror results
+	if err := r.MirrorManager.UpdateHSMSecretStatus(ctx, &hsmSecret, result); err != nil {
 		logger.Error(err, "Failed to update HSMSecret status", "secret", hsmSecret.Name)
-		return ctrl.Result{RequeueAfter: r.SyncInterval / 2}, err
+		return ctrl.Result{RequeueAfter: r.MirrorInterval / 2}, err
 	}
 
-	// Log sync results
-	logger.Info("Per-secret HSM sync completed",
+	// Log mirror results
+	logger.Info("Per-secret HSM mirror completed",
 		"secret", hsmSecret.Name,
 		"success", result.Success,
 		"secretsProcessed", result.SecretsProcessed,
@@ -108,19 +108,19 @@ func (r *HSMSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		"metadataRestored", result.MetadataRestored,
 		"errors", len(result.Errors))
 
-	// Calculate next sync interval based on HSMSecret spec
-	syncInterval := r.SyncInterval
+	// Calculate next mirror interval based on HSMSecret spec
+	mirrorInterval := r.MirrorInterval
 	if hsmSecret.Spec.SyncInterval > 0 {
-		syncInterval = time.Duration(hsmSecret.Spec.SyncInterval) * time.Second
+		mirrorInterval = time.Duration(hsmSecret.Spec.SyncInterval) * time.Second
 	}
 
-	return ctrl.Result{RequeueAfter: syncInterval}, nil
+	return ctrl.Result{RequeueAfter: mirrorInterval}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *HSMSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *HSMMirrorReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&hsmv1alpha1.HSMSecret{}).
-		Named("hsmsync").
+		Named("hsmmirror").
 		Complete(r)
 }

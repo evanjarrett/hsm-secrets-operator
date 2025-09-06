@@ -292,9 +292,9 @@ func Run(args []string) error {
 		return err
 	}
 
-	// Set up HSM sync controller for multi-device synchronization
-	if err := controller.NewHSMSyncReconciler(mgr.GetClient(), mgr.GetScheme(), agentManager).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "HSMSync")
+	// Set up HSM mirror controller for multi-device mirroring
+	if err := controller.NewHSMMirrorReconciler(mgr.GetClient(), mgr.GetScheme(), agentManager, operatorNamespace).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "HSMMirror")
 		return err
 	}
 
