@@ -17,6 +17,7 @@ limitations under the License.
 package manager
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"os"
@@ -42,6 +43,7 @@ import (
 	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/api"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/controller"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/mirror"
 )
 
 var (
@@ -292,12 +294,6 @@ func Run(args []string) error {
 		return err
 	}
 
-	// Set up HSM mirror controller for multi-device mirroring
-	if err := controller.NewHSMMirrorReconciler(mgr.GetClient(), mgr.GetScheme(), agentManager, operatorNamespace).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "HSMMirror")
-		return err
-	}
-
 	// Set up discovery DaemonSet controller (manager-owned)
 	if err := (&controller.DiscoveryDaemonSetReconciler{
 		Client:        mgr.GetClient(),
@@ -345,6 +341,34 @@ func Run(args []string) error {
 			}
 		}()
 	}
+
+	// Start device-scoped HSM mirroring in background
+	mirrorManager := mirror.NewMirrorManager(mgr.GetClient(), agentManager, ctrl.Log.WithName("device-mirror"), operatorNamespace)
+	go func() {
+		mirrorTicker := time.NewTicker(30 * time.Second) // Mirror every 30 seconds
+		defer mirrorTicker.Stop()
+
+		setupLog.Info("starting device-scoped HSM mirroring", "interval", "30s")
+
+		// Initial mirror attempt after 30 seconds to allow agents to start
+		time.Sleep(30 * time.Second)
+
+		for range mirrorTicker.C {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			result, err := mirrorManager.MirrorAllSecrets(ctx)
+			cancel()
+
+			if err != nil {
+				setupLog.Error(err, "device-scoped mirroring failed")
+			} else if result.SecretsProcessed > 0 {
+				setupLog.Info("device-scoped mirroring completed",
+					"secretsProcessed", result.SecretsProcessed,
+					"secretsUpdated", result.SecretsUpdated,
+					"secretsCreated", result.SecretsCreated,
+					"errors", len(result.Errors))
+			}
+		}
+	}()
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {

@@ -133,6 +133,14 @@ func NewTestManager(k8sClient client.Client, namespace string, imageResolver Ima
 	return m
 }
 
+// deviceWork represents work to be done for a specific device
+type deviceWork struct {
+	device    hsmv1alpha1.DiscoveredDevice
+	agentName string
+	agentKey  string
+	index     int
+}
+
 // EnsureAgent ensures HSM agents are deployed for all available devices in the pool
 func (m *Manager) EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, hsmSecret *hsmv1alpha1.HSMSecret) error {
 	// Get the HSMPool for this device to find all aggregated devices
@@ -144,102 +152,152 @@ func (m *Manager) EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDev
 	}, &hsmPool); err != nil {
 		return fmt.Errorf("failed to get HSMPool %s: %w", poolName, err)
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 
-	// Ensure agents for each available aggregated device in the pool
+	// Pre-collect available devices to process (no mutex needed)
+	workItems := make([]deviceWork, 0, len(hsmPool.Status.AggregatedDevices))
 	for i, aggregatedDevice := range hsmPool.Status.AggregatedDevices {
 		if !aggregatedDevice.Available {
 			continue
 		}
+		workItems = append(workItems, deviceWork{
+			device:    aggregatedDevice,
+			agentName: fmt.Sprintf("%s-%s-%d", AgentNamePrefix, hsmDevice.Name, i),
+			agentKey:  fmt.Sprintf("%s-%d", hsmDevice.Name, i),
+			index:     i,
+		})
+	}
 
-		// Create unique agent name for each physical device
-		agentName := fmt.Sprintf("%s-%s-%d", AgentNamePrefix, hsmDevice.Name, i)
-		agentKey := fmt.Sprintf("%s-%d", hsmDevice.Name, i) // Unique key for tracking
+	if len(workItems) == 0 {
+		return nil // No available devices to process
+	}
 
-		// Check if we already have this specific agent tracked
-		if agentInfo, exists := m.activeAgents[agentKey]; exists {
-			// Agent exists in tracking, verify it's still healthy
-			if m.isAgentHealthy(ctx, agentInfo) {
-				continue // Agent is healthy, skip
-			}
-			// Agent unhealthy, remove from tracking and recreate
-			m.removeAgentFromTracking(agentKey)
-		}
+	// Process devices in parallel
+	var wg sync.WaitGroup
+	errChan := make(chan error, len(workItems))
 
-		// Check if deployment exists in Kubernetes
-		var deployment appsv1.Deployment
-		err := m.Get(ctx, types.NamespacedName{
-			Name:      agentName,
-			Namespace: hsmDevice.Namespace,
-		}, &deployment)
+	for _, work := range workItems {
+		wg.Add(1)
+		go func(w deviceWork) {
+			defer wg.Done()
 
-		if err == nil {
-			// Agent exists, but check if it needs updating (image version, device/node configuration)
-			needsUpdate, err := m.agentNeedsUpdate(ctx, &deployment, hsmDevice)
-			if err != nil {
-				return fmt.Errorf("failed to check if agent deployment %s needs update: %w", agentName, err)
-			}
-
-			// Also check device-specific configuration
-			if !needsUpdate {
-				needsUpdate = m.deploymentNeedsUpdateForDevice(&deployment, &aggregatedDevice)
-			}
-
-			if needsUpdate {
-				// Delete existing deployment to trigger recreation
-				if err := m.Delete(ctx, &deployment); err != nil {
-					return fmt.Errorf("failed to delete outdated agent deployment %s: %w", agentName, err)
+			// Mutex-protected check and update of activeAgents
+			m.mu.Lock()
+			needsDeployment := false
+			if agentInfo, exists := m.activeAgents[w.agentKey]; exists {
+				if !m.isAgentHealthy(ctx, agentInfo) {
+					m.removeAgentFromTracking(w.agentKey)
+					needsDeployment = true
 				}
 			} else {
-				// Agent exists and is correct - wait for it and track it
-				podIPs, err := m.waitForAgentReady(ctx, agentName, hsmDevice.Namespace)
-				if err != nil {
-					return fmt.Errorf("failed waiting for existing agent pods %s: %w", agentName, err)
-				}
-
-				// Track the existing agent
-				agentInfo := &AgentInfo{
-					DeviceName:      agentKey,
-					PodIPs:          podIPs,
-					CreatedAt:       time.Now(),
-					LastHealthCheck: time.Now(),
-					Status:          AgentStatusReady,
-					AgentName:       agentName,
-					Namespace:       hsmDevice.Namespace,
-				}
-
-				m.activeAgents[agentKey] = agentInfo
-				continue
+				needsDeployment = true
 			}
-		} else if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to check agent deployment %s: %w", agentName, err)
-		}
+			m.mu.Unlock()
 
-		// Create agent deployment for this specific device
-		if err := m.createAgentDeployment(ctx, hsmDevice, nil, hsmDevice.Namespace, &aggregatedDevice, agentName); err != nil {
-			return fmt.Errorf("failed to create agent deployment %s: %w", agentName, err)
-		}
+			// Skip if agent is healthy and tracked
+			if !needsDeployment {
+				return
+			}
 
-		// Wait for agent pods to be ready and get their IPs
-		podIPs, err := m.waitForAgentReady(ctx, agentName, hsmDevice.Namespace)
-		if err != nil {
-			return fmt.Errorf("failed waiting for agent pods %s: %w", agentName, err)
-		}
-
-		// Track the new agent
-		agentInfo := &AgentInfo{
-			DeviceName:      agentKey,
-			PodIPs:          podIPs,
-			CreatedAt:       time.Now(),
-			LastHealthCheck: time.Now(),
-			Status:          AgentStatusReady,
-			AgentName:       agentName,
-			Namespace:       hsmDevice.Namespace,
-		}
-
-		m.activeAgents[agentKey] = agentInfo
+			// Deploy agent for this device (Kubernetes API calls - no mutex needed)
+			if err := m.deployAgentForDevice(ctx, w, hsmDevice); err != nil {
+				errChan <- fmt.Errorf("failed to deploy agent %s: %w", w.agentName, err)
+			}
+		}(work)
 	}
+
+	// Wait for all goroutines to complete
+	wg.Wait()
+	close(errChan)
+
+	// Collect any errors
+	deploymentErrors := make([]error, 0, len(workItems))
+	for err := range errChan {
+		deploymentErrors = append(deploymentErrors, err)
+	}
+
+	if len(deploymentErrors) > 0 {
+		return fmt.Errorf("agent deployment errors: %v", deploymentErrors)
+	}
+
+	return nil
+}
+
+// deployAgentForDevice handles the deployment logic for a single device
+func (m *Manager) deployAgentForDevice(ctx context.Context, work deviceWork, hsmDevice *hsmv1alpha1.HSMDevice) error {
+	// Check if deployment exists in Kubernetes
+	var deployment appsv1.Deployment
+	err := m.Get(ctx, types.NamespacedName{
+		Name:      work.agentName,
+		Namespace: hsmDevice.Namespace,
+	}, &deployment)
+
+	if err == nil {
+		// Agent exists, but check if it needs updating (image version, device/node configuration)
+		needsUpdate, err := m.agentNeedsUpdate(ctx, &deployment, hsmDevice)
+		if err != nil {
+			return fmt.Errorf("failed to check if agent deployment %s needs update: %w", work.agentName, err)
+		}
+
+		// Also check device-specific configuration
+		if !needsUpdate {
+			needsUpdate = m.deploymentNeedsUpdateForDevice(&deployment, &work.device)
+		}
+
+		if needsUpdate {
+			// Delete existing deployment to trigger recreation
+			if err := m.Delete(ctx, &deployment); err != nil {
+				return fmt.Errorf("failed to delete outdated agent deployment %s: %w", work.agentName, err)
+			}
+		} else {
+			// Agent exists and is correct - wait for it and track it
+			podIPs, err := m.waitForAgentReady(ctx, work.agentName, hsmDevice.Namespace)
+			if err != nil {
+				return fmt.Errorf("failed waiting for existing agent pods %s: %w", work.agentName, err)
+			}
+
+			// Track the existing agent (mutex-protected)
+			m.mu.Lock()
+			agentInfo := &AgentInfo{
+				DeviceName:      work.agentKey,
+				PodIPs:          podIPs,
+				CreatedAt:       time.Now(),
+				LastHealthCheck: time.Now(),
+				Status:          AgentStatusReady,
+				AgentName:       work.agentName,
+				Namespace:       hsmDevice.Namespace,
+			}
+			m.activeAgents[work.agentKey] = agentInfo
+			m.mu.Unlock()
+			return nil
+		}
+	} else if !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to check agent deployment %s: %w", work.agentName, err)
+	}
+
+	// Create agent deployment for this specific device
+	if err := m.createAgentDeployment(ctx, hsmDevice, nil, hsmDevice.Namespace, &work.device, work.agentName); err != nil {
+		return fmt.Errorf("failed to create agent deployment %s: %w", work.agentName, err)
+	}
+
+	// Wait for agent pods to be ready and get their IPs
+	podIPs, err := m.waitForAgentReady(ctx, work.agentName, hsmDevice.Namespace)
+	if err != nil {
+		return fmt.Errorf("failed waiting for agent pods %s: %w", work.agentName, err)
+	}
+
+	// Track the new agent (mutex-protected)
+	m.mu.Lock()
+	agentInfo := &AgentInfo{
+		DeviceName:      work.agentKey,
+		PodIPs:          podIPs,
+		CreatedAt:       time.Now(),
+		LastHealthCheck: time.Now(),
+		Status:          AgentStatusReady,
+		AgentName:       work.agentName,
+		Namespace:       hsmDevice.Namespace,
+	}
+	m.activeAgents[work.agentKey] = agentInfo
+	m.mu.Unlock()
 
 	return nil
 }

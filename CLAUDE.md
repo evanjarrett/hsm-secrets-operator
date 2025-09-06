@@ -56,7 +56,7 @@ The project uses a **unified binary** (`cmd/hsm-operator/main.go`) that operates
 - **HSMPool-based Agent Discovery**: API and controllers query HSMPool to find all agent instances for a device type
 - **Multiple Agent Instances**: Each physical device gets its own agent pod (e.g., `hsm-agent-pico-hsm-0`, `hsm-agent-pico-hsm-1`)
 - **Multi-Agent Operations**: API operations (list, write, delete) work across all agents when mirroring is enabled
-- **Automatic Synchronization**: HSMSyncReconciler handles conflict detection and resolution between devices
+- **Automatic Synchronization**: HSMMirrorReconciler handles conflict detection and resolution between devices
 
 **gRPC Communication Architecture:**
 - Protocol definition in `api/proto/hsm/v1/hsm.proto` with 10 HSM operations
@@ -71,7 +71,7 @@ Manager Controllers:
 ├── HSMSecretReconciler - HSM to K8s Secret sync
 ├── HSMPoolReconciler - Aggregates discovery reports from pod annotations  
 ├── HSMPoolAgentReconciler - Deploys agents when pools are ready
-├── HSMSyncReconciler - Multi-device HSM synchronization and conflict resolution
+├── HSMMirrorReconciler - Multi-device HSM mirroring and conflict resolution
 └── DiscoveryDaemonSetReconciler - Manages discovery DaemonSet lifecycle
 
 Discovery Controllers:

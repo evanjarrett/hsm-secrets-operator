@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
@@ -110,53 +109,6 @@ const (
 	MirrorTypeCreate                            // Create missing secret
 	MirrorTypeRestoreMetadata                   // Add metadata to existing secret
 )
-
-// MirrorSecret performs per-secret mirroring across all HSM devices
-func (mm *MirrorManager) MirrorSecret(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret) (*MirrorResult, error) {
-	logger := mm.logger.WithValues("secret", hsmSecret.Name, "namespace", hsmSecret.Namespace)
-	secretPath := hsmSecret.Name
-
-	// Get all available HSM devices from HSMPools in the operator namespace
-	devices, err := mm.getAvailableDevices(ctx, mm.operatorNamespace)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get available devices: %w", err)
-	}
-
-	if len(devices) == 0 {
-		return &MirrorResult{
-			Success:       false,
-			SecretResults: make(map[string]SecretMirrorResult),
-			Errors:        []string{"no HSM devices available"},
-		}, fmt.Errorf("no HSM devices available")
-	}
-
-	logger.Info("Starting per-secret mirror", "devices", len(devices), "secretPath", secretPath)
-
-	// Build inventory of all secrets across all devices
-	inventory, err := mm.buildSecretInventory(ctx, []string{secretPath}, devices, mm.operatorNamespace, logger)
-	if err != nil {
-		return &MirrorResult{
-			Success:       false,
-			SecretResults: make(map[string]SecretMirrorResult),
-			Errors:        []string{fmt.Sprintf("failed to build secret inventory: %v", err)},
-		}, fmt.Errorf("failed to build secret inventory: %w", err)
-	}
-
-	// Create mirror plan for the single secret
-	mirrorPlans := mm.createMirrorPlans(inventory, logger)
-
-	// Execute mirror operations
-	result := mm.executeMirrorPlans(ctx, mirrorPlans, mm.operatorNamespace, logger)
-
-	logger.Info("Per-secret sync completed",
-		"secretsProcessed", result.SecretsProcessed,
-		"secretsUpdated", result.SecretsUpdated,
-		"secretsCreated", result.SecretsCreated,
-		"metadataRestored", result.MetadataRestored,
-		"errors", len(result.Errors))
-
-	return result, nil
-}
 
 // buildSecretInventory builds a comprehensive inventory of secrets across all devices
 func (mm *MirrorManager) buildSecretInventory(ctx context.Context, secretPaths []string, devices []string, operatorNamespace string, logger logr.Logger) (map[string]*SecretInventory, error) {
@@ -686,102 +638,82 @@ func (mm *MirrorManager) getAvailableDevices(ctx context.Context, operatorNamesp
 	return devices, nil
 }
 
-// UpdateHSMSecretStatus updates the HSMSecret status with mirror results
-func (mm *MirrorManager) UpdateHSMSecretStatus(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret, result *MirrorResult) error {
-	now := metav1.NewTime(time.Now())
+// MirrorAllSecrets performs device-scoped mirroring of ALL secrets across HSM devices
+// This discovers all secrets on any device and ensures they exist on all other devices
+func (mm *MirrorManager) MirrorAllSecrets(ctx context.Context) (*MirrorResult, error) {
+	logger := mm.logger.WithValues("operation", "device-scoped-mirror")
+	logger.Info("Starting device-scoped mirroring of all HSM secrets")
 
-	// Update overall status
-	if result.Success {
-		hsmSecret.Status.SyncStatus = hsmv1alpha1.SyncStatusInSync
-		hsmSecret.Status.LastSyncTime = &now
-		if len(result.Errors) == 0 {
-			hsmSecret.Status.LastError = ""
-		} else {
-			// Partial success - some errors occurred
-			hsmSecret.Status.LastError = fmt.Sprintf("Partial sync completed with %d errors", len(result.Errors))
-		}
-	} else {
-		hsmSecret.Status.SyncStatus = hsmv1alpha1.SyncStatusError
-		if len(result.Errors) > 0 {
-			hsmSecret.Status.LastError = result.Errors[0] // Show first error
-		} else {
-			hsmSecret.Status.LastError = "Failed to sync secret"
-		}
-	}
-
-	// Update secret-level sync information
-	secretResult, hasSecretResult := result.SecretResults[hsmSecret.Name]
-	if hasSecretResult {
-		// Calculate checksum from the source device if sync was successful
-		if secretResult.Success {
-			// Read the current data to calculate checksum
-			if devices, err := mm.getAvailableDevices(ctx, mm.operatorNamespace); err == nil && len(devices) > 0 {
-				if data, _, err := mm.readSecretWithMetadata(ctx, devices[0], hsmSecret.Name, mm.operatorNamespace, mm.logger); err == nil {
-					hsmSecret.Status.SecretChecksum = mm.calculateChecksum(data)
-				}
-			}
-		}
-
-		// Set primary device information if available
-		if secretResult.SourceDevice != "" {
-			hsmSecret.Status.PrimaryDevice = secretResult.SourceDevice
-		}
-	}
-
-	// Update device-specific sync status based on available devices
+	// Get all available HSM devices
 	devices, err := mm.getAvailableDevices(ctx, mm.operatorNamespace)
-	if err == nil {
-		hsmSecret.Status.DeviceSyncStatus = make([]hsmv1alpha1.HSMDeviceSync, 0, len(devices))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get available devices: %w", err)
+	}
 
-		for _, deviceName := range devices {
-			deviceSync := hsmv1alpha1.HSMDeviceSync{
-				DeviceName:   deviceName,
-				LastSyncTime: &now,
-				Checksum:     "",
-				Online:       true, // Assume online if in available devices list
-				Version:      0,
-			}
+	if len(devices) <= 1 {
+		logger.Info("Skipping mirroring - need at least 2 devices", "devices", len(devices))
+		return &MirrorResult{Success: true, SecretsProcessed: 0}, nil
+	}
 
-			// Check if this device was involved in sync operations
-			if hasSecretResult {
-				if secretResult.SourceDevice == deviceName {
-					deviceSync.Status = hsmv1alpha1.SyncStatusInSync
-					deviceSync.Version = secretResult.SourceVersion
-				} else {
-					// Check if this device was a target
-					isTarget := false
-					for _, target := range secretResult.TargetDevices {
-						if target == deviceName {
-							isTarget = true
-							break
-						}
-					}
+	logger.Info("Starting mirroring across devices", "devices", devices, "deviceCount", len(devices))
 
-					if isTarget {
-						if secretResult.Success {
-							deviceSync.Status = hsmv1alpha1.SyncStatusInSync
-							deviceSync.Version = secretResult.SourceVersion
-						} else {
-							deviceSync.Status = hsmv1alpha1.SyncStatusError
-							if secretResult.Error != nil {
-								deviceSync.LastError = secretResult.Error.Error()
-							}
-						}
-					} else {
-						// Device wasn't involved in sync - assume in sync
-						deviceSync.Status = hsmv1alpha1.SyncStatusInSync
-					}
-				}
-			} else {
-				// No secret result - assume in sync
-				deviceSync.Status = hsmv1alpha1.SyncStatusInSync
-			}
+	// Discover all secrets across all devices
+	allSecretPaths := mm.discoverAllSecrets(ctx, devices, mm.operatorNamespace, logger)
 
-			hsmSecret.Status.DeviceSyncStatus = append(hsmSecret.Status.DeviceSyncStatus, deviceSync)
+	if len(allSecretPaths) == 0 {
+		logger.Info("No secrets found to mirror")
+		return &MirrorResult{Success: true, SecretsProcessed: 0}, nil
+	}
+
+	logger.Info("Discovered secrets for mirroring", "secretCount", len(allSecretPaths), "secrets", allSecretPaths)
+
+	// Build inventory for all discovered secrets
+	inventory, err := mm.buildSecretInventory(ctx, allSecretPaths, devices, mm.operatorNamespace, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build secret inventory: %w", err)
+	}
+
+	// Create mirror plans
+	plans := mm.createMirrorPlans(inventory, logger)
+	logger.Info("Created mirror plans", "planCount", len(plans))
+
+	// Execute mirror plans
+	return mm.executeMirrorPlans(ctx, plans, mm.operatorNamespace, logger), nil
+}
+
+// discoverAllSecrets discovers all secrets present on any HSM device
+func (mm *MirrorManager) discoverAllSecrets(ctx context.Context, devices []string, operatorNamespace string, logger logr.Logger) []string {
+	secretPaths := make(map[string]bool)
+
+	for _, deviceName := range devices {
+		deviceLogger := logger.WithValues("device", deviceName)
+
+		hsmClient, err := mm.agentManager.CreateSingleGRPCClient(ctx, deviceName, operatorNamespace, deviceLogger)
+		if err != nil {
+			deviceLogger.Info("Failed to connect to device for discovery, skipping", "error", err)
+			continue
+		}
+
+		secrets, err := hsmClient.ListSecrets(ctx, "")
+		if err != nil {
+			deviceLogger.Info("Failed to list secrets on device, skipping", "error", err)
+			continue
+		}
+
+		deviceLogger.Info("Discovered secrets on device", "secretCount", len(secrets))
+		for _, secretPath := range secrets {
+			secretPaths[secretPath] = true
 		}
 	}
 
-	return mm.client.Status().Update(ctx, hsmSecret)
+	// Convert to sorted slice
+	result := make([]string, 0, len(secretPaths))
+	for secretPath := range secretPaths {
+		result = append(result, secretPath)
+	}
+	sort.Strings(result)
+
+	return result
 }
 
 // calculateChecksum calculates SHA256 checksum of secret data
