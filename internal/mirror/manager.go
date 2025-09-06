@@ -622,16 +622,20 @@ func (mm *MirrorManager) getAvailableDevices(ctx context.Context, operatorNamesp
 	deviceNames := make(map[string]bool)
 
 	for _, pool := range hsmPoolList.Items {
-		if pool.Status.Phase == hsmv1alpha1.HSMPoolPhaseReady {
-			// Count actual aggregated physical devices, not just device references
-			for i, aggregatedDevice := range pool.Status.AggregatedDevices {
-				if aggregatedDevice.Available {
-					// Create unique device name for each physical device instance
-					// This matches the agent naming scheme: deviceRef-i
-					for _, deviceRef := range pool.Spec.HSMDeviceRefs {
-						physicalDeviceName := fmt.Sprintf("%s-%d", deviceRef, i)
-						deviceNames[physicalDeviceName] = true
+		if pool.Status.Phase == hsmv1alpha1.HSMPoolPhaseReady && len(pool.Status.AggregatedDevices) > 0 {
+			// Use the actual HSMDevice names from the pool spec
+			// AgentManager will handle connecting to the appropriate agent instances
+			for _, deviceRef := range pool.Spec.HSMDeviceRefs {
+				// Only add if there are available devices in this pool
+				hasAvailableDevice := false
+				for _, aggregatedDevice := range pool.Status.AggregatedDevices {
+					if aggregatedDevice.Available {
+						hasAvailableDevice = true
+						break
 					}
+				}
+				if hasAvailableDevice {
+					deviceNames[deviceRef] = true
 				}
 			}
 		}
