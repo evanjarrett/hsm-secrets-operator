@@ -245,7 +245,7 @@ func (m *Manager) deployAgentForDevice(ctx context.Context, work deviceWork, hsm
 
 		if needsUpdate {
 			// Delete existing deployment to trigger recreation
-			if err := m.Delete(ctx, &deployment); err != nil {
+			if err := m.Delete(ctx, &deployment); err != nil && !errors.IsNotFound(err) {
 				return fmt.Errorf("failed to delete outdated agent deployment %s: %w", work.agentName, err)
 			}
 		} else {

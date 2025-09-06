@@ -350,8 +350,17 @@ func Run(args []string) error {
 
 		setupLog.Info("starting device-scoped HSM mirroring", "interval", "30s")
 
-		// Initial mirror attempt after 30 seconds to allow agents to start
-		time.Sleep(30 * time.Second)
+		// Wait for agents to be ready before starting mirroring
+		ctx := context.Background()
+		ready, err := mirrorManager.WaitForAgentsReady(ctx, 5*time.Minute)
+		if err != nil {
+			setupLog.Error(err, "failed to wait for agents to be ready")
+			return
+		}
+		if !ready {
+			setupLog.Info("no agents became ready within timeout, disabling mirroring")
+			return
+		}
 
 		for range mirrorTicker.C {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

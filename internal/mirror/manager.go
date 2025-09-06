@@ -747,6 +747,59 @@ func (mm *MirrorManager) calculateChecksum(data hsm.SecretData) string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
+// WaitForAgentsReady waits for at least one HSM device to have ready agents
+// Returns true when agents are ready, false on timeout
+func (mm *MirrorManager) WaitForAgentsReady(ctx context.Context, timeout time.Duration) (bool, error) {
+	logger := mm.logger.WithValues("operation", "wait-for-agents")
+	logger.Info("Waiting for HSM agents to be ready", "timeout", timeout)
+
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Info("Timeout waiting for agents to be ready")
+			return false, ctx.Err()
+
+		case <-ticker.C:
+			devices, err := mm.getAvailableDevices(ctx, mm.operatorNamespace)
+			if err != nil {
+				logger.V(1).Info("Failed to check available devices", "error", err)
+				continue
+			}
+
+			if len(devices) > 0 {
+				// Try to connect to at least one device to verify agents are actually ready
+				for _, deviceName := range devices {
+					grpcClient, err := mm.agentManager.CreateSingleGRPCClient(ctx, deviceName, mm.operatorNamespace, logger)
+					if err != nil {
+						logger.V(1).Info("Agent not ready yet", "device", deviceName, "error", err)
+						continue
+					}
+
+					// Test connection
+					if grpcClient.IsConnected() {
+						if closeErr := grpcClient.Close(); closeErr != nil {
+							logger.V(1).Info("Failed to close gRPC client", "error", closeErr)
+						}
+						logger.Info("HSM agents are ready", "readyDevices", len(devices))
+						return true, nil
+					}
+					if closeErr := grpcClient.Close(); closeErr != nil {
+						logger.V(1).Info("Failed to close gRPC client", "error", closeErr)
+					}
+				}
+			}
+
+			logger.V(1).Info("Still waiting for agents", "availableDevices", len(devices))
+		}
+	}
+}
+
 // Helper function to parse version string
 func parseVersion(versionStr string) (int64, error) {
 	var version int64
