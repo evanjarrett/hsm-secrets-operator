@@ -33,7 +33,7 @@ import (
 
 // AgentManagerInterface defines the interface for HSM agent management used by sync
 type AgentManagerInterface interface {
-	CreateSingleGRPCClient(ctx context.Context, deviceName string, logger logr.Logger) (hsm.Client, error)
+	CreateSingleGRPCClient(ctx context.Context, deviceName, namespace string, logger logr.Logger) (hsm.Client, error)
 }
 
 // SyncManager handles multi-device HSM synchronization and conflict resolution
@@ -52,25 +52,64 @@ func NewSyncManager(k8sClient client.Client, agentManager AgentManagerInterface,
 	}
 }
 
-// SyncResult represents the result of a sync operation
+// SyncResult represents the result of a per-secret synchronization operation
 type SyncResult struct {
 	Success          bool
-	ConflictDetected bool
-	PrimaryDevice    string
-	DeviceResults    map[string]DeviceResult
-	ResolvedData     hsm.SecretData
+	SecretsProcessed int
+	SecretsUpdated   int
+	SecretsCreated   int
+	MetadataRestored int
+	SecretResults    map[string]SecretSyncResult
+	Errors           []string
 }
 
-// DeviceResult represents the sync result for a specific device
-type DeviceResult struct {
-	Online    bool
-	Checksum  string
-	Version   int64
-	Error     error
-	Timestamp time.Time
+// SecretSyncResult represents the result of syncing a specific secret
+type SecretSyncResult struct {
+	SecretPath    string
+	SourceDevice  string
+	SourceVersion int64
+	TargetDevices []string
+	SyncType      SyncType
+	Success       bool
+	Error         error
 }
 
-// SyncSecret performs multi-device synchronization for an HSMSecret
+// SecretInventory represents the state of a secret across all devices
+type SecretInventory struct {
+	SecretPath   string
+	DeviceStates map[string]*SecretState // device -> metadata & presence
+}
+
+// SecretState represents the state of a secret on a specific device
+type SecretState struct {
+	Present     bool
+	Version     int64
+	Timestamp   time.Time
+	Checksum    string
+	HasMetadata bool
+	Error       error
+}
+
+// SecretSyncPlan represents the plan for syncing a specific secret
+type SecretSyncPlan struct {
+	SecretPath    string
+	SourceDevice  string
+	SourceVersion int64
+	TargetDevices []string
+	SyncType      SyncType
+}
+
+// SyncType represents the type of sync operation needed
+type SyncType int
+
+const (
+	SyncTypeSkip            SyncType = iota // Already in sync
+	SyncTypeUpdate                          // Update existing secret
+	SyncTypeCreate                          // Create missing secret
+	SyncTypeRestoreMetadata                 // Add metadata to existing secret
+)
+
+// SyncSecret performs per-secret synchronization across all HSM devices
 func (sm *SyncManager) SyncSecret(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret) (*SyncResult, error) {
 	logger := sm.logger.WithValues("secret", hsmSecret.Name, "namespace", hsmSecret.Namespace)
 	secretPath := hsmSecret.Name
@@ -84,97 +123,354 @@ func (sm *SyncManager) SyncSecret(ctx context.Context, hsmSecret *hsmv1alpha1.HS
 	if len(devices) == 0 {
 		return &SyncResult{
 			Success:       false,
-			DeviceResults: make(map[string]DeviceResult),
+			SecretResults: make(map[string]SecretSyncResult),
+			Errors:        []string{"no HSM devices available"},
 		}, fmt.Errorf("no HSM devices available")
 	}
 
-	logger.Info("Starting multi-device sync", "devices", len(devices))
+	logger.Info("Starting per-secret sync", "devices", len(devices), "secretPath", secretPath)
 
-	// Read data from all online devices
-	deviceResults := make(map[string]DeviceResult)
-	validDeviceData := make(map[string]hsm.SecretData)
+	// Build inventory of all secrets across all devices
+	inventory, err := sm.buildSecretInventory(ctx, []string{secretPath}, devices, hsmSecret.Namespace, logger)
+	if err != nil {
+		return &SyncResult{
+			Success:       false,
+			SecretResults: make(map[string]SecretSyncResult),
+			Errors:        []string{fmt.Sprintf("failed to build secret inventory: %v", err)},
+		}, fmt.Errorf("failed to build secret inventory: %w", err)
+	}
 
+	// Create sync plan for the single secret
+	syncPlans := sm.createSyncPlans(inventory, logger)
+
+	// Execute sync operations
+	result := sm.executeSyncPlans(ctx, syncPlans, hsmSecret.Namespace, logger)
+
+	logger.Info("Per-secret sync completed",
+		"secretsProcessed", result.SecretsProcessed,
+		"secretsUpdated", result.SecretsUpdated,
+		"secretsCreated", result.SecretsCreated,
+		"metadataRestored", result.MetadataRestored,
+		"errors", len(result.Errors))
+
+	return result, nil
+}
+
+// buildSecretInventory builds a comprehensive inventory of secrets across all devices
+func (sm *SyncManager) buildSecretInventory(ctx context.Context, secretPaths []string, devices []string, namespace string, logger logr.Logger) (map[string]*SecretInventory, error) {
+	inventory := make(map[string]*SecretInventory)
+
+	// Initialize inventory entries for requested secrets
+	for _, secretPath := range secretPaths {
+		inventory[secretPath] = &SecretInventory{
+			SecretPath:   secretPath,
+			DeviceStates: make(map[string]*SecretState),
+		}
+	}
+
+	// Check each device for the presence and state of each secret
 	for _, deviceName := range devices {
-		result := sm.readFromDevice(ctx, deviceName, secretPath, logger)
-		deviceResults[deviceName] = result
+		logger.Info("Checking device for secrets", "device", deviceName, "secretCount", len(secretPaths))
 
-		if result.Online && result.Error == nil {
-			// Calculate checksum for the data (we'll get the actual data in practice)
-			// For now, simulating based on checksum
-			validDeviceData[deviceName] = hsm.SecretData{
-				"checksum": []byte(result.Checksum),
+		// Create gRPC client for this device
+		grpcClient, err := sm.agentManager.CreateSingleGRPCClient(ctx, deviceName, namespace, logger)
+		if err != nil {
+			logger.Error(err, "Failed to create gRPC client", "device", deviceName)
+			// Mark all secrets as having an error on this device
+			for secretPath := range inventory {
+				inventory[secretPath].DeviceStates[deviceName] = &SecretState{
+					Present:     false,
+					Version:     0,
+					Timestamp:   time.Now(),
+					Checksum:    "",
+					HasMetadata: false,
+					Error:       fmt.Errorf("gRPC client creation failed: %w", err),
+				}
+			}
+			continue
+		}
+
+		defer func(client hsm.Client, device string) {
+			if closeErr := client.Close(); closeErr != nil {
+				logger.V(1).Info("Failed to close gRPC client", "device", device, "error", closeErr)
+			}
+		}(grpcClient, deviceName)
+
+		// Check if device is connected
+		if !grpcClient.IsConnected() {
+			logger.V(1).Info("Device not connected", "device", deviceName)
+			for secretPath := range inventory {
+				inventory[secretPath].DeviceStates[deviceName] = &SecretState{
+					Present:     false,
+					Version:     0,
+					Timestamp:   time.Now(),
+					Checksum:    "",
+					HasMetadata: false,
+					Error:       fmt.Errorf("device not connected"),
+				}
+			}
+			continue
+		}
+
+		// Check each secret on this device
+		for _, secretPath := range secretPaths {
+			state := &SecretState{
+				Present:     false,
+				Version:     0,
+				Timestamp:   time.Now(),
+				Checksum:    "",
+				HasMetadata: false,
+				Error:       nil,
+			}
+
+			// Try to read the secret to check if it exists
+			data, err := grpcClient.ReadSecret(ctx, secretPath)
+			if err != nil {
+				// Secret doesn't exist on this device
+				logger.V(1).Info("Secret not found on device", "device", deviceName, "secret", secretPath)
+				state.Error = fmt.Errorf("secret not found: %w", err)
+			} else {
+				// Secret exists, calculate checksum
+				state.Present = true
+				state.Checksum = sm.calculateChecksum(data)
+				logger.V(1).Info("Secret found on device", "device", deviceName, "secret", secretPath, "checksum", state.Checksum[:8])
+
+				// Try to read metadata
+				metadata, metaErr := grpcClient.ReadMetadata(ctx, secretPath)
+				if metaErr == nil && metadata != nil && metadata.Labels != nil {
+					// Extract version and timestamp from metadata
+					if versionStr, exists := metadata.Labels["sync.version"]; exists {
+						if version, parseErr := parseVersion(versionStr); parseErr == nil {
+							state.Version = version
+							state.HasMetadata = true
+						}
+					}
+					if timestampStr, exists := metadata.Labels["sync.timestamp"]; exists {
+						if timestamp, parseErr := time.Parse(time.RFC3339, timestampStr); parseErr == nil {
+							state.Timestamp = timestamp
+						}
+					}
+					logger.V(1).Info("Metadata found", "device", deviceName, "secret", secretPath,
+						"version", state.Version, "timestamp", state.Timestamp.Format(time.RFC3339))
+				} else {
+					logger.V(1).Info("No metadata found", "device", deviceName, "secret", secretPath)
+				}
+			}
+
+			inventory[secretPath].DeviceStates[deviceName] = state
+		}
+	}
+
+	return inventory, nil
+}
+
+// createSyncPlans analyzes secret inventory and creates sync plans for each secret
+func (sm *SyncManager) createSyncPlans(inventory map[string]*SecretInventory, logger logr.Logger) []*SecretSyncPlan {
+	var plans []*SecretSyncPlan
+
+	for secretPath, secretInventory := range inventory {
+		plan := sm.createSyncPlanForSecret(secretPath, secretInventory, logger)
+		if plan != nil {
+			plans = append(plans, plan)
+		}
+	}
+
+	return plans
+}
+
+// createSyncPlanForSecret creates a sync plan for a specific secret across all devices
+func (sm *SyncManager) createSyncPlanForSecret(secretPath string, inventory *SecretInventory, logger logr.Logger) *SecretSyncPlan {
+	// Find the authoritative source device (highest version, most recent timestamp)
+	var sourceDevice string
+	var sourceVersion int64 = -1
+	var sourceTimestamp time.Time
+	var devicesWithSecret []string
+	var devicesNeedingSecret []string
+	var devicesNeedingMetadata []string
+
+	// Analyze all device states for this secret
+	for deviceName, state := range inventory.DeviceStates {
+		if state.Error != nil {
+			logger.V(1).Info("Device has error, skipping", "device", deviceName, "secret", secretPath, "error", state.Error)
+			continue
+		}
+
+		if state.Present {
+			devicesWithSecret = append(devicesWithSecret, deviceName)
+
+			// Check if this device has the most authoritative version
+			if state.HasMetadata {
+				if state.Version > sourceVersion ||
+					(state.Version == sourceVersion && state.Timestamp.After(sourceTimestamp)) {
+					sourceDevice = deviceName
+					sourceVersion = state.Version
+					sourceTimestamp = state.Timestamp
+				}
+			} else {
+				// Secret exists but lacks metadata - needs restoration
+				devicesNeedingMetadata = append(devicesNeedingMetadata, deviceName)
+
+				// If no source found yet and this device has the secret, it could be the source
+				// We'll use timestamp as fallback (creation time from our scan)
+				if sourceDevice == "" {
+					sourceDevice = deviceName
+					sourceVersion = 0 // Will trigger metadata creation
+					sourceTimestamp = state.Timestamp
+				}
+			}
+		} else {
+			// Device doesn't have this secret
+			devicesNeedingSecret = append(devicesNeedingSecret, deviceName)
+		}
+	}
+
+	// Determine sync operation type
+	if len(devicesWithSecret) == 0 {
+		// No devices have this secret - nothing to sync
+		logger.V(1).Info("Secret not found on any device", "secret", secretPath)
+		return nil
+	}
+
+	if len(devicesNeedingSecret) == 0 && len(devicesNeedingMetadata) == 0 {
+		// All devices have the secret with metadata - check if they're in sync
+		allInSync := true
+		for _, state := range inventory.DeviceStates {
+			if state.Error == nil && state.Present {
+				if !state.HasMetadata || state.Version != sourceVersion {
+					allInSync = false
+					break
+				}
+			}
+		}
+
+		if allInSync {
+			logger.V(1).Info("Secret already in sync across all devices", "secret", secretPath)
+			return &SecretSyncPlan{
+				SecretPath:    secretPath,
+				SourceDevice:  sourceDevice,
+				SourceVersion: sourceVersion,
+				TargetDevices: []string{}, // No targets needed
+				SyncType:      SyncTypeSkip,
 			}
 		}
 	}
 
-	// Detect conflicts and resolve
-	conflictDetected := sm.detectConflicts(deviceResults)
-	primaryDevice := sm.selectPrimaryDevice(deviceResults, hsmSecret)
+	// Determine target devices that need updates
+	var targetDevices []string
+	var syncType SyncType
 
-	var resolvedData hsm.SecretData
-	if primaryDevice != "" && validDeviceData[primaryDevice] != nil {
-		resolvedData = validDeviceData[primaryDevice]
-		logger.Info("Using primary device data", "primaryDevice", primaryDevice)
-	} else if len(validDeviceData) > 0 {
-		// Use most recent data if no clear primary
-		resolvedData = sm.selectMostRecentData(deviceResults, validDeviceData)
-		logger.Info("Using most recent data for resolution")
+	// Add devices that need the secret created
+	targetDevices = append(targetDevices, devicesNeedingSecret...)
+	if len(devicesNeedingSecret) > 0 {
+		syncType = SyncTypeCreate
 	}
 
-	// If conflict detected and we have a resolution, sync to all other devices
-	if conflictDetected && primaryDevice != "" {
-		sm.syncToSecondaryDevices(ctx, devices, primaryDevice, secretPath, resolvedData, logger)
+	// Add devices that need metadata restoration
+	targetDevices = append(targetDevices, devicesNeedingMetadata...)
+	if len(devicesNeedingMetadata) > 0 && syncType != SyncTypeCreate {
+		syncType = SyncTypeRestoreMetadata
 	}
 
-	return &SyncResult{
-		Success:          len(validDeviceData) > 0,
-		ConflictDetected: conflictDetected,
-		PrimaryDevice:    primaryDevice,
-		DeviceResults:    deviceResults,
-		ResolvedData:     resolvedData,
-	}, nil
+	// Add devices that have outdated versions
+	for deviceName, state := range inventory.DeviceStates {
+		if state.Error == nil && state.Present && state.HasMetadata {
+			if state.Version < sourceVersion {
+				// This device has an older version
+				targetDevices = append(targetDevices, deviceName)
+				if syncType != SyncTypeCreate && syncType != SyncTypeRestoreMetadata {
+					syncType = SyncTypeUpdate
+				}
+			}
+		}
+	}
+
+	// Remove duplicates from target devices
+	targetDevices = removeDuplicates(targetDevices)
+
+	// Remove source device from targets (don't sync to itself)
+	targetDevices = removeDevice(targetDevices, sourceDevice)
+
+	if len(targetDevices) == 0 {
+		// No targets needed
+		return &SecretSyncPlan{
+			SecretPath:    secretPath,
+			SourceDevice:  sourceDevice,
+			SourceVersion: sourceVersion,
+			TargetDevices: []string{},
+			SyncType:      SyncTypeSkip,
+		}
+	}
+
+	logger.Info("Created sync plan", "secret", secretPath,
+		"sourceDevice", sourceDevice, "sourceVersion", sourceVersion,
+		"targetDevices", len(targetDevices), "syncType", syncType)
+
+	return &SecretSyncPlan{
+		SecretPath:    secretPath,
+		SourceDevice:  sourceDevice,
+		SourceVersion: sourceVersion,
+		TargetDevices: targetDevices,
+		SyncType:      syncType,
+	}
 }
 
-// readFromDevice reads secret data from a specific HSM device
-func (sm *SyncManager) readFromDevice(ctx context.Context, deviceName, secretPath string, logger logr.Logger) DeviceResult {
-	result := DeviceResult{
-		Timestamp: time.Now(),
-	}
+// removeDuplicates removes duplicate strings from a slice
+func removeDuplicates(slice []string) []string {
+	keys := make(map[string]bool)
+	var result []string
 
-	// Get gRPC client for this device
-	grpcClient, err := sm.agentManager.CreateSingleGRPCClient(ctx, deviceName, logger)
-	if err != nil {
-		result.Error = fmt.Errorf("failed to create gRPC client: %w", err)
-		return result
-	}
-	defer func() {
-		if closeErr := grpcClient.Close(); closeErr != nil {
-			logger.V(1).Info("Failed to close gRPC client", "error", closeErr)
+	for _, item := range slice {
+		if !keys[item] {
+			keys[item] = true
+			result = append(result, item)
 		}
-	}()
-
-	result.Online = grpcClient.IsConnected()
-	if !result.Online {
-		result.Error = fmt.Errorf("device not connected")
-		return result
 	}
 
-	// Try to read the secret
-	data, err := grpcClient.ReadSecret(ctx, secretPath)
-	if err != nil {
-		result.Error = fmt.Errorf("failed to read secret: %w", err)
-		return result
+	return result
+}
+
+// removeDevice removes a specific device from a slice of devices
+func removeDevice(devices []string, deviceToRemove string) []string {
+	var result []string
+
+	for _, device := range devices {
+		if device != deviceToRemove {
+			result = append(result, device)
+		}
 	}
 
-	// Calculate checksum
-	result.Checksum = sm.calculateChecksum(data)
+	return result
+}
 
-	// Get metadata to extract version (if available)
-	metadata, err := grpcClient.ReadMetadata(ctx, secretPath)
-	if err == nil && metadata != nil {
-		if versionStr, exists := metadata.Labels["sync.version"]; exists {
-			if version, parseErr := parseVersion(versionStr); parseErr == nil {
-				result.Version = version
+// executeSyncPlans executes sync operations for all planned secret synchronizations
+func (sm *SyncManager) executeSyncPlans(ctx context.Context, plans []*SecretSyncPlan, namespace string, logger logr.Logger) *SyncResult {
+	result := &SyncResult{
+		Success:          true,
+		SecretsProcessed: len(plans),
+		SecretsUpdated:   0,
+		SecretsCreated:   0,
+		MetadataRestored: 0,
+		SecretResults:    make(map[string]SecretSyncResult),
+		Errors:           []string{},
+	}
+
+	for _, plan := range plans {
+		secretResult := sm.executeSyncPlan(ctx, plan, namespace, logger)
+		result.SecretResults[plan.SecretPath] = secretResult
+
+		if secretResult.Success {
+			switch secretResult.SyncType {
+			case SyncTypeCreate:
+				result.SecretsCreated++
+			case SyncTypeUpdate:
+				result.SecretsUpdated++
+			case SyncTypeRestoreMetadata:
+				result.MetadataRestored++
+			}
+		} else {
+			result.Success = false
+			if secretResult.Error != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", plan.SecretPath, secretResult.Error))
 			}
 		}
 	}
@@ -182,120 +478,183 @@ func (sm *SyncManager) readFromDevice(ctx context.Context, deviceName, secretPat
 	return result
 }
 
-// detectConflicts checks if there are conflicting checksums across devices
-func (sm *SyncManager) detectConflicts(deviceResults map[string]DeviceResult) bool {
-	checksums := make(map[string]int)
-	onlineDevices := 0
-
-	for _, result := range deviceResults {
-		if result.Online && result.Error == nil && result.Checksum != "" {
-			checksums[result.Checksum]++
-			onlineDevices++
-		}
+// executeSyncPlan executes a single secret sync plan
+func (sm *SyncManager) executeSyncPlan(ctx context.Context, plan *SecretSyncPlan, namespace string, logger logr.Logger) SecretSyncResult {
+	result := SecretSyncResult{
+		SecretPath:    plan.SecretPath,
+		SourceDevice:  plan.SourceDevice,
+		SourceVersion: plan.SourceVersion,
+		TargetDevices: plan.TargetDevices,
+		SyncType:      plan.SyncType,
+		Success:       false,
+		Error:         nil,
 	}
 
-	// Conflict if we have more than one unique checksum across online devices
-	return len(checksums) > 1 && onlineDevices > 1
-}
-
-// selectPrimaryDevice chooses the primary device for conflict resolution
-func (sm *SyncManager) selectPrimaryDevice(deviceResults map[string]DeviceResult, hsmSecret *hsmv1alpha1.HSMSecret) string {
-	// Check if there's already a designated primary in the status
-	if hsmSecret.Status.PrimaryDevice != "" {
-		if result, exists := deviceResults[hsmSecret.Status.PrimaryDevice]; exists && result.Online && result.Error == nil {
-			return hsmSecret.Status.PrimaryDevice
-		}
+	// Skip if no sync needed
+	if plan.SyncType == SyncTypeSkip {
+		result.Success = true
+		logger.V(1).Info("Skipping sync - already in sync", "secret", plan.SecretPath)
+		return result
 	}
 
-	// Find device with highest version number among online devices
-	var bestDevice string
-	var highestVersion int64 = -1
-	var mostRecentTime time.Time
+	// Get source data and metadata
+	sourceData, sourceMetadata, err := sm.readSecretWithMetadata(ctx, plan.SourceDevice, plan.SecretPath, namespace, logger)
+	if err != nil {
+		result.Error = fmt.Errorf("failed to read source secret: %w", err)
+		logger.Error(err, "Failed to read source secret", "device", plan.SourceDevice, "secret", plan.SecretPath)
+		return result
+	}
 
-	for deviceName, result := range deviceResults {
-		if result.Online && result.Error == nil {
-			// Prefer higher version numbers
-			if result.Version > highestVersion {
-				highestVersion = result.Version
-				bestDevice = deviceName
-				mostRecentTime = result.Timestamp
-			} else if result.Version == highestVersion && result.Timestamp.After(mostRecentTime) {
-				// If versions are equal, prefer more recent timestamp
-				bestDevice = deviceName
-				mostRecentTime = result.Timestamp
+	// Prepare metadata for sync
+	newVersion := time.Now().Unix()
+	if sourceMetadata != nil && sourceMetadata.Labels != nil {
+		if versionStr, exists := sourceMetadata.Labels["sync.version"]; exists {
+			if existingVersion, parseErr := parseVersion(versionStr); parseErr == nil && existingVersion > 0 {
+				newVersion = existingVersion
 			}
 		}
 	}
 
-	return bestDevice
-}
+	// Create or update metadata
+	syncMetadata := &hsm.SecretMetadata{
+		Labels: map[string]string{
+			"sync.version":   fmt.Sprintf("%d", newVersion),
+			"sync.timestamp": time.Now().Format(time.RFC3339),
+			"sync.source":    plan.SourceDevice,
+		},
+	}
 
-// selectMostRecentData selects the most recently modified data
-func (sm *SyncManager) selectMostRecentData(deviceResults map[string]DeviceResult, validDeviceData map[string]hsm.SecretData) hsm.SecretData {
-	var mostRecentDevice string
-	var mostRecentTime time.Time
-
-	for deviceName, result := range deviceResults {
-		if result.Online && result.Error == nil && result.Timestamp.After(mostRecentTime) {
-			mostRecentTime = result.Timestamp
-			mostRecentDevice = deviceName
+	// Handle metadata restoration on source device if needed
+	if plan.SyncType == SyncTypeRestoreMetadata {
+		if sourceMetadata == nil || sourceMetadata.Labels == nil || sourceMetadata.Labels["sync.version"] == "" {
+			logger.Info("Restoring metadata on source device", "device", plan.SourceDevice, "secret", plan.SecretPath)
+			if err := sm.writeSecretWithMetadata(ctx, plan.SourceDevice, plan.SecretPath, sourceData, syncMetadata, namespace, logger); err != nil {
+				result.Error = fmt.Errorf("failed to restore metadata on source: %w", err)
+				return result
+			}
 		}
 	}
 
-	if mostRecentDevice != "" && validDeviceData[mostRecentDevice] != nil {
-		return validDeviceData[mostRecentDevice]
+	// Sync to target devices
+	successfulTargets := 0
+	for _, targetDevice := range plan.TargetDevices {
+		logger.Info("Syncing secret to target device", "secret", plan.SecretPath, "source", plan.SourceDevice, "target", targetDevice, "version", newVersion)
+
+		var syncErr error
+		switch plan.SyncType {
+		case SyncTypeCreate, SyncTypeUpdate:
+			syncErr = sm.writeSecretWithMetadata(ctx, targetDevice, plan.SecretPath, sourceData, syncMetadata, namespace, logger)
+		case SyncTypeRestoreMetadata:
+			// For metadata restoration, we just update the metadata without changing the data
+			syncErr = sm.writeMetadataOnly(ctx, targetDevice, plan.SecretPath, syncMetadata, namespace, logger)
+		}
+
+		if syncErr != nil {
+			logger.Error(syncErr, "Failed to sync to target device", "target", targetDevice, "secret", plan.SecretPath)
+			if result.Error == nil {
+				result.Error = syncErr
+			}
+		} else {
+			successfulTargets++
+			logger.Info("Successfully synced to target device", "target", targetDevice, "secret", plan.SecretPath)
+		}
 	}
 
-	// Return first available data if no clear winner
-	for _, data := range validDeviceData {
-		return data
+	// Consider sync successful if we synced to at least some targets (partial success)
+	result.Success = successfulTargets > 0 || len(plan.TargetDevices) == 0
+
+	if result.Success {
+		logger.Info("Sync plan executed successfully", "secret", plan.SecretPath,
+			"syncType", plan.SyncType, "targetCount", successfulTargets)
+	}
+
+	return result
+}
+
+// readSecretWithMetadata reads both secret data and metadata from a device
+func (sm *SyncManager) readSecretWithMetadata(ctx context.Context, deviceName, secretPath, namespace string, logger logr.Logger) (hsm.SecretData, *hsm.SecretMetadata, error) {
+	grpcClient, err := sm.agentManager.CreateSingleGRPCClient(ctx, deviceName, namespace, logger)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create gRPC client: %w", err)
+	}
+	defer func() {
+		if closeErr := grpcClient.Close(); closeErr != nil {
+			logger.V(1).Info("Failed to close gRPC client", "error", closeErr)
+		}
+	}()
+
+	if !grpcClient.IsConnected() {
+		return nil, nil, fmt.Errorf("device not connected")
+	}
+
+	// Read secret data
+	data, err := grpcClient.ReadSecret(ctx, secretPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read secret: %w", err)
+	}
+
+	// Read metadata (may not exist)
+	metadata, err := grpcClient.ReadMetadata(ctx, secretPath)
+	if err != nil {
+		logger.V(1).Info("No metadata found for secret", "secret", secretPath, "device", deviceName)
+		metadata = nil // Not an error - metadata may not exist
+	}
+
+	return data, metadata, nil
+}
+
+// writeSecretWithMetadata writes both secret data and metadata to a device
+func (sm *SyncManager) writeSecretWithMetadata(ctx context.Context, deviceName, secretPath string, data hsm.SecretData, metadata *hsm.SecretMetadata, namespace string, logger logr.Logger) error {
+	grpcClient, err := sm.agentManager.CreateSingleGRPCClient(ctx, deviceName, namespace, logger)
+	if err != nil {
+		return fmt.Errorf("failed to create gRPC client: %w", err)
+	}
+	defer func() {
+		if closeErr := grpcClient.Close(); closeErr != nil {
+			logger.V(1).Info("Failed to close gRPC client", "error", closeErr)
+		}
+	}()
+
+	if !grpcClient.IsConnected() {
+		return fmt.Errorf("device not connected")
+	}
+
+	// Write secret with metadata
+	if err := grpcClient.WriteSecretWithMetadata(ctx, secretPath, data, metadata); err != nil {
+		return fmt.Errorf("failed to write secret with metadata: %w", err)
 	}
 
 	return nil
 }
 
-// syncToSecondaryDevices syncs resolved data to all secondary devices
-func (sm *SyncManager) syncToSecondaryDevices(ctx context.Context, devices []string, primaryDevice, secretPath string, data hsm.SecretData, logger logr.Logger) {
-	for _, deviceName := range devices {
-		if deviceName == primaryDevice {
-			continue // Skip primary device
-		}
-
-		logger.Info("Syncing to secondary device", "device", deviceName)
-
-		grpcClient, err := sm.agentManager.CreateSingleGRPCClient(ctx, deviceName, logger)
-		if err != nil {
-			logger.Error(err, "Failed to create gRPC client for sync", "device", deviceName)
-			continue
-		}
-
-		if !grpcClient.IsConnected() {
-			logger.V(1).Info("Device offline, skipping sync", "device", deviceName)
-			if closeErr := grpcClient.Close(); closeErr != nil {
-				logger.V(1).Info("Failed to close gRPC client", "error", closeErr)
-			}
-			continue
-		}
-
-		// Write data with updated version metadata
-		metadata := &hsm.SecretMetadata{
-			Labels: map[string]string{
-				"sync.version":   fmt.Sprintf("%d", time.Now().Unix()),
-				"sync.primary":   primaryDevice,
-				"sync.timestamp": time.Now().Format(time.RFC3339),
-			},
-		}
-
-		if err := grpcClient.WriteSecretWithMetadata(ctx, secretPath, data, metadata); err != nil {
-			logger.Error(err, "Failed to sync to secondary device", "device", deviceName)
-		} else {
-			logger.Info("Successfully synced to secondary device", "device", deviceName)
-		}
-
+// writeMetadataOnly updates only the metadata for an existing secret
+func (sm *SyncManager) writeMetadataOnly(ctx context.Context, deviceName, secretPath string, metadata *hsm.SecretMetadata, namespace string, logger logr.Logger) error {
+	grpcClient, err := sm.agentManager.CreateSingleGRPCClient(ctx, deviceName, namespace, logger)
+	if err != nil {
+		return fmt.Errorf("failed to create gRPC client: %w", err)
+	}
+	defer func() {
 		if closeErr := grpcClient.Close(); closeErr != nil {
 			logger.V(1).Info("Failed to close gRPC client", "error", closeErr)
 		}
+	}()
+
+	if !grpcClient.IsConnected() {
+		return fmt.Errorf("device not connected")
 	}
+
+	// Read existing secret data first
+	existingData, err := grpcClient.ReadSecret(ctx, secretPath)
+	if err != nil {
+		return fmt.Errorf("failed to read existing secret data: %w", err)
+	}
+
+	// Write secret with updated metadata
+	if err := grpcClient.WriteSecretWithMetadata(ctx, secretPath, existingData, metadata); err != nil {
+		return fmt.Errorf("failed to write secret with metadata: %w", err)
+	}
+
+	return nil
 }
 
 // getAvailableDevices gets list of available HSM devices from HSMPools
@@ -332,43 +691,91 @@ func (sm *SyncManager) UpdateHSMSecretStatus(ctx context.Context, hsmSecret *hsm
 	if result.Success {
 		hsmSecret.Status.SyncStatus = hsmv1alpha1.SyncStatusInSync
 		hsmSecret.Status.LastSyncTime = &now
-		hsmSecret.Status.LastError = ""
+		if len(result.Errors) == 0 {
+			hsmSecret.Status.LastError = ""
+		} else {
+			// Partial success - some errors occurred
+			hsmSecret.Status.LastError = fmt.Sprintf("Partial sync completed with %d errors", len(result.Errors))
+		}
 	} else {
 		hsmSecret.Status.SyncStatus = hsmv1alpha1.SyncStatusError
-		hsmSecret.Status.LastError = "Failed to sync with any HSM device"
-	}
-
-	hsmSecret.Status.SyncConflict = result.ConflictDetected
-	hsmSecret.Status.PrimaryDevice = result.PrimaryDevice
-
-	// Update device-specific sync status
-	hsmSecret.Status.DeviceSyncStatus = make([]hsmv1alpha1.HSMDeviceSync, 0, len(result.DeviceResults))
-
-	for deviceName, deviceResult := range result.DeviceResults {
-		syncTime := metav1.NewTime(deviceResult.Timestamp)
-		deviceSync := hsmv1alpha1.HSMDeviceSync{
-			DeviceName:   deviceName,
-			LastSyncTime: &syncTime,
-			Checksum:     deviceResult.Checksum,
-			Online:       deviceResult.Online,
-			Version:      deviceResult.Version,
-		}
-
-		if deviceResult.Error != nil {
-			deviceSync.Status = hsmv1alpha1.SyncStatusError
-			deviceSync.LastError = deviceResult.Error.Error()
-		} else if deviceResult.Online {
-			deviceSync.Status = hsmv1alpha1.SyncStatusInSync
+		if len(result.Errors) > 0 {
+			hsmSecret.Status.LastError = result.Errors[0] // Show first error
 		} else {
-			deviceSync.Status = hsmv1alpha1.SyncStatusOutOfSync
+			hsmSecret.Status.LastError = "Failed to sync secret"
 		}
-
-		hsmSecret.Status.DeviceSyncStatus = append(hsmSecret.Status.DeviceSyncStatus, deviceSync)
 	}
 
-	// Update Kubernetes Secret checksum if we have resolved data
-	if result.ResolvedData != nil {
-		hsmSecret.Status.SecretChecksum = sm.calculateChecksum(result.ResolvedData)
+	// Update secret-level sync information
+	secretResult, hasSecretResult := result.SecretResults[hsmSecret.Name]
+	if hasSecretResult {
+		// Calculate checksum from the source device if sync was successful
+		if secretResult.Success {
+			// Read the current data to calculate checksum
+			if devices, err := sm.getAvailableDevices(ctx, hsmSecret.Namespace); err == nil && len(devices) > 0 {
+				if data, _, err := sm.readSecretWithMetadata(ctx, devices[0], hsmSecret.Name, hsmSecret.Namespace, sm.logger); err == nil {
+					hsmSecret.Status.SecretChecksum = sm.calculateChecksum(data)
+				}
+			}
+		}
+
+		// Set primary device information if available
+		if secretResult.SourceDevice != "" {
+			hsmSecret.Status.PrimaryDevice = secretResult.SourceDevice
+		}
+	}
+
+	// Update device-specific sync status based on available devices
+	devices, err := sm.getAvailableDevices(ctx, hsmSecret.Namespace)
+	if err == nil {
+		hsmSecret.Status.DeviceSyncStatus = make([]hsmv1alpha1.HSMDeviceSync, 0, len(devices))
+
+		for _, deviceName := range devices {
+			deviceSync := hsmv1alpha1.HSMDeviceSync{
+				DeviceName:   deviceName,
+				LastSyncTime: &now,
+				Checksum:     "",
+				Online:       true, // Assume online if in available devices list
+				Version:      0,
+			}
+
+			// Check if this device was involved in sync operations
+			if hasSecretResult {
+				if secretResult.SourceDevice == deviceName {
+					deviceSync.Status = hsmv1alpha1.SyncStatusInSync
+					deviceSync.Version = secretResult.SourceVersion
+				} else {
+					// Check if this device was a target
+					isTarget := false
+					for _, target := range secretResult.TargetDevices {
+						if target == deviceName {
+							isTarget = true
+							break
+						}
+					}
+
+					if isTarget {
+						if secretResult.Success {
+							deviceSync.Status = hsmv1alpha1.SyncStatusInSync
+							deviceSync.Version = secretResult.SourceVersion
+						} else {
+							deviceSync.Status = hsmv1alpha1.SyncStatusError
+							if secretResult.Error != nil {
+								deviceSync.LastError = secretResult.Error.Error()
+							}
+						}
+					} else {
+						// Device wasn't involved in sync - assume in sync
+						deviceSync.Status = hsmv1alpha1.SyncStatusInSync
+					}
+				}
+			} else {
+				// No secret result - assume in sync
+				deviceSync.Status = hsmv1alpha1.SyncStatusInSync
+			}
+
+			hsmSecret.Status.DeviceSyncStatus = append(hsmSecret.Status.DeviceSyncStatus, deviceSync)
+		}
 	}
 
 	return sm.client.Status().Update(ctx, hsmSecret)

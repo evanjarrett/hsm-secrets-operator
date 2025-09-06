@@ -292,6 +292,12 @@ func Run(args []string) error {
 		return err
 	}
 
+	// Set up HSM sync controller for multi-device synchronization
+	if err := controller.NewHSMSyncReconciler(mgr.GetClient(), mgr.GetScheme(), agentManager).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "HSMSync")
+		return err
+	}
+
 	// Set up discovery DaemonSet controller (manager-owned)
 	if err := (&controller.DiscoveryDaemonSetReconciler{
 		Client:        mgr.GetClient(),

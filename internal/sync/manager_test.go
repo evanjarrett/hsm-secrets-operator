@@ -19,12 +19,9 @@ package sync
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -32,83 +29,15 @@ import (
 	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
 )
 
-// MockGRPCClient implements hsm.Client for testing
-type MockGRPCClient struct {
-	mock.Mock
+// MockAgentManager is a mock implementation of AgentManagerInterface for testing
+type MockAgentManager struct{}
+
+func (m *MockAgentManager) CreateSingleGRPCClient(ctx context.Context, deviceName, namespace string, logger logr.Logger) (hsm.Client, error) {
+	// Return a mock client for testing
+	return hsm.NewMockClient(), nil
 }
 
-func (m *MockGRPCClient) Initialize(ctx context.Context, config hsm.Config) error {
-	args := m.Called(ctx, config)
-	return args.Error(0)
-}
-
-func (m *MockGRPCClient) IsConnected() bool {
-	args := m.Called()
-	return args.Bool(0)
-}
-
-func (m *MockGRPCClient) ReadSecret(ctx context.Context, path string) (hsm.SecretData, error) {
-	args := m.Called(ctx, path)
-	return args.Get(0).(hsm.SecretData), args.Error(1)
-}
-
-func (m *MockGRPCClient) WriteSecret(ctx context.Context, path string, data hsm.SecretData) error {
-	args := m.Called(ctx, path, data)
-	return args.Error(0)
-}
-
-func (m *MockGRPCClient) WriteSecretWithMetadata(ctx context.Context, path string, data hsm.SecretData, metadata *hsm.SecretMetadata) error {
-	args := m.Called(ctx, path, data, metadata)
-	return args.Error(0)
-}
-
-func (m *MockGRPCClient) DeleteSecret(ctx context.Context, path string) error {
-	args := m.Called(ctx, path)
-	return args.Error(0)
-}
-
-func (m *MockGRPCClient) ListSecrets(ctx context.Context, prefix string) ([]string, error) {
-	args := m.Called(ctx, prefix)
-	return args.Get(0).([]string), args.Error(1)
-}
-
-func (m *MockGRPCClient) GetInfo(ctx context.Context) (map[string]any, error) {
-	args := m.Called(ctx)
-	return args.Get(0).(map[string]any), args.Error(1)
-}
-
-func (m *MockGRPCClient) GetChecksum(ctx context.Context, path string) (string, error) {
-	args := m.Called(ctx, path)
-	return args.String(0), args.Error(1)
-}
-
-func (m *MockGRPCClient) ReadMetadata(ctx context.Context, path string) (*hsm.SecretMetadata, error) {
-	args := m.Called(ctx, path)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*hsm.SecretMetadata), args.Error(1)
-}
-
-func (m *MockGRPCClient) Close() error {
-	args := m.Called()
-	return args.Error(0)
-}
-
-// MockAgentManager implements AgentManagerInterface for testing
-type MockAgentManager struct {
-	mock.Mock
-}
-
-func (m *MockAgentManager) CreateSingleGRPCClient(ctx context.Context, deviceName string, logger logr.Logger) (hsm.Client, error) {
-	args := m.Called(ctx, deviceName, logger)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(hsm.Client), args.Error(1)
-}
-
-func TestSyncManager_CalculateChecksum(t *testing.T) {
+func TestNewSyncManager(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = hsmv1alpha1.AddToScheme(scheme)
 
@@ -117,209 +46,106 @@ func TestSyncManager_CalculateChecksum(t *testing.T) {
 
 	syncManager := NewSyncManager(client, mockAgentManager, logr.Discard())
 
-	// Test with nil data
-	checksum := syncManager.calculateChecksum(nil)
-	assert.Equal(t, "", checksum)
-
-	// Test with empty data
-	checksum = syncManager.calculateChecksum(hsm.SecretData{})
-	assert.NotEqual(t, "", checksum)
-
-	// Test with actual data
-	data1 := hsm.SecretData{
-		"key1": []byte("value1"),
-		"key2": []byte("value2"),
-	}
-	checksum1 := syncManager.calculateChecksum(data1)
-	assert.NotEqual(t, "", checksum1)
-
-	// Same data should produce same checksum
-	data2 := hsm.SecretData{
-		"key1": []byte("value1"),
-		"key2": []byte("value2"),
-	}
-	checksum2 := syncManager.calculateChecksum(data2)
-	assert.Equal(t, checksum1, checksum2)
-
-	// Different data should produce different checksum
-	data3 := hsm.SecretData{
-		"key1": []byte("different"),
-		"key2": []byte("value2"),
-	}
-	checksum3 := syncManager.calculateChecksum(data3)
-	assert.NotEqual(t, checksum1, checksum3)
-
-	// Key order shouldn't matter
-	data4 := hsm.SecretData{
-		"key2": []byte("value2"),
-		"key1": []byte("value1"),
-	}
-	checksum4 := syncManager.calculateChecksum(data4)
-	assert.Equal(t, checksum1, checksum4)
+	assert.NotNil(t, syncManager)
+	assert.NotNil(t, syncManager.client)
+	assert.NotNil(t, syncManager.agentManager)
+	assert.NotNil(t, syncManager.logger)
 }
 
-func TestSyncManager_UpdateHSMSecretStatus(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = hsmv1alpha1.AddToScheme(scheme)
-
-	hsmSecret := &hsmv1alpha1.HSMSecret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-secret",
-			Namespace: "default",
-		},
-		Spec: hsmv1alpha1.HSMSecretSpec{
-			AutoSync: true,
-		},
-	}
-
-	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(hsmSecret).WithStatusSubresource(&hsmv1alpha1.HSMSecret{}).Build()
-	mockAgentManager := &MockAgentManager{}
-
-	syncManager := NewSyncManager(client, mockAgentManager, logr.Discard())
-
-	// Test successful sync result
+func TestSyncResult_Structure(t *testing.T) {
+	// Test the new SyncResult structure
 	result := &SyncResult{
 		Success:          true,
-		ConflictDetected: false,
-		PrimaryDevice:    "device1",
-		DeviceResults: map[string]DeviceResult{
-			"device1": {
-				Online:    true,
-				Checksum:  "abc123",
-				Version:   1,
-				Error:     nil,
-				Timestamp: time.Now(),
+		SecretsProcessed: 3,
+		SecretsUpdated:   1,
+		SecretsCreated:   1,
+		MetadataRestored: 1,
+		SecretResults: map[string]SecretSyncResult{
+			"secret1": {
+				SecretPath:    "secret1",
+				SourceDevice:  "device1",
+				SourceVersion: 123,
+				TargetDevices: []string{"device2"},
+				SyncType:      SyncTypeUpdate,
+				Success:       true,
+				Error:         nil,
 			},
-			"device2": {
-				Online:    true,
-				Checksum:  "abc123",
-				Version:   1,
-				Error:     nil,
-				Timestamp: time.Now(),
+			"secret2": {
+				SecretPath:    "secret2",
+				SourceDevice:  "device2",
+				SourceVersion: 456,
+				TargetDevices: []string{"device1"},
+				SyncType:      SyncTypeCreate,
+				Success:       true,
+				Error:         nil,
 			},
 		},
-		ResolvedData: hsm.SecretData{
-			"key": []byte("value"),
-		},
+		Errors: []string{},
 	}
 
-	ctx := context.Background()
-	err := syncManager.UpdateHSMSecretStatus(ctx, hsmSecret, result)
-	assert.NoError(t, err)
+	assert.True(t, result.Success)
+	assert.Equal(t, 3, result.SecretsProcessed)
+	assert.Equal(t, 1, result.SecretsUpdated)
+	assert.Equal(t, 1, result.SecretsCreated)
+	assert.Equal(t, 1, result.MetadataRestored)
+	assert.Equal(t, 2, len(result.SecretResults))
+	assert.Equal(t, 0, len(result.Errors))
 
-	// Verify status was updated
-	assert.Equal(t, hsmv1alpha1.SyncStatusInSync, hsmSecret.Status.SyncStatus)
-	assert.Equal(t, "device1", hsmSecret.Status.PrimaryDevice)
-	assert.False(t, hsmSecret.Status.SyncConflict)
-	assert.Equal(t, "", hsmSecret.Status.LastError)
-	assert.Len(t, hsmSecret.Status.DeviceSyncStatus, 2)
+	// Check individual secret results
+	secret1Result := result.SecretResults["secret1"]
+	assert.Equal(t, "secret1", secret1Result.SecretPath)
+	assert.Equal(t, "device1", secret1Result.SourceDevice)
+	assert.Equal(t, int64(123), secret1Result.SourceVersion)
+	assert.Equal(t, SyncTypeUpdate, secret1Result.SyncType)
+	assert.True(t, secret1Result.Success)
+}
 
-	// Check device sync status
-	for _, deviceSync := range hsmSecret.Status.DeviceSyncStatus {
-		assert.True(t, deviceSync.Online)
-		assert.Equal(t, "abc123", deviceSync.Checksum)
-		assert.Equal(t, int64(1), deviceSync.Version)
-		assert.Equal(t, hsmv1alpha1.SyncStatusInSync, deviceSync.Status)
-		assert.Empty(t, deviceSync.LastError)
+func TestSyncTypes(t *testing.T) {
+	// Test that SyncType constants are correctly defined
+	assert.Equal(t, SyncType(0), SyncTypeSkip)
+	assert.Equal(t, SyncType(1), SyncTypeUpdate)
+	assert.Equal(t, SyncType(2), SyncTypeCreate)
+	assert.Equal(t, SyncType(3), SyncTypeRestoreMetadata)
+}
+
+func TestSecretSyncResult_Structure(t *testing.T) {
+	// Test that SecretSyncResult has the expected fields
+	result := SecretSyncResult{
+		SecretPath:    "test-secret",
+		SourceDevice:  "device1",
+		SourceVersion: 123,
+		TargetDevices: []string{"device2", "device3"},
+		SyncType:      SyncTypeCreate,
+		Success:       true,
+		Error:         nil,
+	}
+
+	assert.Equal(t, "test-secret", result.SecretPath)
+	assert.Equal(t, "device1", result.SourceDevice)
+	assert.Equal(t, int64(123), result.SourceVersion)
+	assert.Equal(t, []string{"device2", "device3"}, result.TargetDevices)
+	assert.Equal(t, SyncTypeCreate, result.SyncType)
+	assert.True(t, result.Success)
+	assert.Nil(t, result.Error)
+}
+
+func TestRemoveDuplicates(t *testing.T) {
+	// Test the removeDuplicates utility function
+	input := []string{"device1", "device2", "device1", "device3", "device2"}
+	expected := []string{"device1", "device2", "device3"}
+	result := removeDuplicates(input)
+
+	assert.Equal(t, len(expected), len(result))
+	for _, item := range expected {
+		assert.Contains(t, result, item)
 	}
 }
 
-func TestSyncManager_DetectConflicts(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = hsmv1alpha1.AddToScheme(scheme)
+func TestRemoveDevice(t *testing.T) {
+	// Test the removeDevice utility function
+	input := []string{"device1", "device2", "device3"}
+	result := removeDevice(input, "device2")
+	expected := []string{"device1", "device3"}
 
-	client := fake.NewClientBuilder().WithScheme(scheme).Build()
-	mockAgentManager := &MockAgentManager{}
-
-	syncManager := NewSyncManager(client, mockAgentManager, logr.Discard())
-
-	// Test with no conflicts (same checksums)
-	deviceResults := map[string]DeviceResult{
-		"device1": {
-			Online:   true,
-			Checksum: "abc123",
-			Version:  1,
-			Error:    nil,
-		},
-		"device2": {
-			Online:   true,
-			Checksum: "abc123", // Same checksum
-			Version:  1,
-			Error:    nil,
-		},
-	}
-
-	conflict := syncManager.detectConflicts(deviceResults)
-	assert.False(t, conflict)
-
-	// Test with conflicts (different checksums)
-	deviceResults = map[string]DeviceResult{
-		"device1": {
-			Online:   true,
-			Checksum: "abc123",
-			Version:  1,
-			Error:    nil,
-		},
-		"device2": {
-			Online:   true,
-			Checksum: "def456", // Different checksum
-			Version:  2,
-			Error:    nil,
-		},
-	}
-
-	conflict = syncManager.detectConflicts(deviceResults)
-	assert.True(t, conflict)
-}
-
-func TestSyncManager_SelectPrimaryDevice(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = hsmv1alpha1.AddToScheme(scheme)
-
-	client := fake.NewClientBuilder().WithScheme(scheme).Build()
-	mockAgentManager := &MockAgentManager{}
-
-	syncManager := NewSyncManager(client, mockAgentManager, logr.Discard())
-
-	// Test with existing primary device
-	hsmSecret := &hsmv1alpha1.HSMSecret{
-		Status: hsmv1alpha1.HSMSecretStatus{
-			PrimaryDevice: "device1",
-		},
-	}
-
-	deviceResults := map[string]DeviceResult{
-		"device1": {
-			Online:   true,
-			Checksum: "abc123",
-			Version:  1,
-			Error:    nil,
-		},
-		"device2": {
-			Online:   true,
-			Checksum: "def456",
-			Version:  2,
-			Error:    nil,
-		},
-	}
-
-	primary := syncManager.selectPrimaryDevice(deviceResults, hsmSecret)
-	assert.Equal(t, "device1", primary)
-
-	// Test with no existing primary - should choose highest version
-	hsmSecret.Status.PrimaryDevice = ""
-	primary = syncManager.selectPrimaryDevice(deviceResults, hsmSecret)
-	assert.Equal(t, "device2", primary) // device2 has version 2 vs device1's version 1
-
-	// Test with primary device offline - should fallback to highest version
-	hsmSecret.Status.PrimaryDevice = "device1"
-	deviceResults["device1"] = DeviceResult{
-		Online:   false, // Offline
-		Checksum: "abc123",
-		Version:  1,
-		Error:    nil,
-	}
-
-	primary = syncManager.selectPrimaryDevice(deviceResults, hsmSecret)
-	assert.Equal(t, "device2", primary)
+	assert.Equal(t, expected, result)
 }

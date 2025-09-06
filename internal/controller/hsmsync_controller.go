@@ -99,16 +99,14 @@ func (r *HSMSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	// Log sync results
-	if result.ConflictDetected {
-		logger.Info("Conflict detected and resolved",
-			"secret", hsmSecret.Name,
-			"primaryDevice", result.PrimaryDevice,
-			"devices", len(result.DeviceResults))
-	} else {
-		logger.V(1).Info("HSM sync completed successfully",
-			"secret", hsmSecret.Name,
-			"devices", len(result.DeviceResults))
-	}
+	logger.Info("Per-secret HSM sync completed",
+		"secret", hsmSecret.Name,
+		"success", result.Success,
+		"secretsProcessed", result.SecretsProcessed,
+		"secretsUpdated", result.SecretsUpdated,
+		"secretsCreated", result.SecretsCreated,
+		"metadataRestored", result.MetadataRestored,
+		"errors", len(result.Errors))
 
 	// Calculate next sync interval based on HSMSecret spec
 	syncInterval := r.SyncInterval

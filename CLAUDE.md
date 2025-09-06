@@ -8,6 +8,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Sync Architecture**: The operator implements **unidirectional sync from HSM to Kubernetes Secrets only**. HSM is the authoritative source of truth. K8s Secrets are read-only replicas that get updated when HSM data changes. There is no K8s → HSM sync functionality.
 
+**GitOps Deployment**: This Kubernetes deployment is GitOps-based. You are not able to push new images to the Kubernetes cluster from this machine. Code changes require updating the deployment through the GitOps pipeline.
+
+**Code Modernization**: Avoid keeping legacy code whenever possible. Replace and improve functions as necessary rather than maintaining backward compatibility with outdated patterns.
+
 ## Project Overview
 
 A Kubernetes operator that bridges Hardware Security Module (HSM) data storage with Kubernetes Secrets, providing true secret portability through hardware-based security. The operator implements a controller pattern that synchronizes HSM binary data files to Kubernetes Secret objects using a unified binary architecture with gRPC communication, automatic USB device discovery, and dynamic agent deployment.
@@ -43,15 +47,22 @@ The project uses a **unified binary** (`cmd/hsm-operator/main.go`) that operates
 **Race-Free Coordination:**
 - HSMDevice CRDs contain readonly specifications only (no status field)
 - Discovery pods report via their own pod annotations 
-- HSMPool CRDs aggregate all discovery reports from multiple nodes
+- **HSMPool CRDs are the source of truth** for agent discovery and multi-device operations
+- HSMPool aggregates all discovery reports from multiple nodes
 - Owner references ensure automatic cleanup when resources are deleted
 - 5-minute grace periods prevent agent churn during outages
+
+**Multi-Device Agent Architecture:**
+- **HSMPool-based Agent Discovery**: API and controllers query HSMPool to find all agent instances for a device type
+- **Multiple Agent Instances**: Each physical device gets its own agent pod (e.g., `hsm-agent-pico-hsm-0`, `hsm-agent-pico-hsm-1`)
+- **Multi-Agent Operations**: API operations (list, write, delete) work across all agents when mirroring is enabled
+- **Automatic Synchronization**: HSMSyncReconciler handles conflict detection and resolution between devices
 
 **gRPC Communication Architecture:**
 - Protocol definition in `api/proto/hsm/v1/hsm.proto` with 10 HSM operations
 - Manager ↔ Agent: gRPC for efficient, type-safe HSM operations  
 - Discovery → Manager: Pod annotations for race-free device reporting
-- External → Manager: REST API proxy routing to appropriate agents
+- **External → Manager**: REST API proxy routes to ALL agents for multi-device operations
 - Generated code: `api/proto/hsm/v1/hsm.pb.go` and `hsm_grpc.pb.go`
 
 **Controller Hierarchy:**
@@ -60,6 +71,7 @@ Manager Controllers:
 ├── HSMSecretReconciler - HSM to K8s Secret sync
 ├── HSMPoolReconciler - Aggregates discovery reports from pod annotations  
 ├── HSMPoolAgentReconciler - Deploys agents when pools are ready
+├── HSMSyncReconciler - Multi-device HSM synchronization and conflict resolution
 └── DiscoveryDaemonSetReconciler - Manages discovery DaemonSet lifecycle
 
 Discovery Controllers:
@@ -255,8 +267,14 @@ kubectl get hsmpool
 # Monitor sync status
 kubectl get hsmsecret my-secret -o jsonpath='{.status.syncStatus}'
 
-# Check discovered devices
+# Check discovered devices in HSMPool (source of truth for agents)
 kubectl get hsmpool -o jsonpath='{.status.aggregatedDevices[*].devicePath}'
+
+# Check HSMPool readiness for agent deployment
+kubectl get hsmpool -o custom-columns=NAME:.metadata.name,PHASE:.status.phase,DEVICES:.status.totalDevices
+
+# View all agent pods for multi-device setup
+kubectl get pods -l app.kubernetes.io/name=hsm-agent
 
 # View discovery pod reports  
 kubectl get pods -l app.kubernetes.io/component=discovery \
@@ -308,6 +326,15 @@ kubectl exec $AGENT_POD -- pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" -I
 2. `HSMPoolReconciler` aggregates device discovery reports from pod annotations (race-free)
 3. `HSMPoolAgentReconciler` deploys agents dynamically when devices are ready
 4. `HSMSyncReconciler` handles multi-device HSM synchronization (HSM ↔ HSM only)
+
+**Agent Discovery Architecture:**
+- **HSMPool as Source of Truth**: API and controllers query HSMPool.Status.AggregatedDevices instead of individual HSMDevice resources
+- **Multi-Instance Agent Tracking**: Agent manager tracks agents by keys like `pico-hsm-0`, `pico-hsm-1` for multiple physical devices
+- **Pool-Based Cleanup**: Agent cleanup based on HSMSecret existence rather than device-specific references
+- **API Multi-Device Operations**: 
+  - `findAvailableAgent()` queries HSMPools to find any available agent for a device type
+  - `getAllAvailableAgents()` returns all agents across all pools for mirroring operations
+  - Operations like delete/write with `mirror=true` target ALL agents simultaneously
 
 **PKCS#11 Client Implementation:**
 - Production: `internal/hsm/pkcs11_client.go` with CGO

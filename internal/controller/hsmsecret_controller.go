@@ -203,7 +203,7 @@ func (r *HSMSecretReconciler) ensureHSMAgents(ctx context.Context, hsmSecret *hs
 		}
 
 		// Create gRPC client using agent manager's direct pod connections
-		agentClient, err := r.AgentManager.CreateSingleGRPCClient(ctx, hsmDevice.Name, logger)
+		agentClient, err := r.AgentManager.CreateSingleGRPCClient(ctx, hsmDevice.Name, hsmSecret.Namespace, logger)
 		if err != nil {
 			// Clean up any successful connections before returning error
 			if err := deviceClients.Close(); err != nil {

@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -83,12 +84,9 @@ func (s *Server) Start(port int) error {
 
 // handleHealth handles health check requests
 func (s *Server) handleHealth(c *gin.Context) {
-	// In proxy mode, check if any agents are available
-	_, agentErr := s.findAvailableAgent(c.Request.Context(), "secrets")
-	hsmConnected := agentErr == nil
-
 	// Check if multiple agents are available for replication
 	agents, _ := s.getAllAvailableAgents(c.Request.Context(), "secrets")
+	hsmConnected := len(agents) > 0
 	replicationEnabled := len(agents) > 1
 	activeNodes := len(agents)
 
@@ -168,25 +166,14 @@ func (s *Server) corsMiddleware() gin.HandlerFunc {
 
 // findAvailableAgent finds an available HSM agent for handling requests
 func (s *Server) findAvailableAgent(ctx context.Context, namespace string) (string, error) {
-	if s.agentManager == nil {
-		return "", fmt.Errorf("agent manager not available")
+	agents, err := s.getAllAvailableAgents(ctx, namespace)
+	if err != nil {
+		return "", err
 	}
-
-	// List all HSMDevices to find one with an active agent
-	var hsmDeviceList hsmv1alpha1.HSMDeviceList
-	if err := s.client.List(ctx, &hsmDeviceList, client.InNamespace(namespace)); err != nil {
-		return "", fmt.Errorf("failed to list HSM devices: %w", err)
+	if len(agents) == 0 {
+		return "", fmt.Errorf("no available HSM agents found")
 	}
-
-	// Check if any device has an active agent with pod IPs
-	for _, device := range hsmDeviceList.Items {
-		if podIPs, err := s.agentManager.GetAgentPodIPs(device.Name); err == nil && len(podIPs) > 0 {
-			// Return the device name (we'll use AgentManager to get the actual client)
-			return device.Name, nil
-		}
-	}
-
-	return "", fmt.Errorf("no available HSM agents found")
+	return agents[0], nil
 }
 
 // getAllAvailableAgents finds all available HSM agents for mirroring operations
@@ -195,17 +182,24 @@ func (s *Server) getAllAvailableAgents(ctx context.Context, namespace string) ([
 		return nil, fmt.Errorf("agent manager not available")
 	}
 
-	// List all HSMDevices to find all with active agents
-	var hsmDeviceList hsmv1alpha1.HSMDeviceList
-	if err := s.client.List(ctx, &hsmDeviceList, client.InNamespace(namespace)); err != nil {
-		return nil, fmt.Errorf("failed to list HSM devices: %w", err)
+	// List all HSMPools to find all with active agents
+	var hsmPoolList hsmv1alpha1.HSMPoolList
+	if err := s.client.List(ctx, &hsmPoolList, client.InNamespace(namespace)); err != nil {
+		return nil, fmt.Errorf("failed to list HSM pools: %w", err)
 	}
 
 	var availableDevices []string
-	// Check all devices that have active agents with pod IPs
-	for _, device := range hsmDeviceList.Items {
-		if podIPs, err := s.agentManager.GetAgentPodIPs(device.Name); err == nil && len(podIPs) > 0 {
-			availableDevices = append(availableDevices, device.Name)
+	// Check all pools that have active agents
+	for _, pool := range hsmPoolList.Items {
+		if pool.Status.Phase != hsmv1alpha1.HSMPoolPhaseReady {
+			continue
+		}
+
+		// Extract device name from pool name (remove "-pool" suffix)
+		deviceName := strings.TrimSuffix(pool.Name, "-pool")
+
+		if podIPs, err := s.agentManager.GetAgentPodIPs(ctx, deviceName, namespace); err == nil && len(podIPs) > 0 {
+			availableDevices = append(availableDevices, deviceName)
 		}
 	}
 
@@ -217,14 +211,14 @@ func (s *Server) getAllAvailableAgents(ctx context.Context, namespace string) ([
 }
 
 // createGRPCClient creates a gRPC client for the specified device using AgentManager
-func (s *Server) createGRPCClient(ctx context.Context, deviceName, _ string) (hsm.Client, error) {
+func (s *Server) createGRPCClient(ctx context.Context, deviceName, namespace string) (hsm.Client, error) {
 	// Use the AgentManager to create a gRPC client directly
 	if s.agentManager == nil {
 		return nil, fmt.Errorf("agent manager not available")
 	}
 
 	// Create gRPC client using AgentManager's existing method
-	grpcClient, err := s.agentManager.CreateSingleGRPCClient(ctx, deviceName, s.logger)
+	grpcClient, err := s.agentManager.CreateSingleGRPCClient(ctx, deviceName, namespace, s.logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gRPC client for device %s: %w", deviceName, err)
 	}
