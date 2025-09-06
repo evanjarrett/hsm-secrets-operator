@@ -611,7 +611,7 @@ func (mm *MirrorManager) writeMetadataOnly(ctx context.Context, deviceName, secr
 	return nil
 }
 
-// getAvailableDevices gets list of available HSM devices from HSMPools in the operator namespace
+// getAvailableDevices gets list of available physical HSM devices from HSMPools in the operator namespace
 func (mm *MirrorManager) getAvailableDevices(ctx context.Context, operatorNamespace string) ([]string, error) {
 	var hsmPoolList hsmv1alpha1.HSMPoolList
 	// HSMPools are always in the operator namespace (where controller-manager runs)
@@ -623,8 +623,16 @@ func (mm *MirrorManager) getAvailableDevices(ctx context.Context, operatorNamesp
 
 	for _, pool := range hsmPoolList.Items {
 		if pool.Status.Phase == hsmv1alpha1.HSMPoolPhaseReady {
-			for _, deviceRef := range pool.Spec.HSMDeviceRefs {
-				deviceNames[deviceRef] = true
+			// Count actual aggregated physical devices, not just device references
+			for i, aggregatedDevice := range pool.Status.AggregatedDevices {
+				if aggregatedDevice.Available {
+					// Create unique device name for each physical device instance
+					// This matches the agent naming scheme: deviceRef-i
+					for _, deviceRef := range pool.Spec.HSMDeviceRefs {
+						physicalDeviceName := fmt.Sprintf("%s-%d", deviceRef, i)
+						deviceNames[physicalDeviceName] = true
+					}
+				}
 			}
 		}
 	}
