@@ -251,9 +251,6 @@ func Run(args []string) error {
 		return err
 	}
 
-	// HSM mirroring is now handled by the sync package and HSMSyncReconciler
-	// Device discovery is handled by separate discovery daemon
-
 	// Get current operator namespace and name
 	operatorNamespace := getCurrentNamespace()
 	operatorName := getOperatorName()

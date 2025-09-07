@@ -56,7 +56,7 @@ The project uses a **unified binary** (`cmd/hsm-operator/main.go`) that operates
 - **HSMPool-based Agent Discovery**: API and controllers query HSMPool to find all agent instances for a device type
 - **Multiple Agent Instances**: Each physical device gets its own agent pod (e.g., `hsm-agent-pico-hsm-0`, `hsm-agent-pico-hsm-1`)
 - **Multi-Agent Operations**: API operations (list, write, delete) work across all agents when mirroring is enabled
-- **Automatic Synchronization**: HSMMirrorReconciler handles conflict detection and resolution between devices
+- **Automatic Synchronization**: Multi-device operations handle conflict detection and resolution between devices
 
 **gRPC Communication Architecture:**
 - Protocol definition in `api/proto/hsm/v1/hsm.proto` with 10 HSM operations
@@ -70,8 +70,7 @@ The project uses a **unified binary** (`cmd/hsm-operator/main.go`) that operates
 Manager Controllers:
 ├── HSMSecretReconciler - HSM to K8s Secret sync
 ├── HSMPoolReconciler - Aggregates discovery reports from pod annotations  
-├── HSMPoolAgentReconciler - Deploys agents when pools are ready
-├── HSMMirrorReconciler - Multi-device HSM mirroring and conflict resolution
+├── HSMPoolAgentReconciler - Deploys agents dynamically when devices are ready
 └── DiscoveryDaemonSetReconciler - Manages discovery DaemonSet lifecycle
 
 Discovery Controllers:
@@ -137,8 +136,7 @@ make quality test         # Verify changes
 # Production image (agent has PKCS#11 support)
 make docker-build IMG=hsm-secrets-operator:latest
 
-# Testing image (mock clients only, no CGO dependencies)  
-make docker-build-testing IMG=hsm-secrets-operator:latest
+# Production build only (testing handled via build tags)
 
 # Deploy to cluster
 make deploy IMG=hsm-secrets-operator:latest
@@ -325,7 +323,7 @@ kubectl exec $AGENT_POD -- pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" -I
 1. `HSMSecretReconciler` reads from HSM via gRPC agents
 2. `HSMPoolReconciler` aggregates device discovery reports from pod annotations (race-free)
 3. `HSMPoolAgentReconciler` deploys agents dynamically when devices are ready
-4. `HSMSyncReconciler` handles multi-device HSM synchronization (HSM ↔ HSM only)
+4. Multi-device operations provide HSM synchronization capabilities
 
 **Agent Discovery Architecture:**
 - **HSMPool as Source of Truth**: API and controllers query HSMPool.Status.AggregatedDevices instead of individual HSMDevice resources
