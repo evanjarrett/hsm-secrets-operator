@@ -611,7 +611,7 @@ func (mm *MirrorManager) writeMetadataOnly(ctx context.Context, deviceName, secr
 	return nil
 }
 
-// getAvailableDevices gets list of available physical HSM devices from HSMPools in the operator namespace
+// getAvailableDevices gets list of available physical HSM device instances from HSMPools in the operator namespace
 func (mm *MirrorManager) getAvailableDevices(ctx context.Context, operatorNamespace string) ([]string, error) {
 	var hsmPoolList hsmv1alpha1.HSMPoolList
 	// HSMPools are always in the operator namespace (where controller-manager runs)
@@ -619,31 +619,19 @@ func (mm *MirrorManager) getAvailableDevices(ctx context.Context, operatorNamesp
 		return nil, fmt.Errorf("failed to list HSM pools in operator namespace %s: %w", operatorNamespace, err)
 	}
 
-	deviceNames := make(map[string]bool)
+	var devices = []string{}
 
 	for _, pool := range hsmPoolList.Items {
 		if pool.Status.Phase == hsmv1alpha1.HSMPoolPhaseReady && len(pool.Status.AggregatedDevices) > 0 {
-			// Use the actual HSMDevice names from the pool spec
-			// AgentManager will handle connecting to the appropriate agent instances
-			for _, deviceRef := range pool.Spec.HSMDeviceRefs {
-				// Only add if there are available devices in this pool
-				hasAvailableDevice := false
-				for _, aggregatedDevice := range pool.Status.AggregatedDevices {
-					if aggregatedDevice.Available {
-						hasAvailableDevice = true
-						break
-					}
-				}
-				if hasAvailableDevice {
-					deviceNames[deviceRef] = true
+			for _, aggregatedDevice := range pool.Status.AggregatedDevices {
+				if aggregatedDevice.Available {
+					deviceName := &pool.OwnerReferences[0].Name
+					// Create device instance name: deviceRef-index (e.g., "pico-hsm-0", "pico-hsm-1")
+					deviceInstanceName := fmt.Sprintf("%s-%s", *deviceName, aggregatedDevice.SerialNumber)
+					devices = append(devices, deviceInstanceName)
 				}
 			}
 		}
-	}
-
-	devices := make([]string, 0, len(deviceNames))
-	for deviceName := range deviceNames {
-		devices = append(devices, deviceName)
 	}
 
 	sort.Strings(devices) // Ensure consistent ordering
