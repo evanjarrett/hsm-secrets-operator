@@ -203,7 +203,7 @@ func (r *HSMSecretReconciler) ensureHSMAgents(ctx context.Context, hsmSecret *hs
 		}
 
 		// Create gRPC client using agent manager's direct pod connections
-		agentClient, err := r.AgentManager.CreateSingleGRPCClient(ctx, hsmDevice.Name, hsmSecret.Namespace, logger)
+		agentClient, err := r.AgentManager.CreateGRPCClient(ctx, hsmDevice.Name, hsmSecret.Namespace, logger)
 		if err != nil {
 			// Clean up any successful connections before returning error
 			if err := deviceClients.Close(); err != nil {
@@ -404,7 +404,6 @@ func (r *HSMSecretReconciler) syncAcrossDevices(ctx context.Context, hsmSecret *
 		metadata := &hsm.SecretMetadata{
 			Labels: map[string]string{
 				"sync.version":   fmt.Sprintf("%d", newVersion),
-				"sync.primary":   primaryDevice,
 				"sync.timestamp": time.Now().Format(time.RFC3339),
 			},
 		}

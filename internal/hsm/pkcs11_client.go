@@ -691,6 +691,11 @@ func (c *PKCS11Client) ListSecrets(ctx context.Context, prefix string) ([]string
 
 		label := string(labelAttr[0].Value)
 
+		// Skip metadata objects when listing secrets
+		if strings.HasSuffix(label, metadataKeySuffix) {
+			continue
+		}
+
 		// Extract the base path (remove key suffix)
 		path := label
 		if strings.Contains(label, "/") {

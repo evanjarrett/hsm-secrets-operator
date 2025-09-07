@@ -226,7 +226,7 @@ func TestHSMSecretControllerGRPCIntegration(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify data was written to HSM via gRPC
-		agentClient, err := agentManager.CreateSingleGRPCClient(ctx, "test-hsm-device", "default", logger)
+		agentClient, err := agentManager.CreateGRPCClient(ctx, "test-hsm-device", "default", logger)
 		require.NoError(t, err)
 		defer func() {
 			assert.NoError(t, agentClient.Close())
@@ -342,7 +342,7 @@ func TestHSMSecretControllerGRPCIntegration(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify data exists in HSM
-		agentClient, err := agentManager.CreateSingleGRPCClient(ctx, "test-hsm-device", "default", logger)
+		agentClient, err := agentManager.CreateGRPCClient(ctx, "test-hsm-device", "default", logger)
 		require.NoError(t, err)
 		defer func() {
 			assert.NoError(t, agentClient.Close())

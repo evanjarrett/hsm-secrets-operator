@@ -331,7 +331,7 @@ func Run(args []string) error {
 
 	// Start API server if enabled
 	if enableAPI {
-		apiServer := api.NewServer(mgr.GetClient(), agentManager, ctrl.Log.WithName("api"))
+		apiServer := api.NewServer(mgr.GetClient(), agentManager, operatorNamespace, ctrl.Log.WithName("api"))
 
 		// Start API server in a separate goroutine
 		go func() {

@@ -32,7 +32,7 @@ import (
 // MockAgentManager is a mock implementation of AgentManagerInterface for testing
 type MockAgentManager struct{}
 
-func (m *MockAgentManager) CreateSingleGRPCClient(ctx context.Context, deviceName, namespace string, logger logr.Logger) (hsm.Client, error) {
+func (m *MockAgentManager) CreateGRPCClient(ctx context.Context, deviceName, namespace string, logger logr.Logger) (hsm.Client, error) {
 	// Return a mock client for testing
 	return hsm.NewMockClient(), nil
 }

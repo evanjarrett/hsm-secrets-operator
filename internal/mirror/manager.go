@@ -32,7 +32,7 @@ import (
 
 // AgentManagerInterface defines the interface for HSM agent management used by mirror
 type AgentManagerInterface interface {
-	CreateSingleGRPCClient(ctx context.Context, deviceName, namespace string, logger logr.Logger) (hsm.Client, error)
+	CreateGRPCClient(ctx context.Context, deviceName, namespace string, logger logr.Logger) (hsm.Client, error)
 }
 
 // MirrorManager handles multi-device HSM mirroring and conflict resolution
@@ -127,7 +127,7 @@ func (mm *MirrorManager) buildSecretInventory(ctx context.Context, secretPaths [
 		logger.Info("Checking device for secrets", "device", deviceName, "secretCount", len(secretPaths))
 
 		// Create gRPC client for this device (agents are in operator namespace)
-		grpcClient, err := mm.agentManager.CreateSingleGRPCClient(ctx, deviceName, operatorNamespace, logger)
+		grpcClient, err := mm.agentManager.CreateGRPCClient(ctx, deviceName, operatorNamespace, logger)
 		if err != nil {
 			logger.Error(err, "Failed to create gRPC client", "device", deviceName)
 			// Mark all secrets as having an error on this device
@@ -527,7 +527,7 @@ func (mm *MirrorManager) executeMirrorPlan(ctx context.Context, plan *SecretMirr
 
 // readSecretWithMetadata reads both secret data and metadata from a device
 func (mm *MirrorManager) readSecretWithMetadata(ctx context.Context, deviceName, secretPath, namespace string, logger logr.Logger) (hsm.SecretData, *hsm.SecretMetadata, error) {
-	grpcClient, err := mm.agentManager.CreateSingleGRPCClient(ctx, deviceName, namespace, logger)
+	grpcClient, err := mm.agentManager.CreateGRPCClient(ctx, deviceName, namespace, logger)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create gRPC client: %w", err)
 	}
@@ -559,7 +559,7 @@ func (mm *MirrorManager) readSecretWithMetadata(ctx context.Context, deviceName,
 
 // writeSecretWithMetadata writes both secret data and metadata to a device
 func (mm *MirrorManager) writeSecretWithMetadata(ctx context.Context, deviceName, secretPath string, data hsm.SecretData, metadata *hsm.SecretMetadata, namespace string, logger logr.Logger) error {
-	grpcClient, err := mm.agentManager.CreateSingleGRPCClient(ctx, deviceName, namespace, logger)
+	grpcClient, err := mm.agentManager.CreateGRPCClient(ctx, deviceName, namespace, logger)
 	if err != nil {
 		return fmt.Errorf("failed to create gRPC client: %w", err)
 	}
@@ -583,7 +583,7 @@ func (mm *MirrorManager) writeSecretWithMetadata(ctx context.Context, deviceName
 
 // writeMetadataOnly updates only the metadata for an existing secret
 func (mm *MirrorManager) writeMetadataOnly(ctx context.Context, deviceName, secretPath string, metadata *hsm.SecretMetadata, namespace string, logger logr.Logger) error {
-	grpcClient, err := mm.agentManager.CreateSingleGRPCClient(ctx, deviceName, namespace, logger)
+	grpcClient, err := mm.agentManager.CreateGRPCClient(ctx, deviceName, namespace, logger)
 	if err != nil {
 		return fmt.Errorf("failed to create gRPC client: %w", err)
 	}
@@ -688,7 +688,7 @@ func (mm *MirrorManager) discoverAllSecrets(ctx context.Context, devices []strin
 	for _, deviceName := range devices {
 		deviceLogger := logger.WithValues("device", deviceName)
 
-		hsmClient, err := mm.agentManager.CreateSingleGRPCClient(ctx, deviceName, operatorNamespace, deviceLogger)
+		hsmClient, err := mm.agentManager.CreateGRPCClient(ctx, deviceName, operatorNamespace, deviceLogger)
 		if err != nil {
 			deviceLogger.Info("Failed to connect to device for discovery, skipping", "error", err)
 			continue
@@ -767,7 +767,7 @@ func (mm *MirrorManager) WaitForAgentsReady(ctx context.Context, timeout time.Du
 			if len(devices) > 0 {
 				// Try to connect to at least one device to verify agents are actually ready
 				for _, deviceName := range devices {
-					grpcClient, err := mm.agentManager.CreateSingleGRPCClient(ctx, deviceName, mm.operatorNamespace, logger)
+					grpcClient, err := mm.agentManager.CreateGRPCClient(ctx, deviceName, mm.operatorNamespace, logger)
 					if err != nil {
 						logger.V(1).Info("Agent not ready yet", "device", deviceName, "error", err)
 						continue

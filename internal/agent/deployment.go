@@ -162,7 +162,7 @@ func (m *Manager) EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDev
 		workItems = append(workItems, deviceWork{
 			device:    aggregatedDevice,
 			agentName: fmt.Sprintf("%s-%s-%d", AgentNamePrefix, hsmDevice.Name, i),
-			agentKey:  fmt.Sprintf("%s-%d", hsmDevice.Name, i),
+			agentKey:  fmt.Sprintf("%s-%s", hsmDevice.Name, aggregatedDevice.SerialNumber),
 			index:     i,
 		})
 	}
@@ -332,9 +332,9 @@ func (m *Manager) CleanupAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDe
 	}
 
 	// Clean up all agent deployments (one per aggregated device)
-	for i := range hsmPool.Status.AggregatedDevices {
+	for i, aggregatedDevice := range hsmPool.Status.AggregatedDevices {
 		agentName := fmt.Sprintf("%s-%s-%d", AgentNamePrefix, hsmDevice.Name, i)
-		agentKey := fmt.Sprintf("%s-%d", hsmDevice.Name, i)
+		agentKey := fmt.Sprintf("%s-%s", hsmDevice.Name, aggregatedDevice.SerialNumber)
 
 		// Remove from internal tracking
 		m.removeAgentFromTracking(agentKey)
@@ -901,8 +901,8 @@ func (m *Manager) GetAgentPodIPs(ctx context.Context, deviceName, namespace stri
 	var allPodIPs []string
 
 	// Collect pod IPs from all agent instances for this device
-	for i := range hsmPool.Status.AggregatedDevices {
-		agentKey := fmt.Sprintf("%s-%d", deviceName, i)
+	for _, aggregatedDevice := range hsmPool.Status.AggregatedDevices {
+		agentKey := fmt.Sprintf("%s-%s", deviceName, aggregatedDevice.SerialNumber)
 		if agentInfo, exists := m.activeAgents[agentKey]; exists && len(agentInfo.PodIPs) > 0 {
 			allPodIPs = append(allPodIPs, agentInfo.PodIPs...)
 		}
@@ -930,8 +930,8 @@ func (m *Manager) GetGRPCEndpoints(ctx context.Context, deviceName, namespace st
 	return endpoints, nil
 }
 
-// CreateSingleGRPCClient creates a gRPC client for the first available agent pod of a device
-func (m *Manager) CreateSingleGRPCClient(ctx context.Context, deviceName, namespace string, logger logr.Logger) (hsm.Client, error) {
+// CreateGRPCClient creates a gRPC client for the first available agent pod of a device
+func (m *Manager) CreateGRPCClient(ctx context.Context, deviceName, namespace string, logger logr.Logger) (hsm.Client, error) {
 	endpoints, err := m.GetGRPCEndpoints(ctx, deviceName, namespace)
 	if err != nil {
 		return nil, err

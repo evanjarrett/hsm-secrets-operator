@@ -35,21 +35,23 @@ import (
 
 // Server represents the HSM REST API server that proxies requests to agent pods
 type Server struct {
-	client       client.Client
-	agentManager *agent.Manager
-	validator    *validator.Validate
-	logger       logr.Logger
-	router       *gin.Engine
-	proxyClient  *ProxyClient
+	client            client.Client
+	agentManager      *agent.Manager
+	validator         *validator.Validate
+	logger            logr.Logger
+	router            *gin.Engine
+	proxyClient       *ProxyClient
+	operatorNamespace string
 }
 
 // NewServer creates a new API server instance that proxies to agents
-func NewServer(k8sClient client.Client, agentManager *agent.Manager, logger logr.Logger) *Server {
+func NewServer(k8sClient client.Client, agentManager *agent.Manager, operatorNamespace string, logger logr.Logger) *Server {
 	s := &Server{
-		client:       k8sClient,
-		agentManager: agentManager,
-		validator:    validator.New(),
-		logger:       logger.WithName("api-server"),
+		client:            k8sClient,
+		agentManager:      agentManager,
+		validator:         validator.New(),
+		logger:            logger.WithName("api-server"),
+		operatorNamespace: operatorNamespace,
 	}
 
 	// Create ProxyClient instance
@@ -85,7 +87,7 @@ func (s *Server) Start(port int) error {
 // handleHealth handles health check requests
 func (s *Server) handleHealth(c *gin.Context) {
 	// Check if multiple agents are available for replication
-	agents, _ := s.getAllAvailableAgents(c.Request.Context(), "secrets")
+	agents, _ := s.getAllAvailableAgents(c.Request.Context(), s.operatorNamespace)
 	hsmConnected := len(agents) > 0
 	replicationEnabled := len(agents) > 1
 	activeNodes := len(agents)
@@ -164,18 +166,6 @@ func (s *Server) corsMiddleware() gin.HandlerFunc {
 	}
 }
 
-// findAvailableAgent finds an available HSM agent for handling requests
-func (s *Server) findAvailableAgent(ctx context.Context, namespace string) (string, error) {
-	agents, err := s.getAllAvailableAgents(ctx, namespace)
-	if err != nil {
-		return "", err
-	}
-	if len(agents) == 0 {
-		return "", fmt.Errorf("no available HSM agents found")
-	}
-	return agents[0], nil
-}
-
 // getAllAvailableAgents finds all available HSM agents for mirroring operations
 func (s *Server) getAllAvailableAgents(ctx context.Context, namespace string) ([]string, error) {
 	if s.agentManager == nil {
@@ -218,7 +208,7 @@ func (s *Server) createGRPCClient(ctx context.Context, deviceName, namespace str
 	}
 
 	// Create gRPC client using AgentManager's existing method
-	grpcClient, err := s.agentManager.CreateSingleGRPCClient(ctx, deviceName, namespace, s.logger)
+	grpcClient, err := s.agentManager.CreateGRPCClient(ctx, deviceName, namespace, s.logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gRPC client for device %s: %w", deviceName, err)
 	}
