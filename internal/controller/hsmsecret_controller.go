@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -120,32 +121,6 @@ func (r *HSMSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
-	// Find target HSM devices and ensure agents are running
-	deviceClients, err := r.ensureHSMAgents(ctx, &hsmSecret)
-	if err != nil {
-		logger.Error(err, "Failed to ensure HSM agents")
-		return ctrl.Result{RequeueAfter: time.Minute * 5}, nil
-	}
-	defer func() {
-		if err := deviceClients.Close(); err != nil {
-			logger.Error(err, "Failed to close device clients")
-		}
-	}()
-
-	// Check that we have at least one connected client
-	if len(deviceClients.Clients) == 0 {
-		logger.Error(fmt.Errorf("no HSM agents available"), "No HSM agents connected")
-		return ctrl.Result{RequeueAfter: time.Minute * 2}, nil
-	}
-
-	// Validate all clients are connected
-	for i, hsmClient := range deviceClients.Clients {
-		if hsmClient == nil || !hsmClient.IsConnected() {
-			logger.Error(fmt.Errorf("HSM agent not available"), "HSM agent not connected", "device", deviceClients.Devices[i].Name)
-			return ctrl.Result{RequeueAfter: time.Minute * 2}, nil
-		}
-	}
-
 	// Handle deletion
 	if hsmSecret.DeletionTimestamp != nil {
 		return ctrl.Result{}, r.reconcileDelete(ctx, &hsmSecret)
@@ -161,8 +136,57 @@ func (r *HSMSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	// Reconcile the HSMSecret across all available devices
-	result, err := r.reconcileSecret(ctx, &hsmSecret, deviceClients)
+	// Find available devices via AgentManager
+	devices, err := r.AgentManager.GetAvailableDevices(ctx, r.OperatorNamespace)
+	if err != nil {
+		logger.Error(err, "Failed to get available devices")
+		return ctrl.Result{RequeueAfter: time.Minute * 2}, nil
+	}
+	if len(devices) == 0 {
+		logger.Info("No HSM devices available")
+		return ctrl.Result{RequeueAfter: time.Minute * 2}, nil
+	}
+
+	// Connect to first available device
+	deviceName := devices[0]
+	grpcClient, err := r.AgentManager.CreateGRPCClient(ctx, deviceName, hsmSecret.Namespace, logger)
+	if err != nil {
+		logger.Error(err, "Failed to create gRPC client", "device", deviceName)
+		return ctrl.Result{RequeueAfter: time.Minute * 2}, nil
+	}
+	defer func() {
+		if err := grpcClient.Close(); err != nil {
+			logger.Error(err, "Failed to close gRPC client")
+		}
+	}()
+
+	// Check if secret exists
+	secrets, err := grpcClient.ListSecrets(ctx, "")
+	if err != nil {
+		logger.Error(err, "Failed to list secrets")
+		return ctrl.Result{RequeueAfter: time.Minute * 2}, nil
+	}
+
+	if !slices.Contains(secrets, hsmSecret.Name) {
+		logger.Info("Secret not found in HSM", "secret", hsmSecret.Name)
+		return ctrl.Result{RequeueAfter: time.Minute * 5}, nil
+	}
+
+	// Read secret data and metadata
+	hsmData, err := grpcClient.ReadSecret(ctx, hsmSecret.Name)
+	if err != nil {
+		logger.Error(err, "Failed to read secret from HSM")
+		return ctrl.Result{RequeueAfter: time.Minute * 2}, nil
+	}
+
+	hsmMetadata, err := grpcClient.ReadMetadata(ctx, hsmSecret.Name)
+	if err != nil {
+		logger.V(1).Info("Failed to read metadata", "error", err)
+		hsmMetadata = nil // Continue without metadata
+	}
+
+	// Reconcile the HSMSecret with the data from HSM
+	result, err := r.reconcileSecret(ctx, &hsmSecret, hsmData, hsmMetadata)
 	if err != nil {
 		logger.Error(err, "Failed to reconcile HSMSecret")
 		r.updateStatus(ctx, &hsmSecret, hsmv1alpha1.SyncStatusError, err.Error())
@@ -171,89 +195,8 @@ func (r *HSMSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return result, err
 }
 
-// ensureHSMAgents finds all HSM devices and ensures agents are running for each
-func (r *HSMSecretReconciler) ensureHSMAgents(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret) (*HSMDeviceClients, error) {
-	logger := log.FromContext(ctx)
-
-	// Find all appropriate HSM devices
-	hsmDevices, err := r.findAllHSMDevices(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to find HSM devices for secret: %w", err)
-	}
-
-	if r.AgentManager == nil {
-		return nil, fmt.Errorf("agent manager not configured")
-	}
-
-	deviceClients := &HSMDeviceClients{
-		Devices: hsmDevices,
-		Clients: make([]hsm.Client, 0, len(hsmDevices)),
-	}
-
-	// Ensure agent pods are running for all devices and create clients
-	for _, hsmDevice := range hsmDevices {
-		// Get the HSMPool for this device
-		poolName := hsmDevice.Name + "-pool"
-		var hsmPool hsmv1alpha1.HSMPool
-		if err := r.Get(ctx, types.NamespacedName{
-			Name:      poolName,
-			Namespace: hsmDevice.Namespace,
-		}, &hsmPool); err != nil {
-			// Clean up any successful connections before returning error
-			if err := deviceClients.Close(); err != nil {
-				logger.Error(err, "Failed to close device clients during cleanup")
-			}
-			return nil, fmt.Errorf("failed to get HSMPool %s for device %s: %w", poolName, hsmDevice.Name, err)
-		}
-
-		// EnsureAgent ensures agents for all devices in the pool
-		err = r.AgentManager.EnsureAgent(ctx, &hsmPool)
-		if err != nil {
-			// Clean up any successful connections before returning error
-			if err := deviceClients.Close(); err != nil {
-				logger.Error(err, "Failed to close device clients during cleanup")
-			}
-			return nil, fmt.Errorf("failed to ensure HSM agent for device %s: %w", hsmDevice.Name, err)
-		}
-
-		// Create gRPC client using agent manager's direct pod connections
-		agentClient, err := r.AgentManager.CreateGRPCClient(ctx, hsmDevice.Name, hsmSecret.Namespace, logger)
-		if err != nil {
-			// Clean up any successful connections before returning error
-			if err := deviceClients.Close(); err != nil {
-				logger.Error(err, "Failed to close device clients during cleanup")
-			}
-			return nil, fmt.Errorf("failed to create gRPC client for device %s: %w", hsmDevice.Name, err)
-		}
-
-		// Test connection
-		if !agentClient.IsConnected() {
-			logger.Info("Waiting for HSM agent to be ready", "device", hsmDevice.Name)
-			time.Sleep(5 * time.Second)
-
-			// Test again
-			if !agentClient.IsConnected() {
-				if err := agentClient.Close(); err != nil {
-					logger.Error(err, "Failed to close gRPC client after failed connection test")
-				}
-				// Clean up any successful connections before returning error
-				if err := deviceClients.Close(); err != nil {
-					logger.Error(err, "Failed to close device clients during cleanup")
-				}
-				return nil, fmt.Errorf("HSM agent not ready after waiting for device %s", hsmDevice.Name)
-			}
-		}
-
-		deviceClients.Clients = append(deviceClients.Clients, agentClient)
-	}
-
-	return deviceClients, nil
-}
-
-// reconcileSecret handles HSM secret reconciliation across all available devices
-func (r *HSMSecretReconciler) reconcileSecret(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret, deviceClients *HSMDeviceClients) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
+// reconcileSecret handles HSM secret reconciliation with data from HSM
+func (r *HSMSecretReconciler) reconcileSecret(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret, hsmData hsm.SecretData, hsmMetadata *hsm.SecretMetadata) (ctrl.Result, error) {
 	// Set default values
 	secretName := hsmSecret.Spec.SecretName
 	if secretName == "" {
@@ -265,198 +208,7 @@ func (r *HSMSecretReconciler) reconcileSecret(ctx context.Context, hsmSecret *hs
 		syncInterval = DefaultSyncInterval
 	}
 
-	// Read from all devices (handles both single and multi-device scenarios)
-	if len(deviceClients.Devices) > 1 {
-		logger.Info("Multi-device setup detected, checking for consistency", "deviceCount", len(deviceClients.Devices))
-	} else {
-		logger.V(1).Info("Single device setup", "deviceCount", len(deviceClients.Devices))
-	}
-
-	deviceInfos, primaryDevice, err := r.readFromAllDevices(ctx, hsmSecret, deviceClients)
-	if err != nil {
-		logger.Error(err, "Failed to read from devices")
-		return ctrl.Result{RequeueAfter: time.Minute * 2}, err
-	}
-
-	// Check for inconsistencies and sync if needed (only matters for multi-device)
-	if len(deviceClients.Devices) > 1 && r.detectInconsistencies(deviceInfos) {
-		logger.Info("Inconsistency detected between devices, performing sync", "primaryDevice", primaryDevice)
-
-		if err := r.syncAcrossDevices(ctx, hsmSecret, deviceClients, primaryDevice, deviceInfos[primaryDevice]); err != nil {
-			logger.Error(err, "Failed to sync across devices")
-			return ctrl.Result{RequeueAfter: time.Minute * 2}, err
-		}
-		logger.Info("Successfully synced secret across all devices")
-	}
-
-	// Use the primary device data for Kubernetes secret
-	hsmData := deviceInfos[primaryDevice].Data
-	hsmMetadata := deviceInfos[primaryDevice].Metadata
-
 	return r.updateKubernetesSecret(ctx, hsmSecret, secretName, hsmData, hsmMetadata, syncInterval)
-}
-
-// readFromAllDevices reads the secret from all devices with version information
-func (r *HSMSecretReconciler) readFromAllDevices(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret, deviceClients *HSMDeviceClients) (map[string]*DeviceInfo, string, error) {
-	logger := log.FromContext(ctx)
-	deviceInfos := make(map[string]*DeviceInfo)
-
-	for i, hsmClient := range deviceClients.Clients {
-		deviceName := deviceClients.Devices[i].Name
-
-		data, err := hsmClient.ReadSecret(ctx, hsmSecret.Name)
-		if err != nil {
-			logger.V(1).Info("Failed to read from device", "device", deviceName, "error", err)
-			// Continue with other devices - this might be a new device without the secret
-			continue
-		}
-
-		// Read metadata to get version information
-		metadata, err := hsmClient.ReadMetadata(ctx, hsmSecret.Name)
-		if err != nil {
-			logger.V(1).Info("Failed to read metadata from device", "device", deviceName, "error", err)
-			metadata = nil
-		}
-
-		// Extract version from metadata
-		var version int64
-		if metadata != nil && metadata.Labels != nil {
-			if versionStr, exists := metadata.Labels["sync.version"]; exists {
-				if parsedVersion, parseErr := r.parseVersion(versionStr); parseErr == nil {
-					version = parsedVersion
-				}
-			}
-		}
-
-		deviceInfos[deviceName] = &DeviceInfo{
-			Data:      data,
-			Metadata:  metadata,
-			Version:   version,
-			Checksum:  hsm.CalculateChecksum(data),
-			Timestamp: time.Now(),
-		}
-	}
-
-	if len(deviceInfos) == 0 {
-		return nil, "", fmt.Errorf("no devices contain the secret %s", hsmSecret.Name)
-	}
-
-	// Select primary device based on version and HSMSecret status
-	primaryDevice := r.selectPrimaryDevice(deviceInfos, hsmSecret)
-
-	return deviceInfos, primaryDevice, nil
-}
-
-// parseVersion parses version string from metadata
-func (r *HSMSecretReconciler) parseVersion(versionStr string) (int64, error) {
-	var version int64
-	_, err := fmt.Sscanf(versionStr, "%d", &version)
-	return version, err
-}
-
-// selectPrimaryDevice chooses the primary device based on version and HSMSecret status
-func (r *HSMSecretReconciler) selectPrimaryDevice(deviceInfos map[string]*DeviceInfo, hsmSecret *hsmv1alpha1.HSMSecret) string {
-	// Check if there's already a designated primary in the status that's still available
-	if hsmSecret.Status.PrimaryDevice != "" {
-		if info, exists := deviceInfos[hsmSecret.Status.PrimaryDevice]; exists && info != nil {
-			return hsmSecret.Status.PrimaryDevice
-		}
-	}
-
-	// Find device with highest version number
-	var bestDevice string
-	var highestVersion int64 = -1
-	var mostRecentTime time.Time
-
-	for deviceName, info := range deviceInfos {
-		// Prefer higher version numbers
-		if info.Version > highestVersion {
-			highestVersion = info.Version
-			bestDevice = deviceName
-			mostRecentTime = info.Timestamp
-		} else if info.Version == highestVersion && info.Timestamp.After(mostRecentTime) {
-			// If versions are equal, prefer more recent timestamp
-			bestDevice = deviceName
-			mostRecentTime = info.Timestamp
-		}
-	}
-
-	return bestDevice
-}
-
-// detectInconsistencies checks if devices have different versions of the secret
-func (r *HSMSecretReconciler) detectInconsistencies(deviceInfos map[string]*DeviceInfo) bool {
-	if len(deviceInfos) <= 1 {
-		return false
-	}
-
-	checksums := make(map[string]int)
-	for _, info := range deviceInfos {
-		checksums[info.Checksum]++
-	}
-
-	// Inconsistency if we have more than one unique checksum
-	return len(checksums) > 1
-}
-
-// syncAcrossDevices copies the primary device's secret to all other devices with proper versioning
-func (r *HSMSecretReconciler) syncAcrossDevices(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret, deviceClients *HSMDeviceClients, primaryDevice string, primaryInfo *DeviceInfo) error {
-	logger := log.FromContext(ctx)
-
-	for i, hsmClient := range deviceClients.Clients {
-		deviceName := deviceClients.Devices[i].Name
-
-		// Skip the primary device
-		if deviceName == primaryDevice {
-			continue
-		}
-
-		logger.Info("Syncing secret to device", "device", deviceName, "from", primaryDevice)
-
-		// Create metadata with updated version and sync information
-		newVersion := time.Now().Unix()
-		metadata := &hsm.SecretMetadata{
-			Labels: map[string]string{
-				"sync.version":   fmt.Sprintf("%d", newVersion),
-				"sync.timestamp": time.Now().Format(time.RFC3339),
-			},
-		}
-
-		// Copy over other metadata if it exists
-		if primaryInfo.Metadata != nil {
-			if metadata.Labels == nil {
-				metadata.Labels = make(map[string]string)
-			}
-			if primaryInfo.Metadata.Description != "" {
-				metadata.Description = primaryInfo.Metadata.Description
-			}
-			if primaryInfo.Metadata.Format != "" {
-				metadata.Format = primaryInfo.Metadata.Format
-			}
-			if primaryInfo.Metadata.DataType != "" {
-				metadata.DataType = primaryInfo.Metadata.DataType
-			}
-			if primaryInfo.Metadata.Source != "" {
-				metadata.Source = primaryInfo.Metadata.Source
-			}
-			// Copy non-sync labels
-			for key, value := range primaryInfo.Metadata.Labels {
-				if !strings.HasPrefix(key, "sync.") {
-					metadata.Labels[key] = value
-				}
-			}
-		}
-
-		// Write the primary device's data with metadata to this device
-		if err := hsmClient.WriteSecretWithMetadata(ctx, hsmSecret.Name, primaryInfo.Data, metadata); err != nil {
-			logger.Error(err, "Failed to sync secret to device", "device", deviceName)
-			return fmt.Errorf("failed to sync to device %s: %w", deviceName, err)
-		}
-
-		logger.Info("Successfully synced secret to device", "device", deviceName, "version", newVersion)
-	}
-
-	return nil
 }
 
 // updateKubernetesSecret updates the Kubernetes Secret with the given data
@@ -757,44 +509,6 @@ func (r *HSMSecretReconciler) updateStatus(_ context.Context, hsmSecret *hsmv1al
 	if !found {
 		hsmSecret.Status.Conditions = append(hsmSecret.Status.Conditions, condition)
 	}
-}
-
-// findAllHSMDevices finds all HSMDevices with ready HSMPools
-// Note: HSMDevices are managed in the operator namespace, not the HSMSecret's namespace
-func (r *HSMSecretReconciler) findAllHSMDevices(ctx context.Context) ([]*hsmv1alpha1.HSMDevice, error) {
-	// List HSMDevices in this operator's namespace (where operator infrastructure is contained)
-	var hsmDeviceList hsmv1alpha1.HSMDeviceList
-	if err := r.List(ctx, &hsmDeviceList, client.InNamespace(r.OperatorNamespace)); err != nil {
-		return nil, fmt.Errorf("failed to list HSM devices: %w", err)
-	}
-
-	var readyDevices []*hsmv1alpha1.HSMDevice
-
-	// Look for devices with associated HSMPools that are ready with available devices
-	for _, device := range hsmDeviceList.Items {
-		// Check the HSMPool for this device
-		poolName := device.Name + "-pool"
-		pool := &hsmv1alpha1.HSMPool{}
-
-		err := r.Get(ctx, client.ObjectKey{
-			Name:      poolName,
-			Namespace: device.Namespace,
-		}, pool)
-
-		if err == nil && pool.Status.Phase == hsmv1alpha1.HSMPoolPhaseReady &&
-			len(pool.Status.AggregatedDevices) > 0 {
-
-			// This is a suitable device for HSM operations
-			deviceCopy := device // Create a copy to avoid issues with loop variable
-			readyDevices = append(readyDevices, &deviceCopy)
-		}
-	}
-
-	if len(readyDevices) == 0 {
-		return nil, fmt.Errorf("no suitable HSM devices found in ready state")
-	}
-
-	return readyDevices, nil
 }
 
 // shouldHandleSecret determines if this operator instance should handle the given HSMSecret

@@ -18,6 +18,8 @@ package api
 
 import (
 	"time"
+
+	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
 )
 
 // SecretFormat defines the format of the secret data
@@ -189,4 +191,53 @@ type HealthStatus struct {
 
 	// Timestamp is when the health check was performed
 	Timestamp time.Time `json:"timestamp"`
+}
+
+// ListSecretsResponse represents the response for listing secrets
+type ListSecretsResponse struct {
+	Secrets []string `json:"secrets"`
+	Count   int      `json:"count"`
+	Prefix  string   `json:"prefix,omitempty"`
+}
+
+// ReadSecretResponse represents the response for reading a secret
+type ReadSecretResponse struct {
+	Path string            `json:"path"`
+	Data map[string][]byte `json:"data"`
+}
+
+// WriteSecretResponse represents the response for writing a secret
+type WriteSecretResponse struct {
+	Path string `json:"path"`
+	Keys int    `json:"keys"`
+}
+
+// DeleteSecretResponse represents the response for deleting a secret
+type DeleteSecretResponse struct {
+	Path          string         `json:"path"`
+	Devices       int            `json:"devices"`
+	DeviceResults map[string]any `json:"deviceResults"`
+	Warnings      []string       `json:"warnings,omitempty"`
+}
+
+// ReadMetadataResponse represents the response for reading metadata
+type ReadMetadataResponse struct {
+	Path     string              `json:"path"`
+	Metadata *hsm.SecretMetadata `json:"metadata"`
+}
+
+// GetChecksumResponse represents the response for getting a checksum
+type GetChecksumResponse struct {
+	Path     string `json:"path"`
+	Checksum string `json:"checksum"`
+}
+
+type IsConnectedResponse struct {
+	Devices      map[string]bool `json:"devices"`
+	TotalDevices int             `json:"totalDevices"`
+}
+
+// GetInfoResponse represents the response for getting HSM info
+type GetInfoResponse struct {
+	DeviceInfos map[string]*hsm.HSMInfo `json:"deviceInfos"` // deviceName -> HSMInfo
 }

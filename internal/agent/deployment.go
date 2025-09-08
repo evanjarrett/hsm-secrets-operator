@@ -919,7 +919,7 @@ func sanitizeLabelValue(value string) string {
 
 	// Ensure starts and ends with alphanumeric
 	sanitized = strings.TrimFunc(sanitized, func(r rune) bool {
-		return !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+		return (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9')
 	})
 
 	// Kubernetes label values have a 63 character limit
@@ -927,7 +927,7 @@ func sanitizeLabelValue(value string) string {
 		sanitized = sanitized[:63]
 		// Re-trim end if we cut off at a non-alphanumeric
 		sanitized = strings.TrimFunc(sanitized, func(r rune) bool {
-			return !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+			return (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9')
 		})
 	}
 
@@ -975,6 +975,36 @@ func (m *Manager) CreateGRPCClient(ctx context.Context, deviceName, namespace st
 	}
 
 	return grpcClient, nil
+}
+
+// GetAvailableDevices finds all devices with ready HSMPools and active agents
+func (m *Manager) GetAvailableDevices(ctx context.Context, namespace string) ([]string, error) {
+	// List all HSMPools to find all with active agents
+	var hsmPoolList hsmv1alpha1.HSMPoolList
+	if err := m.List(ctx, &hsmPoolList, client.InNamespace(namespace)); err != nil {
+		return nil, fmt.Errorf("failed to list HSM pools: %w", err)
+	}
+
+	var availableDevices []string
+	// Check all pools that have active agents
+	for _, pool := range hsmPoolList.Items {
+		if pool.Status.Phase != hsmv1alpha1.HSMPoolPhaseReady {
+			continue
+		}
+
+		// Extract device name from pool name (remove "-pool" suffix)
+		deviceName := strings.TrimSuffix(pool.Name, "-pool")
+
+		if podIPs, err := m.GetAgentPodIPs(ctx, deviceName, namespace); err == nil && len(podIPs) > 0 {
+			availableDevices = append(availableDevices, deviceName)
+		}
+	}
+
+	if len(availableDevices) == 0 {
+		return nil, fmt.Errorf("no available HSM agents found")
+	}
+
+	return availableDevices, nil
 }
 
 func int32Ptr(i int32) *int32 {

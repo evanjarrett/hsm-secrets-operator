@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -28,7 +27,6 @@ import (
 	"github.com/go-playground/validator/v10"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
 )
@@ -172,32 +170,7 @@ func (s *Server) getAllAvailableAgents(ctx context.Context, namespace string) ([
 		return nil, fmt.Errorf("agent manager not available")
 	}
 
-	// List all HSMPools to find all with active agents
-	var hsmPoolList hsmv1alpha1.HSMPoolList
-	if err := s.client.List(ctx, &hsmPoolList, client.InNamespace(namespace)); err != nil {
-		return nil, fmt.Errorf("failed to list HSM pools: %w", err)
-	}
-
-	var availableDevices []string
-	// Check all pools that have active agents
-	for _, pool := range hsmPoolList.Items {
-		if pool.Status.Phase != hsmv1alpha1.HSMPoolPhaseReady {
-			continue
-		}
-
-		// Extract device name from pool name (remove "-pool" suffix)
-		deviceName := strings.TrimSuffix(pool.Name, "-pool")
-
-		if podIPs, err := s.agentManager.GetAgentPodIPs(ctx, deviceName, namespace); err == nil && len(podIPs) > 0 {
-			availableDevices = append(availableDevices, deviceName)
-		}
-	}
-
-	if len(availableDevices) == 0 {
-		return nil, fmt.Errorf("no available HSM agents found")
-	}
-
-	return availableDevices, nil
+	return s.agentManager.GetAvailableDevices(ctx, namespace)
 }
 
 // createGRPCClient creates a gRPC client for the specified device using AgentManager
