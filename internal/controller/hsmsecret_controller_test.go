@@ -18,16 +18,22 @@ package controller
 
 import (
 	"context"
+	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
 )
 
 var _ = Describe("HSMSecret Controller", func() {
@@ -82,3 +88,157 @@ var _ = Describe("HSMSecret Controller", func() {
 		})
 	})
 })
+
+func testStringPtr(s string) *string {
+	return &s
+}
+
+// Unit tests for the refactored HSMSecretReconciler using standard Go testing
+func TestHSMSecretReconciler_Reconcile(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, hsmv1alpha1.AddToScheme(scheme))
+
+	tests := []struct {
+		name             string
+		hsmSecret        *hsmv1alpha1.HSMSecret
+		agentManager     *agent.Manager
+		expectRequeue    bool
+		expectError      bool
+		expectedErrorMsg string
+	}{
+		{
+			name:      "HSMSecret not found - should not error",
+			hsmSecret: nil, // No HSMSecret in fake client
+			agentManager: func() *agent.Manager {
+				fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+				return agent.NewManager(fakeClient, "test-namespace", nil)
+			}(),
+			expectRequeue: false,
+			expectError:   false,
+		},
+		{
+			name: "No available devices - should requeue after 2 minutes",
+			hsmSecret: &hsmv1alpha1.HSMSecret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "test-secret",
+					Namespace:  "default",
+					Finalizers: []string{"hsmsecret.hsm.j5t.io/finalizer"},
+				},
+				Spec: hsmv1alpha1.HSMSecretSpec{
+					AutoSync: true,
+					ParentRef: &hsmv1alpha1.ParentReference{
+						Name:      "test-operator",
+						Namespace: testStringPtr("test-namespace"),
+					},
+				},
+			},
+			agentManager: func() *agent.Manager {
+				fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+				return agent.NewManager(fakeClient, "test-namespace", nil)
+			}(),
+			expectRequeue: true,
+			expectError:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			// Create fake client with HSMSecret if provided
+			var objs []runtime.Object
+			if tt.hsmSecret != nil {
+				objs = append(objs, tt.hsmSecret)
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithRuntimeObjects(objs...).
+				Build()
+
+			reconciler := &HSMSecretReconciler{
+				Client:            fakeClient,
+				Scheme:            scheme,
+				AgentManager:      tt.agentManager,
+				OperatorNamespace: "test-namespace",
+				OperatorName:      "test-operator",
+			}
+
+			req := reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      "test-secret",
+					Namespace: "default",
+				},
+			}
+
+			result, err := reconciler.Reconcile(ctx, req)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.expectedErrorMsg != "" {
+					assert.Contains(t, err.Error(), tt.expectedErrorMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+
+			if tt.expectRequeue {
+				assert.True(t, result.RequeueAfter > 0, "Expected RequeueAfter but got %+v", result)
+			} else if !tt.expectError {
+				assert.Equal(t, int64(0), result.RequeueAfter.Nanoseconds(), "Did not expect RequeueAfter but got %+v", result)
+			}
+		})
+	}
+}
+
+func TestHSMSecretReconciler_ReconcileWithAgentManager(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, hsmv1alpha1.AddToScheme(scheme))
+
+	t.Run("reconciler uses agent manager for device discovery", func(t *testing.T) {
+		ctx := context.Background()
+
+		hsmSecret := &hsmv1alpha1.HSMSecret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "test-secret",
+				Namespace:  "default",
+				Finalizers: []string{"hsmsecret.hsm.j5t.io/finalizer"},
+			},
+			Spec: hsmv1alpha1.HSMSecretSpec{
+				AutoSync: true,
+				ParentRef: &hsmv1alpha1.ParentReference{
+					Name:      "test-operator",
+					Namespace: testStringPtr("test-namespace"),
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithRuntimeObjects(hsmSecret).
+			Build()
+
+		agentManager := agent.NewManager(fakeClient, "test-namespace", nil)
+
+		reconciler := &HSMSecretReconciler{
+			Client:            fakeClient,
+			Scheme:            scheme,
+			AgentManager:      agentManager,
+			OperatorNamespace: "test-namespace",
+			OperatorName:      "test-operator",
+		}
+
+		req := reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      "test-secret",
+				Namespace: "default",
+			},
+		}
+
+		result, err := reconciler.Reconcile(ctx, req)
+
+		// Should not error, but should requeue since no devices available
+		assert.NoError(t, err)
+		assert.True(t, result.RequeueAfter > 0, "Expected RequeueAfter due to no available devices")
+	})
+}
