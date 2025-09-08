@@ -32,7 +32,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
@@ -42,7 +41,7 @@ import (
 // ManagerInterface defines the interface for HSM agent management
 // This allows for easier testing with mocks
 type ManagerInterface interface {
-	EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, hsmSecret *hsmv1alpha1.HSMSecret) error
+	EnsureAgent(ctx context.Context, hsmPool *hsmv1alpha1.HSMPool) error
 	CleanupAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice) error
 }
 
@@ -57,7 +56,6 @@ const (
 
 // AgentInfo tracks agent state and connections
 type AgentInfo struct {
-	DeviceName      string
 	PodIPs          []string
 	CreatedAt       time.Time
 	LastHealthCheck time.Time
@@ -99,6 +97,14 @@ type ImageResolver interface {
 	GetImage(ctx context.Context, defaultImage string) string
 }
 
+// deviceWork represents work to be done for a specific device
+type deviceWork struct {
+	device    hsmv1alpha1.DiscoveredDevice
+	agentName string
+	agentKey  string
+	index     int
+}
+
 // NewManager creates a new agent manager
 func NewManager(k8sClient client.Client, namespace string, imageResolver ImageResolver) *Manager {
 
@@ -133,25 +139,13 @@ func NewTestManager(k8sClient client.Client, namespace string, imageResolver Ima
 	return m
 }
 
-// deviceWork represents work to be done for a specific device
-type deviceWork struct {
-	device    hsmv1alpha1.DiscoveredDevice
-	agentName string
-	agentKey  string
-	index     int
+// generateAgentName creates a consistent agent name for an HSM device
+func (m *Manager) generateAgentName(hsmPool *hsmv1alpha1.HSMPool) string {
+	return fmt.Sprintf("%s-%s", AgentNamePrefix, hsmPool.OwnerReferences[0].Name)
 }
 
 // EnsureAgent ensures HSM agents are deployed for all available devices in the pool
-func (m *Manager) EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, hsmSecret *hsmv1alpha1.HSMSecret) error {
-	// Get the HSMPool for this device to find all aggregated devices
-	poolName := hsmDevice.Name + "-pool"
-	var hsmPool hsmv1alpha1.HSMPool
-	if err := m.Get(ctx, types.NamespacedName{
-		Name:      poolName,
-		Namespace: hsmDevice.Namespace,
-	}, &hsmPool); err != nil {
-		return fmt.Errorf("failed to get HSMPool %s: %w", poolName, err)
-	}
+func (m *Manager) EnsureAgent(ctx context.Context, hsmPool *hsmv1alpha1.HSMPool) error {
 
 	// Pre-collect available devices to process (no mutex needed)
 	workItems := make([]deviceWork, 0, len(hsmPool.Status.AggregatedDevices))
@@ -161,8 +155,8 @@ func (m *Manager) EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDev
 		}
 		workItems = append(workItems, deviceWork{
 			device:    aggregatedDevice,
-			agentName: fmt.Sprintf("%s-%s-%d", AgentNamePrefix, hsmDevice.Name, i),
-			agentKey:  fmt.Sprintf("%s-%s", hsmDevice.Name, aggregatedDevice.SerialNumber),
+			agentName: fmt.Sprintf("%s-%d", m.generateAgentName(hsmPool), i),
+			agentKey:  aggregatedDevice.SerialNumber,
 			index:     i,
 		})
 	}
@@ -199,7 +193,7 @@ func (m *Manager) EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDev
 			}
 
 			// Deploy agent for this device (Kubernetes API calls - no mutex needed)
-			if err := m.deployAgentForDevice(ctx, w, hsmDevice); err != nil {
+			if err := m.deployAgentForDevice(ctx, w, hsmPool); err != nil {
 				errChan <- fmt.Errorf("failed to deploy agent %s: %w", w.agentName, err)
 			}
 		}(work)
@@ -223,17 +217,17 @@ func (m *Manager) EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDev
 }
 
 // deployAgentForDevice handles the deployment logic for a single device
-func (m *Manager) deployAgentForDevice(ctx context.Context, work deviceWork, hsmDevice *hsmv1alpha1.HSMDevice) error {
+func (m *Manager) deployAgentForDevice(ctx context.Context, work deviceWork, hsmPool *hsmv1alpha1.HSMPool) error {
 	// Check if deployment exists in Kubernetes
 	var deployment appsv1.Deployment
 	err := m.Get(ctx, types.NamespacedName{
 		Name:      work.agentName,
-		Namespace: hsmDevice.Namespace,
+		Namespace: hsmPool.Namespace,
 	}, &deployment)
 
 	if err == nil {
 		// Agent exists, but check if it needs updating (image version, device/node configuration)
-		needsUpdate, err := m.agentNeedsUpdate(ctx, &deployment, hsmDevice)
+		needsUpdate, err := m.agentNeedsUpdate(ctx, &deployment, hsmPool)
 		if err != nil {
 			return fmt.Errorf("failed to check if agent deployment %s needs update: %w", work.agentName, err)
 		}
@@ -250,7 +244,7 @@ func (m *Manager) deployAgentForDevice(ctx context.Context, work deviceWork, hsm
 			}
 		} else {
 			// Agent exists and is correct - wait for it and track it
-			podIPs, err := m.waitForAgentReady(ctx, work.agentName, hsmDevice.Namespace)
+			podIPs, err := m.waitForAgentReady(ctx, work.agentName, hsmPool.Namespace)
 			if err != nil {
 				return fmt.Errorf("failed waiting for existing agent pods %s: %w", work.agentName, err)
 			}
@@ -258,13 +252,12 @@ func (m *Manager) deployAgentForDevice(ctx context.Context, work deviceWork, hsm
 			// Track the existing agent (mutex-protected)
 			m.mu.Lock()
 			agentInfo := &AgentInfo{
-				DeviceName:      work.agentKey,
 				PodIPs:          podIPs,
 				CreatedAt:       time.Now(),
 				LastHealthCheck: time.Now(),
 				Status:          AgentStatusReady,
 				AgentName:       work.agentName,
-				Namespace:       hsmDevice.Namespace,
+				Namespace:       hsmPool.Namespace,
 			}
 			m.activeAgents[work.agentKey] = agentInfo
 			m.mu.Unlock()
@@ -275,12 +268,12 @@ func (m *Manager) deployAgentForDevice(ctx context.Context, work deviceWork, hsm
 	}
 
 	// Create agent deployment for this specific device
-	if err := m.createAgentDeployment(ctx, hsmDevice, nil, hsmDevice.Namespace, &work.device, work.agentName); err != nil {
+	if err := m.createAgentDeployment(ctx, hsmPool, &work.device, work.agentName); err != nil {
 		return fmt.Errorf("failed to create agent deployment %s: %w", work.agentName, err)
 	}
 
 	// Wait for agent pods to be ready and get their IPs
-	podIPs, err := m.waitForAgentReady(ctx, work.agentName, hsmDevice.Namespace)
+	podIPs, err := m.waitForAgentReady(ctx, work.agentName, hsmPool.Namespace)
 	if err != nil {
 		return fmt.Errorf("failed waiting for agent pods %s: %w", work.agentName, err)
 	}
@@ -288,13 +281,12 @@ func (m *Manager) deployAgentForDevice(ctx context.Context, work deviceWork, hsm
 	// Track the new agent (mutex-protected)
 	m.mu.Lock()
 	agentInfo := &AgentInfo{
-		DeviceName:      work.agentKey,
 		PodIPs:          podIPs,
 		CreatedAt:       time.Now(),
 		LastHealthCheck: time.Now(),
 		Status:          AgentStatusReady,
 		AgentName:       work.agentName,
-		Namespace:       hsmDevice.Namespace,
+		Namespace:       hsmPool.Namespace,
 	}
 	m.activeAgents[work.agentKey] = agentInfo
 	m.mu.Unlock()
@@ -388,13 +380,8 @@ func (m *Manager) cleanupTrackedAgents(ctx context.Context, hsmDevice *hsmv1alph
 	return nil
 }
 
-// generateAgentName creates a consistent agent name for an HSM device
-func (m *Manager) generateAgentName(hsmDevice *hsmv1alpha1.HSMDevice) string {
-	return fmt.Sprintf("%s-%s", AgentNamePrefix, hsmDevice.Name)
-}
-
 // createAgentDeployment creates the HSM agent deployment for a specific device
-func (m *Manager) createAgentDeployment(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, hsmSecret *hsmv1alpha1.HSMSecret, namespace string, specificDevice *hsmv1alpha1.DiscoveredDevice, customAgentName string) error {
+func (m *Manager) createAgentDeployment(ctx context.Context, hsmPool *hsmv1alpha1.HSMPool, specificDevice *hsmv1alpha1.DiscoveredDevice, customAgentName string) error {
 	if specificDevice == nil {
 		return fmt.Errorf("specificDevice is required")
 	}
@@ -403,11 +390,12 @@ func (m *Manager) createAgentDeployment(ctx context.Context, hsmDevice *hsmv1alp
 	if customAgentName != "" {
 		agentName = customAgentName
 	} else {
-		agentName = m.generateAgentName(hsmDevice)
+		agentName = m.generateAgentName(hsmPool)
 	}
 
 	targetNode := specificDevice.NodeName
 	devicePath := specificDevice.DevicePath
+	deviceName := hsmPool.OwnerReferences[0].Name
 
 	// Get discovery image from environment, manager image, or use default
 	agentImage := m.ImageResolver.GetImage(ctx, "AGENT_IMAGE")
@@ -415,15 +403,16 @@ func (m *Manager) createAgentDeployment(ctx context.Context, hsmDevice *hsmv1alp
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      agentName,
-			Namespace: namespace,
+			Namespace: hsmPool.Namespace,
 			Labels: map[string]string{
 				"app":                         agentName,
 				"app.kubernetes.io/component": "hsm-agent",
 				"app.kubernetes.io/instance":  agentName,
 				"app.kubernetes.io/name":      "hsm-agent",
 				"app.kubernetes.io/part-of":   "hsm-secrets-operator",
-				"hsm.j5t.io/device":           hsmDevice.Name,
-				"hsm.j5t.io/device-type":      string(hsmDevice.Spec.DeviceType),
+				"hsm.j5t.io/device":           deviceName,
+				"hsm.j5t.io/serial-number":    specificDevice.SerialNumber,
+				"hsm.j5t.io/device-path":      sanitizeLabelValue(specificDevice.DevicePath),
 			},
 		},
 		Spec: appsv1.DeploymentSpec{
@@ -441,8 +430,9 @@ func (m *Manager) createAgentDeployment(ctx context.Context, hsmDevice *hsmv1alp
 						"app.kubernetes.io/instance":  agentName,
 						"app.kubernetes.io/name":      "hsm-agent",
 						"app.kubernetes.io/part-of":   "hsm-secrets-operator",
-						"hsm.j5t.io/device":           hsmDevice.Name,
-						"hsm.j5t.io/device-type":      string(hsmDevice.Spec.DeviceType),
+						"hsm.j5t.io/device":           deviceName,
+						"hsm.j5t.io/serial-number":    specificDevice.SerialNumber,
+						"hsm.j5t.io/device-path":      sanitizeLabelValue(specificDevice.DevicePath),
 					},
 				},
 				Spec: corev1.PodSpec{
@@ -483,11 +473,18 @@ func (m *Manager) createAgentDeployment(ctx context.Context, hsmDevice *hsmv1alp
 								"agent",
 							},
 							Args: []string{
-								"--device-name=" + hsmDevice.Name,
+								"--device-name=" + deviceName,
 								"--port=" + fmt.Sprintf("%d", AgentPort),
 								"--health-port=" + fmt.Sprintf("%d", AgentHealthPort),
 							},
-							Env: m.buildAgentEnv(hsmDevice),
+							Env: func() []corev1.EnvVar {
+								env, err := m.buildAgentEnv(ctx, hsmPool)
+								if err != nil {
+									// Log error but continue with empty env to avoid breaking deployment creation
+									return []corev1.EnvVar{}
+								}
+								return env
+							}(),
 							Ports: []corev1.ContainerPort{
 								{
 									Name:          "grpc",
@@ -552,18 +549,20 @@ func (m *Manager) createAgentDeployment(ctx context.Context, hsmDevice *hsmv1alp
 		},
 	}
 
-	// Set HSMSecret as owner if provided (for cleanup)
-	if hsmSecret != nil {
-		if err := ctrl.SetControllerReference(hsmSecret, deployment, m.Scheme()); err != nil {
-			return fmt.Errorf("failed to set controller reference: %w", err)
-		}
-	}
-
 	return m.Create(ctx, deployment)
 }
 
 // buildAgentEnv builds environment variables for the HSM agent
-func (m *Manager) buildAgentEnv(hsmDevice *hsmv1alpha1.HSMDevice) []corev1.EnvVar {
+func (m *Manager) buildAgentEnv(ctx context.Context, hsmPool *hsmv1alpha1.HSMPool) ([]corev1.EnvVar, error) {
+	// Get HSMDevice from owner reference
+	deviceName := hsmPool.OwnerReferences[0].Name
+	var hsmDevice hsmv1alpha1.HSMDevice
+	if err := m.Get(ctx, types.NamespacedName{
+		Name:      deviceName,
+		Namespace: hsmPool.Namespace,
+	}, &hsmDevice); err != nil {
+		return nil, fmt.Errorf("failed to get HSMDevice %s: %w", deviceName, err)
+	}
 	env := []corev1.EnvVar{
 		{
 			Name:  "HSM_DEVICE_NAME",
@@ -608,7 +607,7 @@ func (m *Manager) buildAgentEnv(hsmDevice *hsmv1alpha1.HSMDevice) []corev1.EnvVa
 		}
 	}
 
-	return env
+	return env, nil
 }
 
 // buildAgentVolumeMounts builds volume mounts for the HSM agent
@@ -647,7 +646,10 @@ func (m *Manager) buildAgentVolumes(devicePath string) []corev1.Volume {
 }
 
 // agentNeedsUpdate checks if the agent deployment needs to be updated due to device path or image changes
-func (m *Manager) agentNeedsUpdate(ctx context.Context, deployment *appsv1.Deployment, hsmDevice *hsmv1alpha1.HSMDevice) (bool, error) {
+func (m *Manager) agentNeedsUpdate(ctx context.Context, deployment *appsv1.Deployment, hsmPool *hsmv1alpha1.HSMPool) (bool, error) {
+	if hsmPool == nil {
+		return false, nil // No pool available, no update needed
+	}
 	// Check if container image needs updating
 	if len(deployment.Spec.Template.Spec.Containers) == 0 {
 		return false, fmt.Errorf("deployment has no containers")
@@ -663,21 +665,6 @@ func (m *Manager) agentNeedsUpdate(ctx context.Context, deployment *appsv1.Deplo
 			// Image has changed, need to update
 			return true, nil
 		}
-	}
-
-	// Get current HSMPool to check for updated device paths
-	poolName := hsmDevice.Name + "-pool"
-	pool := &hsmv1alpha1.HSMPool{}
-
-	if err := m.Get(ctx, types.NamespacedName{
-		Name:      poolName,
-		Namespace: hsmDevice.Namespace,
-	}, pool); err != nil {
-		// If pool doesn't exist, no devices are available, so agent doesn't need update
-		if errors.IsNotFound(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("failed to get HSMPool %s: %w", poolName, err)
 	}
 
 	// Extract current volume mounts from deployment
@@ -696,7 +683,7 @@ func (m *Manager) agentNeedsUpdate(ctx context.Context, deployment *appsv1.Deplo
 	}
 
 	// Check if any device paths in the pool differ from current mounts
-	for _, device := range pool.Status.AggregatedDevices {
+	for _, device := range hsmPool.Status.AggregatedDevices {
 		if device.DevicePath != "" && device.Available {
 			// Check if this device path is already mounted
 			found := false
@@ -716,7 +703,7 @@ func (m *Manager) agentNeedsUpdate(ctx context.Context, deployment *appsv1.Deplo
 	// Check for stale device paths (mounted paths that are no longer in aggregated devices)
 	for _, currentPath := range currentDeviceMounts {
 		found := false
-		for _, device := range pool.Status.AggregatedDevices {
+		for _, device := range hsmPool.Status.AggregatedDevices {
 			if device.DevicePath == currentPath && device.Available {
 				found = true
 				break
@@ -913,6 +900,38 @@ func (m *Manager) GetAgentPodIPs(ctx context.Context, deviceName, namespace stri
 	}
 
 	return allPodIPs, nil
+}
+
+// sanitizeLabelValue sanitizes a string to be a valid Kubernetes label value
+// Kubernetes labels must be alphanumeric, '-', '_', or '.' and start/end with alphanumeric
+func sanitizeLabelValue(value string) string {
+	if len(value) == 0 {
+		return value
+	}
+
+	// Replace invalid characters with dashes
+	sanitized := strings.Map(func(r rune) rune {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			return r
+		}
+		return '-'
+	}, value)
+
+	// Ensure starts and ends with alphanumeric
+	sanitized = strings.TrimFunc(sanitized, func(r rune) bool {
+		return !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+	})
+
+	// Kubernetes label values have a 63 character limit
+	if len(sanitized) > 63 {
+		sanitized = sanitized[:63]
+		// Re-trim end if we cut off at a non-alphanumeric
+		sanitized = strings.TrimFunc(sanitized, func(r rune) bool {
+			return !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+		})
+	}
+
+	return sanitized
 }
 
 // GetGRPCEndpoints returns gRPC endpoints for all agent pods of a device

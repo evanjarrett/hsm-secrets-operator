@@ -268,16 +268,12 @@ func TestHSMPool(t *testing.T) {
 			Namespace: "hsm-secrets-operator-system",
 		},
 		Spec: HSMPoolSpec{
-			HSMDeviceRefs: []string{"pico-hsm-1", "pico-hsm-2"},
-			GracePeriod:   &gracePeriod,
+			GracePeriod: &gracePeriod,
 		},
 	}
 
 	assert.Equal(t, "pico-hsm-pool", pool.Name)
 	assert.Equal(t, "HSMPool", pool.Kind)
-	assert.Len(t, pool.Spec.HSMDeviceRefs, 2)
-	assert.Contains(t, pool.Spec.HSMDeviceRefs, "pico-hsm-1")
-	assert.Contains(t, pool.Spec.HSMDeviceRefs, "pico-hsm-2")
 	assert.NotNil(t, pool.Spec.GracePeriod)
 	assert.Equal(t, 5*time.Minute, pool.Spec.GracePeriod.Duration)
 }

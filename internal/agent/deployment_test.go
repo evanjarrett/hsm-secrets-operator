@@ -212,7 +212,7 @@ func TestAgentNeedsUpdate(t *testing.T) {
 				AgentImage: "test-image",
 			}
 
-			needsUpdate, err := manager.agentNeedsUpdate(ctx, tt.deployment, tt.hsmDevice)
+			needsUpdate, err := manager.agentNeedsUpdate(ctx, tt.deployment, tt.hsmPool)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -236,11 +236,10 @@ func TestAgentTracking(t *testing.T) {
 
 		// Add agent to tracking
 		agentInfo := &AgentInfo{
-			DeviceName: "test-device",
-			PodIPs:     []string{"10.1.1.5", "10.1.1.6"},
-			Status:     AgentStatusReady,
-			AgentName:  "hsm-agent-test-device",
-			Namespace:  "default",
+			PodIPs:    []string{"10.1.1.5", "10.1.1.6"},
+			Status:    AgentStatusReady,
+			AgentName: "hsm-agent-test-device",
+			Namespace: "default",
 		}
 		manager.activeAgents["test-device"] = agentInfo
 
@@ -269,9 +268,8 @@ func TestAgentTracking(t *testing.T) {
 
 		// Add agent to tracking
 		agentInfo := &AgentInfo{
-			DeviceName: "test-device",
-			PodIPs:     []string{"10.1.1.5"},
-			Status:     AgentStatusReady,
+			PodIPs: []string{"10.1.1.5"},
+			Status: AgentStatusReady,
 		}
 		manager.activeAgents["test-device"] = agentInfo
 
@@ -317,11 +315,10 @@ func TestIsAgentHealthy(t *testing.T) {
 		manager := NewManager(fakeClient, "test-namespace", nil)
 
 		agentInfo := &AgentInfo{
-			DeviceName: "test-device",
-			PodIPs:     []string{"10.1.1.5"},
-			Status:     AgentStatusReady,
-			AgentName:  "hsm-agent-test-device",
-			Namespace:  "default",
+			PodIPs:    []string{"10.1.1.5"},
+			Status:    AgentStatusReady,
+			AgentName: "hsm-agent-test-device",
+			Namespace: "default",
 		}
 
 		healthy := manager.isAgentHealthy(ctx, agentInfo)
@@ -334,11 +331,10 @@ func TestIsAgentHealthy(t *testing.T) {
 		manager := NewManager(fakeClient, "test-namespace", nil)
 
 		agentInfo := &AgentInfo{
-			DeviceName: "test-device",
-			PodIPs:     []string{}, // No pod IPs
-			Status:     AgentStatusReady,
-			AgentName:  "hsm-agent-test-device",
-			Namespace:  "default",
+			PodIPs:    []string{}, // No pod IPs
+			Status:    AgentStatusReady,
+			AgentName: "hsm-agent-test-device",
+			Namespace: "default",
 		}
 
 		healthy := manager.isAgentHealthy(ctx, agentInfo)
@@ -368,11 +364,10 @@ func TestIsAgentHealthy(t *testing.T) {
 		manager := NewManager(fakeClient, "test-namespace", nil)
 
 		agentInfo := &AgentInfo{
-			DeviceName: "test-device",
-			PodIPs:     []string{"10.1.1.5"},
-			Status:     AgentStatusReady,
-			AgentName:  "hsm-agent-test-device",
-			Namespace:  "default",
+			PodIPs:    []string{"10.1.1.5"},
+			Status:    AgentStatusReady,
+			AgentName: "hsm-agent-test-device",
+			Namespace: "default",
 		}
 
 		healthy := manager.isAgentHealthy(ctx, agentInfo)

@@ -140,10 +140,16 @@ var _ = Describe("HSMPoolReconciler with Manager-Owned DaemonSets", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      hsmPoolName,
 					Namespace: hsmPoolNamespace,
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							APIVersion: "hsm.j5t.io/v1alpha1",
+							Kind:       "HSMDevice",
+							Name:       hsmDevice.Name,
+							UID:        hsmDevice.UID,
+						},
+					},
 				},
-				Spec: hsmv1alpha1.HSMPoolSpec{
-					HSMDeviceRefs: []string{hsmDeviceName},
-				},
+				Spec: hsmv1alpha1.HSMPoolSpec{},
 			}
 			Expect(k8sClient.Create(ctx, hsmPool)).To(Succeed())
 		})
@@ -286,10 +292,16 @@ var _ = Describe("HSMPoolReconciler with Manager-Owned DaemonSets", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      missingPoolName,
 					Namespace: hsmPoolNamespace,
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							APIVersion: "hsm.j5t.io/v1alpha1",
+							Kind:       "HSMDevice",
+							Name:       "non-existent-device",
+							UID:        "fake-uid-456",
+						},
+					},
 				},
-				Spec: hsmv1alpha1.HSMPoolSpec{
-					HSMDeviceRefs: []string{"non-existent-device"},
-				},
+				Spec: hsmv1alpha1.HSMPoolSpec{},
 			}
 			Expect(k8sClient.Create(ctx, missingPool)).To(Succeed())
 
@@ -316,150 +328,6 @@ var _ = Describe("HSMPoolReconciler with Manager-Owned DaemonSets", func() {
 				}, pool)
 				return pool.Status.Phase
 			}).Should(Equal(hsmv1alpha1.HSMPoolPhaseError))
-		})
-
-		It("Should aggregate devices from multiple HSMDevices", func() {
-			By("Creating a second HSMDevice")
-			secondDeviceName := fmt.Sprintf("second-device-%d", GinkgoRandomSeed())
-			secondDevice := &hsmv1alpha1.HSMDevice{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      secondDeviceName,
-					Namespace: hsmPoolNamespace,
-				},
-				Spec: hsmv1alpha1.HSMDeviceSpec{
-					DeviceType: "SmartCard-HSM",
-				},
-			}
-			Expect(k8sClient.Create(ctx, secondDevice)).To(Succeed())
-
-			By("Creating a second DaemonSet")
-			secondDaemonSet := &appsv1.DaemonSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      fmt.Sprintf("%s-discovery", secondDeviceName),
-					Namespace: hsmPoolNamespace,
-					Labels: map[string]string{
-						"app.kubernetes.io/name":      "hsm-secrets-operator",
-						"app.kubernetes.io/component": "discovery",
-						"hsm.j5t.io/device":           secondDeviceName,
-					},
-					OwnerReferences: []metav1.OwnerReference{
-						{
-							APIVersion: "hsm.j5t.io/v1alpha1",
-							Kind:       "HSMDevice",
-							Name:       secondDeviceName,
-							UID:        secondDevice.UID,
-							Controller: &[]bool{true}[0],
-						},
-					},
-				},
-				Spec: appsv1.DaemonSetSpec{
-					Selector: &metav1.LabelSelector{
-						MatchLabels: map[string]string{
-							"app.kubernetes.io/name":      "hsm-secrets-operator",
-							"app.kubernetes.io/component": "discovery",
-							"hsm.j5t.io/device":           secondDeviceName,
-						},
-					},
-					Template: corev1.PodTemplateSpec{
-						ObjectMeta: metav1.ObjectMeta{
-							Labels: map[string]string{
-								"app.kubernetes.io/name":      "hsm-secrets-operator",
-								"app.kubernetes.io/component": "discovery",
-								"hsm.j5t.io/device":           secondDeviceName,
-							},
-						},
-						Spec: corev1.PodSpec{
-							Containers: []corev1.Container{
-								{
-									Name:  "discovery",
-									Image: "test-discovery:latest",
-								},
-							},
-						},
-					},
-				},
-				Status: appsv1.DaemonSetStatus{
-					DesiredNumberScheduled: 1,
-					NumberReady:            1,
-				},
-			}
-			Expect(k8sClient.Create(ctx, secondDaemonSet)).To(Succeed())
-
-			// Update DaemonSet status separately (status is not created with the resource)
-			secondDaemonSet.Status = appsv1.DaemonSetStatus{
-				DesiredNumberScheduled: 1,
-				NumberReady:            1,
-			}
-			Expect(k8sClient.Status().Update(ctx, secondDaemonSet)).To(Succeed())
-
-			By("Updating HSMPool to reference both devices")
-			Eventually(func() error {
-				pool := &hsmv1alpha1.HSMPool{}
-				if err := k8sClient.Get(ctx, types.NamespacedName{
-					Name:      hsmPoolName,
-					Namespace: hsmPoolNamespace,
-				}, pool); err != nil {
-					return err
-				}
-				pool.Spec.HSMDeviceRefs = []string{hsmDeviceName, secondDeviceName}
-				return k8sClient.Update(ctx, pool)
-			}).Should(Succeed())
-
-			By("Creating pods for the second DaemonSet")
-			secondPod := &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      fmt.Sprintf("%s-pod-1", secondDeviceName),
-					Namespace: hsmPoolNamespace,
-					Labels: map[string]string{
-						"app.kubernetes.io/name":      "hsm-secrets-operator",
-						"app.kubernetes.io/component": "discovery",
-						"hsm.j5t.io/device":           secondDeviceName,
-					},
-				},
-				Spec: corev1.PodSpec{
-					NodeName: "node-3",
-					Containers: []corev1.Container{
-						{
-							Name:  "discovery",
-							Image: "test-discovery:latest",
-						},
-					},
-				},
-				Status: corev1.PodStatus{
-					Phase: corev1.PodRunning,
-				},
-			}
-			Expect(k8sClient.Create(ctx, secondPod)).To(Succeed())
-
-			// Update pod status separately (status is not created with the resource)
-			secondPod.Status = corev1.PodStatus{
-				Phase: corev1.PodRunning,
-			}
-			Expect(k8sClient.Status().Update(ctx, secondPod)).To(Succeed())
-
-			By("Reconciling the updated HSMPool")
-			reconciler := &HSMPoolReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-
-			_, err := reconciler.Reconcile(ctx, ctrl.Request{
-				NamespacedName: types.NamespacedName{
-					Name:      hsmPoolName,
-					Namespace: hsmPoolNamespace,
-				},
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Checking that HSMPool aggregates pods from both DaemonSets")
-			pool := &hsmv1alpha1.HSMPool{}
-			Eventually(func() int32 {
-				_ = k8sClient.Get(ctx, types.NamespacedName{
-					Name:      hsmPoolName,
-					Namespace: hsmPoolNamespace,
-				}, pool)
-				return pool.Status.ExpectedPods
-			}).Should(Equal(int32(3))) // 2 from first DaemonSet + 1 from second DaemonSet
 		})
 
 		It("Should read device count from pod annotations when available", func() {

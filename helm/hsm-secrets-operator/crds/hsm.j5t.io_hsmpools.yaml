@@ -17,9 +17,6 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.hsmDeviceRefs
-      name: HSMDevices
-      type: string
     - jsonPath: .status.totalDevices
       name: Total
       type: integer
@@ -68,12 +65,6 @@ spec:
                 description: GracePeriod defines how long to wait before considering
                   a pod's report stale
                 type: string
-              hsmDeviceRefs:
-                description: HSMDeviceRefs references the HSMDevice specifications
-                  this pool aggregates
-                items:
-                  type: string
-                type: array
               mirroring:
                 description: Mirroring defines device mirroring configuration for
                   this pool
@@ -105,8 +96,6 @@ spec:
                       type: string
                     type: array
                 type: object
-            required:
-            - hsmDeviceRefs
             type: object
           status:
             description: HSMPoolStatus defines the observed state of HSMPool

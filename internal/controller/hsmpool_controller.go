@@ -81,19 +81,22 @@ func (r *HSMPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// Validate that all referenced HSMDevices exist
-	hsmDevices := make([]*hsmv1alpha1.HSMDevice, 0, len(hsmPool.Spec.HSMDeviceRefs))
-	for _, deviceRef := range hsmPool.Spec.HSMDeviceRefs {
-		hsmDevice := &hsmv1alpha1.HSMDevice{}
-		if err := r.Get(ctx, client.ObjectKey{
-			Name:      deviceRef,
-			Namespace: hsmPool.Namespace,
-		}, hsmDevice); err != nil {
-			logger.Error(err, "Unable to fetch referenced HSMDevice", "hsmDevice", deviceRef)
-			return r.updatePoolStatus(ctx, &hsmPool, hsmv1alpha1.HSMPoolPhaseError, nil, nil, 0, fmt.Sprintf("HSMDevice %s not found", deviceRef))
-		}
-		hsmDevices = append(hsmDevices, hsmDevice)
+	// Validate that the referenced HSMDevice exists (from ownerReferences)
+	if len(hsmPool.OwnerReferences) == 0 {
+		return r.updatePoolStatus(ctx, &hsmPool, hsmv1alpha1.HSMPoolPhaseError, nil, nil, 0, "HSMPool has no owner references")
 	}
+
+	deviceRef := hsmPool.OwnerReferences[0].Name
+	hsmDevices := make([]*hsmv1alpha1.HSMDevice, 0, 1)
+	hsmDevice := &hsmv1alpha1.HSMDevice{}
+	if err := r.Get(ctx, client.ObjectKey{
+		Name:      deviceRef,
+		Namespace: hsmPool.Namespace,
+	}, hsmDevice); err != nil {
+		logger.Error(err, "Unable to fetch referenced HSMDevice", "hsmDevice", deviceRef)
+		return r.updatePoolStatus(ctx, &hsmPool, hsmv1alpha1.HSMPoolPhaseError, nil, nil, 0, fmt.Sprintf("HSMDevice %s not found", deviceRef))
+	}
+	hsmDevices = append(hsmDevices, hsmDevice)
 
 	// Find discovery pods and their annotations
 	podReports, aggregatedDevices, expectedPods, err := r.collectPodReports(ctx, hsmDevices)
@@ -398,17 +401,14 @@ func (r *HSMPoolReconciler) findPoolsForPod(ctx context.Context, obj client.Obje
 
 	var requests []ctrl.Request
 	for _, pool := range pools.Items {
-		// Check if this pool references the HSMDevice in the report
-		for _, deviceRef := range pool.Spec.HSMDeviceRefs {
-			if deviceRef == discoveryReport.HSMDeviceName {
-				requests = append(requests, ctrl.Request{
-					NamespacedName: client.ObjectKey{
-						Name:      pool.Name,
-						Namespace: pool.Namespace,
-					},
-				})
-				break // Don't add the same pool multiple times
-			}
+		// Check if this pool references the HSMDevice in the report (from ownerReferences)
+		if len(pool.OwnerReferences) > 0 && pool.OwnerReferences[0].Name == discoveryReport.HSMDeviceName {
+			requests = append(requests, ctrl.Request{
+				NamespacedName: client.ObjectKey{
+					Name:      pool.Name,
+					Namespace: pool.Namespace,
+				},
+			})
 		}
 	}
 

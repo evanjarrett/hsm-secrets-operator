@@ -64,25 +64,30 @@ func (r *HSMPoolAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	// Only deploy agents for ready pools with discovered hardware
 	if hsmPool.Status.Phase == hsmv1alpha1.HSMPoolPhaseReady && len(hsmPool.Status.AggregatedDevices) > 0 {
-		// For each HSMDevice referenced by this pool, ensure agents exist for all aggregated devices
-		for _, deviceRef := range hsmPool.Spec.HSMDeviceRefs {
-			// Get the HSMDevice to pass to agent manager
-			var hsmDevice hsmv1alpha1.HSMDevice
-			if err := r.Get(ctx, client.ObjectKey{
-				Name:      deviceRef,
-				Namespace: hsmPool.Namespace,
-			}, &hsmDevice); err != nil {
-				logger.Error(err, "Failed to get referenced HSMDevice", "device", deviceRef)
-				continue
-			}
+		// Ensure owner reference exists and get the HSMDevice
+		if len(hsmPool.OwnerReferences) == 0 {
+			logger.Error(fmt.Errorf("no owner references"), "HSMPool has no owner references", "pool", hsmPool.Name)
+			return ctrl.Result{}, nil
+		}
 
-			if r.AgentManager != nil {
-				if err := r.AgentManager.EnsureAgent(ctx, &hsmDevice, nil); err != nil {
-					logger.Error(err, "Failed to ensure HSM agents for pool", "device", deviceRef)
-				}
-			} else {
-				logger.Error(fmt.Errorf("agent manager not configured"), "Cannot ensure agents without agent manager")
+		deviceRef := hsmPool.OwnerReferences[0].Name
+		// Get the HSMDevice to pass to agent manager
+		var hsmDevice hsmv1alpha1.HSMDevice
+		if err := r.Get(ctx, client.ObjectKey{
+			Name:      deviceRef,
+			Namespace: hsmPool.Namespace,
+		}, &hsmDevice); err != nil {
+			logger.Error(err, "Failed to get referenced HSMDevice", "device", deviceRef)
+			// Don't return error - this allows graceful handling of missing devices
+			return ctrl.Result{}, nil
+		}
+
+		if r.AgentManager != nil {
+			if err := r.AgentManager.EnsureAgent(ctx, &hsmPool); err != nil {
+				logger.Error(err, "Failed to ensure HSM agents for pool", "device", deviceRef)
 			}
+		} else {
+			logger.Error(fmt.Errorf("agent manager not configured"), "Cannot ensure agents without agent manager")
 		}
 	} else {
 		logger.V(1).Info("HSMPool not ready for agent deployment",
@@ -114,66 +119,70 @@ func (r *HSMPoolAgentReconciler) cleanupStaleAgents(ctx context.Context, hsmPool
 		absenceTimeout = 2 * gracePeriod // Default to 2x grace period
 	}
 
-	// For each HSMDevice referenced by this pool, check if it should be cleaned up
-	for _, deviceRef := range hsmPool.Spec.HSMDeviceRefs {
-		// Get the HSMDevice
-		var hsmDevice hsmv1alpha1.HSMDevice
-		if err := r.Get(ctx, client.ObjectKey{
-			Name:      deviceRef,
-			Namespace: hsmPool.Namespace,
-		}, &hsmDevice); err != nil {
-			logger.V(1).Info("HSMDevice not found, skipping cleanup check", "device", deviceRef)
-			continue
+	// Check if the HSMDevice referenced by this pool should be cleaned up (from ownerReferences)
+	if len(hsmPool.OwnerReferences) == 0 {
+		logger.V(1).Info("HSMPool has no owner references, skipping cleanup")
+		return nil
+	}
+
+	deviceRef := hsmPool.OwnerReferences[0].Name
+	// Get the HSMDevice
+	var hsmDevice hsmv1alpha1.HSMDevice
+	if err := r.Get(ctx, client.ObjectKey{
+		Name:      deviceRef,
+		Namespace: hsmPool.Namespace,
+	}, &hsmDevice); err != nil {
+		logger.V(1).Info("HSMDevice not found, skipping cleanup check", "device", deviceRef)
+		return nil
+	}
+
+	// Check if this device has available aggregated devices in the pool
+	deviceAvailable := false
+	var lastSeenTime time.Time
+
+	for _, aggregatedDevice := range hsmPool.Status.AggregatedDevices {
+		if aggregatedDevice.Available {
+			deviceAvailable = true
+			break
 		}
-
-		// Check if this device has available aggregated devices in the pool
-		deviceAvailable := false
-		var lastSeenTime time.Time
-
-		for _, aggregatedDevice := range hsmPool.Status.AggregatedDevices {
-			if aggregatedDevice.Available {
-				deviceAvailable = true
-				break
-			}
-			// Track the most recent LastSeen time for unavailable devices
-			if aggregatedDevice.LastSeen.After(lastSeenTime) {
-				lastSeenTime = aggregatedDevice.LastSeen.Time
-			}
+		// Track the most recent LastSeen time for unavailable devices
+		if aggregatedDevice.LastSeen.After(lastSeenTime) {
+			lastSeenTime = aggregatedDevice.LastSeen.Time
 		}
+	}
 
-		// If device is not available and hasn't been seen for longer than absence timeout
-		if !deviceAvailable {
-			timeSinceLastSeen := time.Since(lastSeenTime)
+	// If device is not available and hasn't been seen for longer than absence timeout
+	if !deviceAvailable {
+		timeSinceLastSeen := time.Since(lastSeenTime)
 
-			if lastSeenTime.IsZero() {
-				// No devices have ever been seen - check if pool has been around long enough
-				poolAge := time.Since(hsmPool.CreationTimestamp.Time)
-				if poolAge > absenceTimeout {
-					logger.Info("Cleaning up agent for device with no discovered instances",
-						"device", deviceRef,
-						"poolAge", poolAge,
-						"absenceTimeout", absenceTimeout)
-
-					if err := r.cleanupAgentForDevice(ctx, &hsmDevice); err != nil {
-						logger.Error(err, "Failed to cleanup agent for device with no instances", "device", deviceRef)
-					}
-				}
-			} else if timeSinceLastSeen > absenceTimeout {
-				logger.Info("Cleaning up agent for device absent too long",
+		if lastSeenTime.IsZero() {
+			// No devices have ever been seen - check if pool has been around long enough
+			poolAge := time.Since(hsmPool.CreationTimestamp.Time)
+			if poolAge > absenceTimeout {
+				logger.Info("Cleaning up agent for device with no discovered instances",
 					"device", deviceRef,
-					"timeSinceLastSeen", timeSinceLastSeen,
-					"absenceTimeout", absenceTimeout,
-					"lastSeen", lastSeenTime)
+					"poolAge", poolAge,
+					"absenceTimeout", absenceTimeout)
 
 				if err := r.cleanupAgentForDevice(ctx, &hsmDevice); err != nil {
-					logger.Error(err, "Failed to cleanup agent for absent device", "device", deviceRef)
+					logger.Error(err, "Failed to cleanup agent for device with no instances", "device", deviceRef)
 				}
-			} else {
-				logger.V(1).Info("Device unavailable but within tolerance",
-					"device", deviceRef,
-					"timeSinceLastSeen", timeSinceLastSeen,
-					"absenceTimeout", absenceTimeout)
 			}
+		} else if timeSinceLastSeen > absenceTimeout {
+			logger.Info("Cleaning up agent for device absent too long",
+				"device", deviceRef,
+				"timeSinceLastSeen", timeSinceLastSeen,
+				"absenceTimeout", absenceTimeout,
+				"lastSeen", lastSeenTime)
+
+			if err := r.cleanupAgentForDevice(ctx, &hsmDevice); err != nil {
+				logger.Error(err, "Failed to cleanup agent for absent device", "device", deviceRef)
+			}
+		} else {
+			logger.V(1).Info("Device unavailable but within tolerance",
+				"device", deviceRef,
+				"timeSinceLastSeen", timeSinceLastSeen,
+				"absenceTimeout", absenceTimeout)
 		}
 	}
 

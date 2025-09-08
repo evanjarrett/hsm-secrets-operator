@@ -92,8 +92,7 @@ func (r *DiscoveryDaemonSetReconciler) ensureHSMPool(ctx context.Context, hsmDev
 			},
 		},
 		Spec: hsmv1alpha1.HSMPoolSpec{
-			HSMDeviceRefs: []string{hsmDevice.Name},
-			GracePeriod:   &metav1.Duration{Duration: 5 * time.Minute}, // Default grace period
+			GracePeriod: &metav1.Duration{Duration: 5 * time.Minute}, // Default grace period
 		},
 	}
 
@@ -119,19 +118,6 @@ func (r *DiscoveryDaemonSetReconciler) ensureHSMPool(ctx context.Context, hsmDev
 
 	// Update existing HSMPool if needed
 	needsUpdate := false
-
-	// Check if device reference needs updating
-	found := false
-	for _, deviceRef := range existing.Spec.HSMDeviceRefs {
-		if deviceRef == hsmDevice.Name {
-			found = true
-			break
-		}
-	}
-	if !found {
-		existing.Spec.HSMDeviceRefs = append(existing.Spec.HSMDeviceRefs, hsmDevice.Name)
-		needsUpdate = true
-	}
 
 	// Update grace period if it's nil
 	if existing.Spec.GracePeriod == nil {

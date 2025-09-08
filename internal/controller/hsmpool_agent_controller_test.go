@@ -90,10 +90,16 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      hsmPoolName,
 					Namespace: hsmPoolNamespace,
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							APIVersion: "hsm.j5t.io/v1alpha1",
+							Kind:       "HSMDevice",
+							Name:       hsmDevice.Name,
+							UID:        hsmDevice.UID,
+						},
+					},
 				},
-				Spec: hsmv1alpha1.HSMPoolSpec{
-					HSMDeviceRefs: []string{hsmDeviceName},
-				},
+				Spec: hsmv1alpha1.HSMPoolSpec{},
 				Status: hsmv1alpha1.HSMPoolStatus{
 					Phase:            hsmv1alpha1.HSMPoolPhaseReady,
 					AvailableDevices: 1,
@@ -197,7 +203,8 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 			Expect(deployment.Name).To(Equal(agentName))
 			Expect(deployment.Namespace).To(Equal(hsmPoolNamespace))
 			Expect(deployment.Labels).To(HaveKeyWithValue("hsm.j5t.io/device", hsmDeviceName))
-			Expect(deployment.Labels).To(HaveKeyWithValue("hsm.j5t.io/device-type", "PicoHSM"))
+			Expect(deployment.Labels).To(HaveKey("hsm.j5t.io/serial-number"))
+			Expect(deployment.Labels).To(HaveKey("hsm.j5t.io/device-path"))
 
 			// Check pod template
 			podSpec := deployment.Spec.Template.Spec
@@ -313,10 +320,16 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      missingDevicePoolName,
 					Namespace: hsmPoolNamespace,
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							APIVersion: "hsm.j5t.io/v1alpha1",
+							Kind:       "HSMDevice",
+							Name:       "non-existent-device",
+							UID:        "fake-uid-123",
+						},
+					},
 				},
-				Spec: hsmv1alpha1.HSMPoolSpec{
-					HSMDeviceRefs: []string{"non-existent-device"},
-				},
+				Spec: hsmv1alpha1.HSMPoolSpec{},
 				Status: hsmv1alpha1.HSMPoolStatus{
 					Phase: hsmv1alpha1.HSMPoolPhaseReady,
 					AggregatedDevices: []hsmv1alpha1.DiscoveredDevice{
@@ -456,7 +469,7 @@ type MockAgentManager struct {
 	CleanupCalls []string // Track which devices were cleaned up
 }
 
-func (m *MockAgentManager) EnsureAgent(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice, hsmSecret *hsmv1alpha1.HSMSecret) error {
+func (m *MockAgentManager) EnsureAgent(ctx context.Context, hsmPool *hsmv1alpha1.HSMPool) error {
 	return nil
 }
 
@@ -491,10 +504,17 @@ func TestCleanupStaleAgents(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pool",
 					Namespace: "default",
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							APIVersion: "hsm.j5t.io/v1alpha1",
+							Kind:       "HSMDevice",
+							Name:       "absent-device",
+							UID:        "test-uid-1",
+						},
+					},
 				},
 				Spec: hsmv1alpha1.HSMPoolSpec{
-					HSMDeviceRefs: []string{"absent-device"},
-					GracePeriod:   &metav1.Duration{Duration: 5 * time.Minute},
+					GracePeriod: &metav1.Duration{Duration: 5 * time.Minute},
 				},
 				Status: hsmv1alpha1.HSMPoolStatus{
 					AggregatedDevices: []hsmv1alpha1.DiscoveredDevice{
@@ -524,10 +544,17 @@ func TestCleanupStaleAgents(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pool",
 					Namespace: "default",
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							APIVersion: "hsm.j5t.io/v1alpha1",
+							Kind:       "HSMDevice",
+							Name:       "recent-device",
+							UID:        "test-uid-2",
+						},
+					},
 				},
 				Spec: hsmv1alpha1.HSMPoolSpec{
-					HSMDeviceRefs: []string{"recent-device"},
-					GracePeriod:   &metav1.Duration{Duration: 5 * time.Minute},
+					GracePeriod: &metav1.Duration{Duration: 5 * time.Minute},
 				},
 				Status: hsmv1alpha1.HSMPoolStatus{
 					AggregatedDevices: []hsmv1alpha1.DiscoveredDevice{
@@ -557,10 +584,17 @@ func TestCleanupStaleAgents(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pool",
 					Namespace: "default",
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							APIVersion: "hsm.j5t.io/v1alpha1",
+							Kind:       "HSMDevice",
+							Name:       "available-device",
+							UID:        "test-uid-3",
+						},
+					},
 				},
 				Spec: hsmv1alpha1.HSMPoolSpec{
-					HSMDeviceRefs: []string{"available-device"},
-					GracePeriod:   &metav1.Duration{Duration: 5 * time.Minute},
+					GracePeriod: &metav1.Duration{Duration: 5 * time.Minute},
 				},
 				Status: hsmv1alpha1.HSMPoolStatus{
 					AggregatedDevices: []hsmv1alpha1.DiscoveredDevice{
@@ -591,10 +625,17 @@ func TestCleanupStaleAgents(t *testing.T) {
 					Name:              "test-pool",
 					Namespace:         "default",
 					CreationTimestamp: metav1.NewTime(tenMinutesAgo), // Pool created 10 minutes ago
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							APIVersion: "hsm.j5t.io/v1alpha1",
+							Kind:       "HSMDevice",
+							Name:       "never-seen-device",
+							UID:        "test-uid-4",
+						},
+					},
 				},
 				Spec: hsmv1alpha1.HSMPoolSpec{
-					HSMDeviceRefs: []string{"never-seen-device"},
-					GracePeriod:   &metav1.Duration{Duration: 5 * time.Minute},
+					GracePeriod: &metav1.Duration{Duration: 5 * time.Minute},
 				},
 				Status: hsmv1alpha1.HSMPoolStatus{
 					AggregatedDevices: []hsmv1alpha1.DiscoveredDevice{}, // No devices ever discovered
@@ -669,10 +710,17 @@ func TestDefaultAbsenceTimeout(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-pool",
 			Namespace: "default",
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion: "hsm.j5t.io/v1alpha1",
+					Kind:       "HSMDevice",
+					Name:       "test-device",
+					UID:        "test-uid-5",
+				},
+			},
 		},
 		Spec: hsmv1alpha1.HSMPoolSpec{
-			HSMDeviceRefs: []string{"test-device"},
-			GracePeriod:   &metav1.Duration{Duration: 3 * time.Minute}, // 3 minute grace period
+			GracePeriod: &metav1.Duration{Duration: 3 * time.Minute}, // 3 minute grace period
 		},
 		Status: hsmv1alpha1.HSMPoolStatus{
 			AggregatedDevices: []hsmv1alpha1.DiscoveredDevice{

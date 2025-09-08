@@ -78,10 +78,10 @@ type WriteSecretResponse struct {
 
 // DeleteSecretResponse represents the response for deleting a secret
 type DeleteSecretResponse struct {
-	Path           string              `json:"path"`
-	Devices        int                 `json:"devices"`
-	DeviceResults  map[string]any      `json:"deviceResults"`
-	Warnings       []string            `json:"warnings,omitempty"`
+	Path          string         `json:"path"`
+	Devices       int            `json:"devices"`
+	DeviceResults map[string]any `json:"deviceResults"`
+	Warnings      []string       `json:"warnings,omitempty"`
 }
 
 // ReadMetadataResponse represents the response for reading metadata

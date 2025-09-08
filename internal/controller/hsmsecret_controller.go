@@ -192,8 +192,22 @@ func (r *HSMSecretReconciler) ensureHSMAgents(ctx context.Context, hsmSecret *hs
 
 	// Ensure agent pods are running for all devices and create clients
 	for _, hsmDevice := range hsmDevices {
+		// Get the HSMPool for this device
+		poolName := hsmDevice.Name + "-pool"
+		var hsmPool hsmv1alpha1.HSMPool
+		if err := r.Get(ctx, types.NamespacedName{
+			Name:      poolName,
+			Namespace: hsmDevice.Namespace,
+		}, &hsmPool); err != nil {
+			// Clean up any successful connections before returning error
+			if err := deviceClients.Close(); err != nil {
+				logger.Error(err, "Failed to close device clients during cleanup")
+			}
+			return nil, fmt.Errorf("failed to get HSMPool %s for device %s: %w", poolName, hsmDevice.Name, err)
+		}
+
 		// EnsureAgent ensures agents for all devices in the pool
-		err = r.AgentManager.EnsureAgent(ctx, hsmDevice, hsmSecret)
+		err = r.AgentManager.EnsureAgent(ctx, &hsmPool)
 		if err != nil {
 			// Clean up any successful connections before returning error
 			if err := deviceClients.Close(); err != nil {

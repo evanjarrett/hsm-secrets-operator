@@ -22,9 +22,6 @@ import (
 
 // HSMPoolSpec defines the desired state of HSMPool
 type HSMPoolSpec struct {
-	// HSMDeviceRefs references the HSMDevice specifications this pool aggregates
-	HSMDeviceRefs []string `json:"hsmDeviceRefs"`
-
 	// GracePeriod defines how long to wait before considering a pod's report stale
 	// +kubebuilder:default="5m"
 	// +optional
@@ -115,7 +112,6 @@ const (
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=hsmpool
-// +kubebuilder:printcolumn:name="HSMDevices",type=string,JSONPath=`.spec.hsmDeviceRefs`
 // +kubebuilder:printcolumn:name="Total",type=integer,JSONPath=`.status.totalDevices`
 // +kubebuilder:printcolumn:name="Available",type=integer,JSONPath=`.status.availableDevices`
 // +kubebuilder:printcolumn:name="Reporting",type=string,JSONPath=`.status.reportingPods[*].podName`
