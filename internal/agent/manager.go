@@ -979,9 +979,9 @@ func (m *Manager) CreateGRPCClient(ctx context.Context, deviceName, namespace st
 
 // GetAvailableDevices finds all devices with ready HSMPools and active agents
 func (m *Manager) GetAvailableDevices(ctx context.Context, namespace string) ([]string, error) {
-	// List all HSMPools to find all with active agents
+	// List all HSMPools cluster-wide to find all with active agents
 	var hsmPoolList hsmv1alpha1.HSMPoolList
-	if err := m.List(ctx, &hsmPoolList, client.InNamespace(namespace)); err != nil {
+	if err := m.List(ctx, &hsmPoolList); err != nil {
 		return nil, fmt.Errorf("failed to list HSM pools: %w", err)
 	}
 
@@ -995,7 +995,8 @@ func (m *Manager) GetAvailableDevices(ctx context.Context, namespace string) ([]
 		// Extract device name from pool name (remove "-pool" suffix)
 		deviceName := strings.TrimSuffix(pool.Name, "-pool")
 
-		if podIPs, err := m.GetAgentPodIPs(ctx, deviceName, namespace); err == nil && len(podIPs) > 0 {
+		// Use the HSMPool's namespace for agent lookup
+		if podIPs, err := m.GetAgentPodIPs(ctx, deviceName, pool.Namespace); err == nil && len(podIPs) > 0 {
 			availableDevices = append(availableDevices, deviceName)
 		}
 	}
