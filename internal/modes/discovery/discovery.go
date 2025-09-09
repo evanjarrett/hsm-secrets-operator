@@ -249,17 +249,37 @@ func (d *DiscoveryAgent) processHSMDevice(ctx context.Context, hsmDevice *hsmv1a
 func (d *DiscoveryAgent) discoverDevicesForSpec(
 	ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice,
 ) ([]hsmv1alpha1.DiscoveredDevice, error) {
+	var devices []hsmv1alpha1.DiscoveredDevice
+	var err error
+
 	// Perform discovery based on specification
 	if hsmDevice.Spec.Discovery != nil && hsmDevice.Spec.Discovery.USB != nil {
-		return d.discoverUSBDevices(ctx, hsmDevice)
+		devices, err = d.discoverUSBDevices(ctx, hsmDevice)
 	} else if hsmDevice.Spec.Discovery != nil && hsmDevice.Spec.Discovery.DevicePath != nil {
-		return d.discoverPathDevices(ctx, hsmDevice)
+		devices, err = d.discoverPathDevices(ctx, hsmDevice)
 	} else if hsmDevice.Spec.Discovery != nil && hsmDevice.Spec.Discovery.AutoDiscovery {
-		return d.autoDiscoverDevices(ctx, hsmDevice)
+		devices, err = d.autoDiscoverDevices(ctx, hsmDevice)
 	} else {
 		// Default to auto-discovery
-		return d.autoDiscoverDevices(ctx, hsmDevice)
+		devices, err = d.autoDiscoverDevices(ctx, hsmDevice)
 	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply maxDevices limit
+	if hsmDevice.Spec.MaxDevices > 0 && int32(len(devices)) > hsmDevice.Spec.MaxDevices {
+		originalCount := len(devices)
+		devices = devices[:hsmDevice.Spec.MaxDevices]
+		d.logger.Info("Limited discovered devices due to maxDevices setting",
+			"device", hsmDevice.Name,
+			"maxDevices", hsmDevice.Spec.MaxDevices,
+			"originalCount", originalCount,
+			"limitedCount", len(devices))
+	}
+
+	return devices, nil
 }
 
 // discoverUSBDevices discovers devices using USB specifications
