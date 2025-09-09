@@ -32,7 +32,8 @@ import (
 
 // AgentManagerInterface defines the interface for HSM agent management used by mirror
 type AgentManagerInterface interface {
-	CreateGRPCClient(ctx context.Context, deviceName, namespace string, logger logr.Logger) (hsm.Client, error)
+	CreateGRPCClient(ctx context.Context, device hsmv1alpha1.DiscoveredDevice, logger logr.Logger) (hsm.Client, error)
+	GetAvailableDevices(ctx context.Context, namespace string) ([]hsmv1alpha1.DiscoveredDevice, error)
 }
 
 // MirrorManager handles multi-device HSM mirroring and conflict resolution
@@ -111,7 +112,7 @@ const (
 )
 
 // buildSecretInventory builds a comprehensive inventory of secrets across all devices
-func (mm *MirrorManager) buildSecretInventory(ctx context.Context, secretPaths []string, devices []string, operatorNamespace string, logger logr.Logger) (map[string]*SecretInventory, error) {
+func (mm *MirrorManager) buildSecretInventory(ctx context.Context, secretPaths []string, devices []hsmv1alpha1.DiscoveredDevice, logger logr.Logger) (map[string]*SecretInventory, error) {
 	inventory := make(map[string]*SecretInventory)
 
 	// Initialize inventory entries for requested secrets
@@ -123,16 +124,17 @@ func (mm *MirrorManager) buildSecretInventory(ctx context.Context, secretPaths [
 	}
 
 	// Check each device for the presence and state of each secret
-	for _, deviceName := range devices {
-		logger.Info("Checking device for secrets", "device", deviceName, "secretCount", len(secretPaths))
+	for _, device := range devices {
+		deviceId := device.SerialNumber
+		logger.Info("Checking device for secrets", "device", deviceId, "secretCount", len(secretPaths))
 
 		// Create gRPC client for this device (agents are in operator namespace)
-		grpcClient, err := mm.agentManager.CreateGRPCClient(ctx, deviceName, operatorNamespace, logger)
+		grpcClient, err := mm.agentManager.CreateGRPCClient(ctx, device, logger)
 		if err != nil {
-			logger.Error(err, "Failed to create gRPC client", "device", deviceName)
+			logger.Error(err, "Failed to create gRPC client", "device", deviceId)
 			// Mark all secrets as having an error on this device
 			for secretPath := range inventory {
-				inventory[secretPath].DeviceStates[deviceName] = &SecretState{
+				inventory[secretPath].DeviceStates[deviceId] = &SecretState{
 					Present:     false,
 					Version:     0,
 					Timestamp:   time.Now(),
@@ -148,13 +150,13 @@ func (mm *MirrorManager) buildSecretInventory(ctx context.Context, secretPaths [
 			if closeErr := client.Close(); closeErr != nil {
 				logger.V(1).Info("Failed to close gRPC client", "device", device, "error", closeErr)
 			}
-		}(grpcClient, deviceName)
+		}(grpcClient, deviceId)
 
 		// Check if device is connected
 		if !grpcClient.IsConnected() {
-			logger.V(1).Info("Device not connected", "device", deviceName)
+			logger.V(1).Info("Device not connected", "device", deviceId)
 			for secretPath := range inventory {
-				inventory[secretPath].DeviceStates[deviceName] = &SecretState{
+				inventory[secretPath].DeviceStates[deviceId] = &SecretState{
 					Present:     false,
 					Version:     0,
 					Timestamp:   time.Now(),
@@ -181,13 +183,13 @@ func (mm *MirrorManager) buildSecretInventory(ctx context.Context, secretPaths [
 			data, err := grpcClient.ReadSecret(ctx, secretPath)
 			if err != nil {
 				// Secret doesn't exist on this device
-				logger.V(1).Info("Secret not found on device", "device", deviceName, "secret", secretPath)
+				logger.V(1).Info("Secret not found on device", "device", deviceId, "secret", secretPath)
 				state.Error = fmt.Errorf("secret not found: %w", err)
 			} else {
 				// Secret exists, calculate checksum
 				state.Present = true
 				state.Checksum = mm.calculateChecksum(data)
-				logger.V(1).Info("Secret found on device", "device", deviceName, "secret", secretPath, "checksum", state.Checksum[:8])
+				logger.V(1).Info("Secret found on device", "device", deviceId, "secret", secretPath, "checksum", state.Checksum[:8])
 
 				// Try to read metadata
 				metadata, metaErr := grpcClient.ReadMetadata(ctx, secretPath)
@@ -204,14 +206,14 @@ func (mm *MirrorManager) buildSecretInventory(ctx context.Context, secretPaths [
 							state.Timestamp = timestamp
 						}
 					}
-					logger.V(1).Info("Metadata found", "device", deviceName, "secret", secretPath,
+					logger.V(1).Info("Metadata found", "device", deviceId, "secret", secretPath,
 						"version", state.Version, "timestamp", state.Timestamp.Format(time.RFC3339))
 				} else {
-					logger.V(1).Info("No metadata found", "device", deviceName, "secret", secretPath)
+					logger.V(1).Info("No metadata found", "device", deviceId, "secret", secretPath)
 				}
 			}
 
-			inventory[secretPath].DeviceStates[deviceName] = state
+			inventory[secretPath].DeviceStates[deviceId] = state
 		}
 	}
 
@@ -397,7 +399,7 @@ func removeDevice(devices []string, deviceToRemove string) []string {
 }
 
 // executeMirrorPlans executes sync operations for all planned secret synchronizations
-func (mm *MirrorManager) executeMirrorPlans(ctx context.Context, plans []*SecretMirrorPlan, operatorNamespace string, logger logr.Logger) *MirrorResult {
+func (mm *MirrorManager) executeMirrorPlans(ctx context.Context, plans []*SecretMirrorPlan, deviceLookup map[string]hsmv1alpha1.DiscoveredDevice, logger logr.Logger) *MirrorResult {
 	result := &MirrorResult{
 		Success:          true,
 		SecretsProcessed: len(plans),
@@ -409,7 +411,7 @@ func (mm *MirrorManager) executeMirrorPlans(ctx context.Context, plans []*Secret
 	}
 
 	for _, plan := range plans {
-		secretResult := mm.executeMirrorPlan(ctx, plan, operatorNamespace, logger)
+		secretResult := mm.executeMirrorPlan(ctx, plan, deviceLookup, logger)
 		result.SecretResults[plan.SecretPath] = secretResult
 
 		if secretResult.Success {
@@ -433,7 +435,7 @@ func (mm *MirrorManager) executeMirrorPlans(ctx context.Context, plans []*Secret
 }
 
 // executeMirrorPlan executes a single secret sync plan
-func (mm *MirrorManager) executeMirrorPlan(ctx context.Context, plan *SecretMirrorPlan, operatorNamespace string, logger logr.Logger) SecretMirrorResult {
+func (mm *MirrorManager) executeMirrorPlan(ctx context.Context, plan *SecretMirrorPlan, deviceLookup map[string]hsmv1alpha1.DiscoveredDevice, logger logr.Logger) SecretMirrorResult {
 	result := SecretMirrorResult{
 		SecretPath:    plan.SecretPath,
 		SourceDevice:  plan.SourceDevice,
@@ -452,7 +454,12 @@ func (mm *MirrorManager) executeMirrorPlan(ctx context.Context, plan *SecretMirr
 	}
 
 	// Get source data and metadata
-	sourceData, sourceMetadata, err := mm.readSecretWithMetadata(ctx, plan.SourceDevice, plan.SecretPath, operatorNamespace, logger)
+	sourceDevice, ok := deviceLookup[plan.SourceDevice]
+	if !ok {
+		result.Error = fmt.Errorf("source device not found in lookup: %s", plan.SourceDevice)
+		return result
+	}
+	sourceData, sourceMetadata, err := mm.readSecretWithMetadata(ctx, sourceDevice, plan.SecretPath, logger)
 	if err != nil {
 		result.Error = fmt.Errorf("failed to read source secret: %w", err)
 		logger.Error(err, "Failed to read source secret", "device", plan.SourceDevice, "secret", plan.SecretPath)
@@ -482,7 +489,7 @@ func (mm *MirrorManager) executeMirrorPlan(ctx context.Context, plan *SecretMirr
 	if plan.MirrorType == MirrorTypeRestoreMetadata {
 		if sourceMetadata == nil || sourceMetadata.Labels == nil || sourceMetadata.Labels["sync.version"] == "" {
 			logger.Info("Restoring metadata on source device", "device", plan.SourceDevice, "secret", plan.SecretPath)
-			if err := mm.writeSecretWithMetadata(ctx, plan.SourceDevice, plan.SecretPath, sourceData, syncMetadata, operatorNamespace, logger); err != nil {
+			if err := mm.writeSecretWithMetadata(ctx, sourceDevice, plan.SecretPath, sourceData, syncMetadata, logger); err != nil {
 				result.Error = fmt.Errorf("failed to restore metadata on source: %w", err)
 				return result
 			}
@@ -491,20 +498,26 @@ func (mm *MirrorManager) executeMirrorPlan(ctx context.Context, plan *SecretMirr
 
 	// Sync to target devices
 	successfulTargets := 0
-	for _, targetDevice := range plan.TargetDevices {
-		logger.Info("Syncing secret to target device", "secret", plan.SecretPath, "source", plan.SourceDevice, "target", targetDevice, "version", newVersion)
+	for _, targetDeviceId := range plan.TargetDevices {
+		targetDevice, ok := deviceLookup[targetDeviceId]
+		if !ok {
+			logger.Error(fmt.Errorf("target device not found in lookup: %s", targetDeviceId), "Failed to find target device", "target", targetDeviceId, "secret", plan.SecretPath)
+			continue
+		}
+
+		logger.Info("Syncing secret to target device", "secret", plan.SecretPath, "source", plan.SourceDevice, "target", targetDeviceId, "version", newVersion)
 
 		var syncErr error
 		switch plan.MirrorType {
 		case MirrorTypeCreate, MirrorTypeUpdate:
-			syncErr = mm.writeSecretWithMetadata(ctx, targetDevice, plan.SecretPath, sourceData, syncMetadata, operatorNamespace, logger)
+			syncErr = mm.writeSecretWithMetadata(ctx, targetDevice, plan.SecretPath, sourceData, syncMetadata, logger)
 		case MirrorTypeRestoreMetadata:
 			// For metadata restoration, we just update the metadata without changing the data
-			syncErr = mm.writeMetadataOnly(ctx, targetDevice, plan.SecretPath, syncMetadata, operatorNamespace, logger)
+			syncErr = mm.writeMetadataOnly(ctx, targetDevice, plan.SecretPath, syncMetadata, logger)
 		}
 
 		if syncErr != nil {
-			logger.Error(syncErr, "Failed to sync to target device", "target", targetDevice, "secret", plan.SecretPath)
+			logger.Error(syncErr, "Failed to sync to target device", "target", targetDeviceId, "secret", plan.SecretPath)
 			if result.Error == nil {
 				result.Error = syncErr
 			}
@@ -526,8 +539,8 @@ func (mm *MirrorManager) executeMirrorPlan(ctx context.Context, plan *SecretMirr
 }
 
 // readSecretWithMetadata reads both secret data and metadata from a device
-func (mm *MirrorManager) readSecretWithMetadata(ctx context.Context, deviceName, secretPath, namespace string, logger logr.Logger) (hsm.SecretData, *hsm.SecretMetadata, error) {
-	grpcClient, err := mm.agentManager.CreateGRPCClient(ctx, deviceName, namespace, logger)
+func (mm *MirrorManager) readSecretWithMetadata(ctx context.Context, device hsmv1alpha1.DiscoveredDevice, secretPath string, logger logr.Logger) (hsm.SecretData, *hsm.SecretMetadata, error) {
+	grpcClient, err := mm.agentManager.CreateGRPCClient(ctx, device, logger)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create gRPC client: %w", err)
 	}
@@ -550,7 +563,7 @@ func (mm *MirrorManager) readSecretWithMetadata(ctx context.Context, deviceName,
 	// Read metadata (may not exist)
 	metadata, err := grpcClient.ReadMetadata(ctx, secretPath)
 	if err != nil {
-		logger.V(1).Info("No metadata found for secret", "secret", secretPath, "device", deviceName)
+		logger.V(1).Info("No metadata found for secret", "secret", secretPath, "device", device.SerialNumber)
 		metadata = nil // Not an error - metadata may not exist
 	}
 
@@ -558,8 +571,8 @@ func (mm *MirrorManager) readSecretWithMetadata(ctx context.Context, deviceName,
 }
 
 // writeSecretWithMetadata writes both secret data and metadata to a device
-func (mm *MirrorManager) writeSecretWithMetadata(ctx context.Context, deviceName, secretPath string, data hsm.SecretData, metadata *hsm.SecretMetadata, namespace string, logger logr.Logger) error {
-	grpcClient, err := mm.agentManager.CreateGRPCClient(ctx, deviceName, namespace, logger)
+func (mm *MirrorManager) writeSecretWithMetadata(ctx context.Context, device hsmv1alpha1.DiscoveredDevice, secretPath string, data hsm.SecretData, metadata *hsm.SecretMetadata, logger logr.Logger) error {
+	grpcClient, err := mm.agentManager.CreateGRPCClient(ctx, device, logger)
 	if err != nil {
 		return fmt.Errorf("failed to create gRPC client: %w", err)
 	}
@@ -582,8 +595,8 @@ func (mm *MirrorManager) writeSecretWithMetadata(ctx context.Context, deviceName
 }
 
 // writeMetadataOnly updates only the metadata for an existing secret
-func (mm *MirrorManager) writeMetadataOnly(ctx context.Context, deviceName, secretPath string, metadata *hsm.SecretMetadata, namespace string, logger logr.Logger) error {
-	grpcClient, err := mm.agentManager.CreateGRPCClient(ctx, deviceName, namespace, logger)
+func (mm *MirrorManager) writeMetadataOnly(ctx context.Context, device hsmv1alpha1.DiscoveredDevice, secretPath string, metadata *hsm.SecretMetadata, logger logr.Logger) error {
+	grpcClient, err := mm.agentManager.CreateGRPCClient(ctx, device, logger)
 	if err != nil {
 		return fmt.Errorf("failed to create gRPC client: %w", err)
 	}
@@ -611,44 +624,6 @@ func (mm *MirrorManager) writeMetadataOnly(ctx context.Context, deviceName, secr
 	return nil
 }
 
-// getAvailableDevices gets list of available HSM device types from HSMPools cluster-wide
-func (mm *MirrorManager) getAvailableDevices(ctx context.Context) ([]string, error) {
-	var hsmPoolList hsmv1alpha1.HSMPoolList
-	// List HSMPools cluster-wide since they exist in the same namespace as their HSMDevices
-	if err := mm.client.List(ctx, &hsmPoolList); err != nil {
-		return nil, fmt.Errorf("failed to list HSM pools cluster-wide: %w", err)
-	}
-
-	deviceTypes := make(map[string]bool)
-
-	for _, pool := range hsmPoolList.Items {
-		if pool.Status.Phase == hsmv1alpha1.HSMPoolPhaseReady && len(pool.Status.AggregatedDevices) > 0 {
-			// Check if any devices in this pool are available
-			hasAvailableDevices := false
-			for _, aggregatedDevice := range pool.Status.AggregatedDevices {
-				if aggregatedDevice.Available {
-					hasAvailableDevices = true
-					break
-				}
-			}
-			
-			if hasAvailableDevices {
-				deviceName := pool.OwnerReferences[0].Name
-				// Use base device name (e.g., "pico-hsm") - agent manager handles multiple instances internally
-				deviceTypes[deviceName] = true
-			}
-		}
-	}
-
-	// Convert map to sorted slice
-	devices := make([]string, 0, len(deviceTypes))
-	for deviceName := range deviceTypes {
-		devices = append(devices, deviceName)
-	}
-	sort.Strings(devices) // Ensure consistent ordering
-	return devices, nil
-}
-
 // MirrorAllSecrets performs device-scoped mirroring of ALL secrets across HSM devices
 // This discovers all secrets on any device and ensures they exist on all other devices
 func (mm *MirrorManager) MirrorAllSecrets(ctx context.Context) (*MirrorResult, error) {
@@ -656,7 +631,7 @@ func (mm *MirrorManager) MirrorAllSecrets(ctx context.Context) (*MirrorResult, e
 	logger.Info("Starting device-scoped mirroring of all HSM secrets")
 
 	// Get all available HSM devices
-	devices, err := mm.getAvailableDevices(ctx)
+	devices, err := mm.agentManager.GetAvailableDevices(ctx, mm.operatorNamespace)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get available devices: %w", err)
 	}
@@ -666,10 +641,15 @@ func (mm *MirrorManager) MirrorAllSecrets(ctx context.Context) (*MirrorResult, e
 		return &MirrorResult{Success: true, SecretsProcessed: 0}, nil
 	}
 
-	logger.Info("Starting mirroring across devices", "devices", devices, "deviceCount", len(devices))
+	// Extract device identifiers for logging
+	deviceIds := make([]string, len(devices))
+	for i, device := range devices {
+		deviceIds[i] = device.SerialNumber
+	}
+	logger.Info("Starting mirroring across devices", "devices", deviceIds, "deviceCount", len(devices))
 
 	// Discover all secrets across all devices
-	allSecretPaths := mm.discoverAllSecrets(ctx, devices, mm.operatorNamespace, logger)
+	allSecretPaths := mm.discoverAllSecrets(ctx, devices, logger)
 
 	if len(allSecretPaths) == 0 {
 		logger.Info("No secrets found to mirror")
@@ -678,8 +658,14 @@ func (mm *MirrorManager) MirrorAllSecrets(ctx context.Context) (*MirrorResult, e
 
 	logger.Info("Discovered secrets for mirroring", "secretCount", len(allSecretPaths), "secrets", allSecretPaths)
 
+	// Create device lookup map for execution functions
+	deviceLookup := make(map[string]hsmv1alpha1.DiscoveredDevice)
+	for _, device := range devices {
+		deviceLookup[device.SerialNumber] = device
+	}
+
 	// Build inventory for all discovered secrets
-	inventory, err := mm.buildSecretInventory(ctx, allSecretPaths, devices, mm.operatorNamespace, logger)
+	inventory, err := mm.buildSecretInventory(ctx, allSecretPaths, devices, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build secret inventory: %w", err)
 	}
@@ -689,17 +675,18 @@ func (mm *MirrorManager) MirrorAllSecrets(ctx context.Context) (*MirrorResult, e
 	logger.Info("Created mirror plans", "planCount", len(plans))
 
 	// Execute mirror plans
-	return mm.executeMirrorPlans(ctx, plans, mm.operatorNamespace, logger), nil
+	return mm.executeMirrorPlans(ctx, plans, deviceLookup, logger), nil
 }
 
 // discoverAllSecrets discovers all secrets present on any HSM device
-func (mm *MirrorManager) discoverAllSecrets(ctx context.Context, devices []string, operatorNamespace string, logger logr.Logger) []string {
+func (mm *MirrorManager) discoverAllSecrets(ctx context.Context, devices []hsmv1alpha1.DiscoveredDevice, logger logr.Logger) []string {
 	secretPaths := make(map[string]bool)
 
-	for _, deviceName := range devices {
-		deviceLogger := logger.WithValues("device", deviceName)
+	for _, device := range devices {
+		deviceId := device.SerialNumber
+		deviceLogger := logger.WithValues("device", deviceId)
 
-		hsmClient, err := mm.agentManager.CreateGRPCClient(ctx, deviceName, operatorNamespace, deviceLogger)
+		hsmClient, err := mm.agentManager.CreateGRPCClient(ctx, device, deviceLogger)
 		if err != nil {
 			deviceLogger.Info("Failed to connect to device for discovery, skipping", "error", err)
 			continue
@@ -769,7 +756,7 @@ func (mm *MirrorManager) WaitForAgentsReady(ctx context.Context, timeout time.Du
 			return false, ctx.Err()
 
 		case <-ticker.C:
-			devices, err := mm.getAvailableDevices(ctx)
+			devices, err := mm.agentManager.GetAvailableDevices(ctx, mm.operatorNamespace)
 			if err != nil {
 				logger.V(1).Info("Failed to check available devices", "error", err)
 				continue
@@ -777,10 +764,10 @@ func (mm *MirrorManager) WaitForAgentsReady(ctx context.Context, timeout time.Du
 
 			if len(devices) > 0 {
 				// Try to connect to at least one device to verify agents are actually ready
-				for _, deviceName := range devices {
-					grpcClient, err := mm.agentManager.CreateGRPCClient(ctx, deviceName, mm.operatorNamespace, logger)
+				for _, device := range devices {
+					grpcClient, err := mm.agentManager.CreateGRPCClient(ctx, device, logger)
 					if err != nil {
-						logger.V(1).Info("Agent not ready yet", "device", deviceName, "error", err)
+						logger.V(1).Info("Agent not ready yet", "device", device.SerialNumber, "error", err)
 						continue
 					}
 

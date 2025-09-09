@@ -143,7 +143,7 @@ func Run(args []string) error {
 	// Start gRPC server
 	setupLog.Info("HSM agent ready", "device", deviceName)
 
-	grpcServer := agent.NewGRPCServer(hsmClient, deviceName, port, healthPort, setupLog)
+	grpcServer := agent.NewGRPCServer(hsmClient, port, healthPort, setupLog)
 	if err := grpcServer.Start(ctx); err != nil {
 		setupLog.Error(err, "gRPC server failed")
 		return err

@@ -60,7 +60,7 @@ func TestGRPCClientServerIntegration(t *testing.T) {
 
 	// Start a real gRPC server
 	logger := logr.Discard()
-	grpcServer := NewGRPCServer(mockHSMClient, "test-device", 0, 0, logger)
+	grpcServer := NewGRPCServer(mockHSMClient, 0, 0, logger)
 
 	// Find available port
 	listener, err := net.Listen("tcp", ":0")
@@ -91,7 +91,7 @@ func TestGRPCClientServerIntegration(t *testing.T) {
 
 	// Create gRPC client
 	endpoint := "localhost:" + strconv.Itoa(port)
-	client, err := NewGRPCClient(endpoint, "test-device", logger)
+	client, err := NewGRPCClient(endpoint, logger)
 	require.NoError(t, err)
 	defer func() {
 		assert.NoError(t, client.Close())
@@ -232,7 +232,7 @@ func TestGRPCClientTimeouts(t *testing.T) {
 	logger := logr.Discard()
 
 	// Test connection to non-existent server
-	client, err := NewGRPCClient("localhost:99999", "test-device", logger)
+	client, err := NewGRPCClient("localhost:99999", logger)
 	require.NoError(t, err)
 	defer func() {
 		assert.NoError(t, client.Close())

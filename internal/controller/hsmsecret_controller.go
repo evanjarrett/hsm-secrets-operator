@@ -161,11 +161,10 @@ func (r *HSMSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{RequeueAfter: time.Minute * 2}, nil
 	}
 
-	// Connect to first available device
-	deviceName := devices[0]
-	grpcClient, err := r.AgentManager.CreateGRPCClient(ctx, deviceName, r.OperatorNamespace, logger)
+	device := devices[0]
+	grpcClient, err := r.AgentManager.CreateGRPCClient(ctx, device, logger)
 	if err != nil {
-		logger.Error(err, "Failed to create gRPC client", "device", deviceName)
+		logger.Error(err, "Failed to create gRPC client", "node", device.NodeName)
 		return ctrl.Result{RequeueAfter: time.Minute * 2}, nil
 	}
 	defer func() {

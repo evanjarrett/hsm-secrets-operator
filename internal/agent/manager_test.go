@@ -296,11 +296,11 @@ func TestGetAvailableDevices(t *testing.T) {
 		name            string
 		hsmPools        []*hsmv1alpha1.HSMPool
 		agentPods       []*corev1.Pod
-		expectedDevices []string
+		expectedDevices []hsmv1alpha1.DiscoveredDevice
 		expectError     bool
 	}{
 		{
-			name: "ready pool but no active agents",
+			name: "ready pool returns device name regardless of agents",
 			hsmPools: []*hsmv1alpha1.HSMPool{
 				{
 					ObjectMeta: metav1.ObjectMeta{
@@ -319,12 +319,18 @@ func TestGetAvailableDevices(t *testing.T) {
 					},
 				},
 			},
-			agentPods:       []*corev1.Pod{},
-			expectedDevices: []string{},
-			expectError:     true,
+			agentPods: []*corev1.Pod{},
+			expectedDevices: []hsmv1alpha1.DiscoveredDevice{
+				{
+					DevicePath:   "/dev/bus/usb/001/015",
+					Available:    true,
+					SerialNumber: "ABC123",
+				},
+			},
+			expectError: false,
 		},
 		{
-			name: "multiple ready pools but no active agents",
+			name: "multiple ready pools return multiple device names",
 			hsmPools: []*hsmv1alpha1.HSMPool{
 				{
 					ObjectMeta: metav1.ObjectMeta{
@@ -333,6 +339,13 @@ func TestGetAvailableDevices(t *testing.T) {
 					},
 					Status: hsmv1alpha1.HSMPoolStatus{
 						Phase: hsmv1alpha1.HSMPoolPhaseReady,
+						AggregatedDevices: []hsmv1alpha1.DiscoveredDevice{
+							{
+								DevicePath:   "/dev/bus/usb/001/016",
+								Available:    true,
+								SerialNumber: "DEF456",
+							},
+						},
 					},
 				},
 				{
@@ -342,12 +355,30 @@ func TestGetAvailableDevices(t *testing.T) {
 					},
 					Status: hsmv1alpha1.HSMPoolStatus{
 						Phase: hsmv1alpha1.HSMPoolPhaseReady,
+						AggregatedDevices: []hsmv1alpha1.DiscoveredDevice{
+							{
+								DevicePath:   "/dev/bus/usb/001/017",
+								Available:    true,
+								SerialNumber: "GHI789",
+							},
+						},
 					},
 				},
 			},
-			agentPods:       []*corev1.Pod{},
-			expectedDevices: []string{},
-			expectError:     true,
+			agentPods: []*corev1.Pod{},
+			expectedDevices: []hsmv1alpha1.DiscoveredDevice{
+				{
+					DevicePath:   "/dev/bus/usb/001/016",
+					Available:    true,
+					SerialNumber: "DEF456",
+				},
+				{
+					DevicePath:   "/dev/bus/usb/001/017",
+					Available:    true,
+					SerialNumber: "GHI789",
+				},
+			},
+			expectError: false,
 		},
 		{
 			name: "pool not ready - should be excluded",
@@ -363,14 +394,14 @@ func TestGetAvailableDevices(t *testing.T) {
 				},
 			},
 			agentPods:       []*corev1.Pod{},
-			expectedDevices: []string{},
+			expectedDevices: []hsmv1alpha1.DiscoveredDevice{},
 			expectError:     true,
 		},
 		{
 			name:            "no pools",
 			hsmPools:        []*hsmv1alpha1.HSMPool{},
 			agentPods:       []*corev1.Pod{},
-			expectedDevices: []string{},
+			expectedDevices: []hsmv1alpha1.DiscoveredDevice{},
 			expectError:     true,
 		},
 	}

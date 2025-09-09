@@ -27,6 +27,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
 )
@@ -165,7 +166,7 @@ func (s *Server) corsMiddleware() gin.HandlerFunc {
 }
 
 // getAllAvailableAgents finds all available HSM agents for mirroring operations
-func (s *Server) getAllAvailableAgents(ctx context.Context, namespace string) ([]string, error) {
+func (s *Server) getAllAvailableAgents(ctx context.Context, namespace string) ([]v1alpha1.DiscoveredDevice, error) {
 	if s.agentManager == nil {
 		return nil, fmt.Errorf("agent manager not available")
 	}
@@ -174,16 +175,16 @@ func (s *Server) getAllAvailableAgents(ctx context.Context, namespace string) ([
 }
 
 // createGRPCClient creates a gRPC client for the specified device using AgentManager
-func (s *Server) createGRPCClient(ctx context.Context, deviceName, namespace string) (hsm.Client, error) {
+func (s *Server) createGRPCClient(ctx context.Context, device v1alpha1.DiscoveredDevice) (hsm.Client, error) {
 	// Use the AgentManager to create a gRPC client directly
 	if s.agentManager == nil {
 		return nil, fmt.Errorf("agent manager not available")
 	}
 
 	// Create gRPC client using AgentManager's existing method
-	grpcClient, err := s.agentManager.CreateGRPCClient(ctx, deviceName, namespace, s.logger)
+	grpcClient, err := s.agentManager.CreateGRPCClient(ctx, device, s.logger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create gRPC client for device %s: %w", deviceName, err)
+		return nil, fmt.Errorf("failed to create gRPC client for node %s: %w", device.NodeName, err)
 	}
 
 	return grpcClient, nil

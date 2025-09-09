@@ -19,10 +19,10 @@ package api
 import (
 	"context"
 
+	"github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/mock"
-
-	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
 )
 
 // MockAgentManager provides a mock implementation of the agent manager interface
@@ -35,8 +35,8 @@ func (m *MockAgentManager) GetAvailableDevices(ctx context.Context, namespace st
 	return args.Get(0).([]string), args.Error(1)
 }
 
-func (m *MockAgentManager) CreateGRPCClient(ctx context.Context, deviceName, namespace string, logger logr.Logger) (hsm.Client, error) {
-	args := m.Called(ctx, deviceName, namespace, logger)
+func (m *MockAgentManager) CreateGRPCClient(ctx context.Context, device v1alpha1.DiscoveredDevice, logger logr.Logger) (hsm.Client, error) {
+	args := m.Called(ctx, device, logger)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}

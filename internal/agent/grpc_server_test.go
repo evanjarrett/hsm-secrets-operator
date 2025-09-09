@@ -32,11 +32,10 @@ func TestNewGRPCServer(t *testing.T) {
 	mockClient := hsm.NewMockClient()
 	logger := logr.Discard()
 
-	server := NewGRPCServer(mockClient, "test-device", 9090, 8080, logger)
+	server := NewGRPCServer(mockClient, 9090, 8080, logger)
 
 	assert.NotNil(t, server)
 	assert.Equal(t, mockClient, server.hsmClient)
-	assert.Equal(t, "test-device", server.deviceName)
 	assert.Equal(t, 9090, server.port)
 	assert.Equal(t, 8080, server.healthPort)
 }
@@ -44,7 +43,7 @@ func TestNewGRPCServer(t *testing.T) {
 func TestGRPCServerGetInfo(t *testing.T) {
 	mockClient := hsm.NewMockClient()
 	logger := logr.Discard()
-	server := NewGRPCServer(mockClient, "test-device", 9090, 8080, logger)
+	server := NewGRPCServer(mockClient, 9090, 8080, logger)
 
 	ctx := context.Background()
 
@@ -65,7 +64,7 @@ func TestGRPCServerGetInfo(t *testing.T) {
 
 	t.Run("client not connected", func(t *testing.T) {
 		// Create server with nil client
-		server := NewGRPCServer(nil, "test-device", 9090, 8080, logger)
+		server := NewGRPCServer(nil, 9090, 8080, logger)
 
 		resp, err := server.GetInfo(ctx, &hsmv1.GetInfoRequest{})
 		assert.Error(t, err)
@@ -77,7 +76,7 @@ func TestGRPCServerGetInfo(t *testing.T) {
 func TestGRPCServerReadSecret(t *testing.T) {
 	mockClient := hsm.NewMockClient()
 	logger := logr.Discard()
-	server := NewGRPCServer(mockClient, "test-device", 9090, 8080, logger)
+	server := NewGRPCServer(mockClient, 9090, 8080, logger)
 
 	ctx := context.Background()
 	err := mockClient.Initialize(ctx, hsm.Config{})
@@ -109,7 +108,7 @@ func TestGRPCServerReadSecret(t *testing.T) {
 	})
 
 	t.Run("client not connected", func(t *testing.T) {
-		server := NewGRPCServer(nil, "test-device", 9090, 8080, logger)
+		server := NewGRPCServer(nil, 9090, 8080, logger)
 		req := &hsmv1.ReadSecretRequest{Path: "test-secret"}
 		resp, err := server.ReadSecret(ctx, req)
 		assert.Error(t, err)
@@ -121,7 +120,7 @@ func TestGRPCServerReadSecret(t *testing.T) {
 func TestGRPCServerWriteSecret(t *testing.T) {
 	mockClient := hsm.NewMockClient()
 	logger := logr.Discard()
-	server := NewGRPCServer(mockClient, "test-device", 9090, 8080, logger)
+	server := NewGRPCServer(mockClient, 9090, 8080, logger)
 
 	ctx := context.Background()
 	err := mockClient.Initialize(ctx, hsm.Config{})
@@ -176,7 +175,7 @@ func TestGRPCServerWriteSecret(t *testing.T) {
 	})
 
 	t.Run("client not connected", func(t *testing.T) {
-		server := NewGRPCServer(nil, "test-device", 9090, 8080, logger)
+		server := NewGRPCServer(nil, 9090, 8080, logger)
 		req := &hsmv1.WriteSecretRequest{
 			Path: "test-secret",
 			SecretData: &hsmv1.SecretData{
@@ -194,7 +193,7 @@ func TestGRPCServerWriteSecret(t *testing.T) {
 func TestGRPCServerWriteSecretWithMetadata(t *testing.T) {
 	mockClient := hsm.NewMockClient()
 	logger := logr.Discard()
-	server := NewGRPCServer(mockClient, "test-device", 9090, 8080, logger)
+	server := NewGRPCServer(mockClient, 9090, 8080, logger)
 
 	ctx := context.Background()
 	err := mockClient.Initialize(ctx, hsm.Config{})
@@ -280,7 +279,7 @@ func TestGRPCServerWriteSecretWithMetadata(t *testing.T) {
 func TestGRPCServerReadMetadata(t *testing.T) {
 	mockClient := hsm.NewMockClient()
 	logger := logr.Discard()
-	server := NewGRPCServer(mockClient, "test-device", 9090, 8080, logger)
+	server := NewGRPCServer(mockClient, 9090, 8080, logger)
 
 	ctx := context.Background()
 	err := mockClient.Initialize(ctx, hsm.Config{})
@@ -335,7 +334,7 @@ func TestGRPCServerReadMetadata(t *testing.T) {
 func TestGRPCServerDeleteSecret(t *testing.T) {
 	mockClient := hsm.NewMockClient()
 	logger := logr.Discard()
-	server := NewGRPCServer(mockClient, "test-device", 9090, 8080, logger)
+	server := NewGRPCServer(mockClient, 9090, 8080, logger)
 
 	ctx := context.Background()
 	err := mockClient.Initialize(ctx, hsm.Config{})
@@ -375,7 +374,7 @@ func TestGRPCServerDeleteSecret(t *testing.T) {
 func TestGRPCServerListSecrets(t *testing.T) {
 	mockClient := hsm.NewMockClient()
 	logger := logr.Discard()
-	server := NewGRPCServer(mockClient, "test-device", 9090, 8080, logger)
+	server := NewGRPCServer(mockClient, 9090, 8080, logger)
 
 	ctx := context.Background()
 	err := mockClient.Initialize(ctx, hsm.Config{})
@@ -418,7 +417,7 @@ func TestGRPCServerListSecrets(t *testing.T) {
 func TestGRPCServerGetChecksum(t *testing.T) {
 	mockClient := hsm.NewMockClient()
 	logger := logr.Discard()
-	server := NewGRPCServer(mockClient, "test-device", 9090, 8080, logger)
+	server := NewGRPCServer(mockClient, 9090, 8080, logger)
 
 	ctx := context.Background()
 	err := mockClient.Initialize(ctx, hsm.Config{})
@@ -452,7 +451,7 @@ func TestGRPCServerGetChecksum(t *testing.T) {
 func TestGRPCServerIsConnected(t *testing.T) {
 	mockClient := hsm.NewMockClient()
 	logger := logr.Discard()
-	server := NewGRPCServer(mockClient, "test-device", 9090, 8080, logger)
+	server := NewGRPCServer(mockClient, 9090, 8080, logger)
 
 	ctx := context.Background()
 
@@ -477,7 +476,7 @@ func TestGRPCServerIsConnected(t *testing.T) {
 	})
 
 	t.Run("nil client", func(t *testing.T) {
-		server := NewGRPCServer(nil, "test-device", 9090, 8080, logger)
+		server := NewGRPCServer(nil, 9090, 8080, logger)
 
 		req := &hsmv1.IsConnectedRequest{}
 		resp, err := server.IsConnected(ctx, req)
@@ -489,7 +488,7 @@ func TestGRPCServerIsConnected(t *testing.T) {
 func TestGRPCServerHealth(t *testing.T) {
 	mockClient := hsm.NewMockClient()
 	logger := logr.Discard()
-	server := NewGRPCServer(mockClient, "test-device", 9090, 8080, logger)
+	server := NewGRPCServer(mockClient, 9090, 8080, logger)
 
 	ctx := context.Background()
 
@@ -516,7 +515,7 @@ func TestGRPCServerHealth(t *testing.T) {
 	})
 
 	t.Run("nil client", func(t *testing.T) {
-		server := NewGRPCServer(nil, "test-device", 9090, 8080, logger)
+		server := NewGRPCServer(nil, 9090, 8080, logger)
 
 		req := &hsmv1.HealthRequest{}
 		resp, err := server.Health(ctx, req)

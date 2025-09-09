@@ -305,7 +305,13 @@ func TestServer_CreateGRPCClient_NilManager(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	client, err := server.createGRPCClient(ctx, "test-device", "test-ns")
+	testDevice := hsmv1alpha1.DiscoveredDevice{
+		SerialNumber: "test-device",
+		DevicePath:   "/dev/test/test-device",
+		NodeName:     "test-node",
+		Available:    true,
+	}
+	client, err := server.createGRPCClient(ctx, testDevice) // TODO Fix Test
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "agent manager not available")

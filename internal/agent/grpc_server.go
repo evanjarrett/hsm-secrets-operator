@@ -42,18 +42,16 @@ type GRPCServer struct {
 	hsmv1.UnimplementedHSMAgentServer
 	hsmClient  hsm.Client
 	logger     logr.Logger
-	deviceName string
 	port       int
 	healthPort int
 	startTime  time.Time
 }
 
 // NewGRPCServer creates a new HSM agent gRPC server
-func NewGRPCServer(hsmClient hsm.Client, deviceName string, port, healthPort int, logger logr.Logger) *GRPCServer {
+func NewGRPCServer(hsmClient hsm.Client, port, healthPort int, logger logr.Logger) *GRPCServer {
 	return &GRPCServer{
 		hsmClient:  hsmClient,
 		logger:     logger.WithName("grpc-server"),
-		deviceName: deviceName,
 		port:       port,
 		healthPort: healthPort,
 		startTime:  time.Now(),
@@ -85,7 +83,7 @@ func (s *GRPCServer) Start(ctx context.Context) error {
 		grpcServer.GracefulStop()
 	}()
 
-	s.logger.Info("Starting HSM agent gRPC server", "port", s.port, "device", s.deviceName)
+	s.logger.Info("Starting HSM agent gRPC server", "port", s.port)
 	return grpcServer.Serve(lis)
 }
 
@@ -367,8 +365,8 @@ func (s *GRPCServer) handleHealthz(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	uptime := time.Since(s.startTime).String()
-	if _, err := fmt.Fprintf(w, `{"status":"%s","deviceName":"%s","hsmConnected":%t,"uptime":"%s","timestamp":"%s"}`,
-		healthStatus, s.deviceName, hsmConnected, uptime, time.Now().Format(time.RFC3339)); err != nil {
+	if _, err := fmt.Fprintf(w, `{"status":"%s","hsmConnected":%t,"uptime":"%s","timestamp":"%s"}`,
+		healthStatus, hsmConnected, uptime, time.Now().Format(time.RFC3339)); err != nil {
 		s.logger.Error(err, "Failed to write health response")
 	}
 }
@@ -398,7 +396,6 @@ func (s *GRPCServer) loggingInterceptor(ctx context.Context, req interface{}, in
 	// Extract request-specific details
 	logFields := []interface{}{
 		"method", info.FullMethod,
-		"device", s.deviceName,
 	}
 
 	// Add request-specific fields based on the method

@@ -62,7 +62,7 @@ type metadataResult struct {
 type ProxyClient struct {
 	server       *Server
 	logger       logr.Logger
-	grpcClients  map[string]hsm.Client // deviceName -> gRPC client
+	grpcClients  map[string]hsm.Client // serialNumber -> gRPC client
 	clientsMutex sync.RWMutex
 }
 
@@ -256,32 +256,32 @@ func (p *ProxyClient) getAllAvailableGRPCClients(c *gin.Context) (map[string]hsm
 	p.clientsMutex.Lock()
 	defer p.clientsMutex.Unlock()
 
-	for _, deviceName := range devices {
+	for _, device := range devices {
 		// Try to get existing client for this device
-		if client, exists := p.grpcClients[deviceName]; exists && client.IsConnected() {
-			clients[deviceName] = client
+		if client, exists := p.grpcClients[device.SerialNumber]; exists && client.IsConnected() {
+			clients[device.SerialNumber] = client
 			continue
 		}
 
 		// Close existing client for this device if it exists but is not connected
-		if oldClient, exists := p.grpcClients[deviceName]; exists {
+		if oldClient, exists := p.grpcClients[device.SerialNumber]; exists {
 			if closeErr := oldClient.Close(); closeErr != nil {
-				p.logger.V(1).Info("Error closing old gRPC client", "device", deviceName, "error", closeErr)
+				p.logger.V(1).Info("Error closing old gRPC client", "node", device.NodeName, "serialNumber", device.SerialNumber, "error", closeErr)
 			}
-			delete(p.grpcClients, deviceName)
+			delete(p.grpcClients, device.SerialNumber)
 		}
 
 		// Create new gRPC client
-		grpcClient, err := p.server.createGRPCClient(c.Request.Context(), deviceName, namespace)
+		grpcClient, err := p.server.createGRPCClient(c.Request.Context(), device)
 		if err != nil {
-			p.logger.V(1).Info("Failed to create gRPC client", "device", deviceName, "error", err)
+			p.logger.V(1).Info("Failed to create gRPC client", "node", device.NodeName, "serialNumber", device.SerialNumber, "error", err)
 			continue
 		}
 
 		// Cache and include the client
-		p.grpcClients[deviceName] = grpcClient
-		clients[deviceName] = grpcClient
-		p.logger.V(1).Info("Created new gRPC client", "device", deviceName)
+		p.grpcClients[device.SerialNumber] = grpcClient
+		clients[device.SerialNumber] = grpcClient
+		p.logger.V(1).Info("Created new gRPC client", "node", device.NodeName, "serialNumber", device.SerialNumber)
 	}
 
 	if len(clients) == 0 {

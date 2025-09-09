@@ -83,7 +83,7 @@ func TestHSMSecretControllerGRPCIntegration(t *testing.T) {
 
 	// Start gRPC server
 	logger := logr.Discard()
-	grpcServer := agent.NewGRPCServer(mockHSMClient, "test-hsm-device", 0, 0, logger)
+	grpcServer := agent.NewGRPCServer(mockHSMClient, 0, 0, logger)
 
 	// Start server on agent port 9090 for testing
 	server := grpc.NewServer()
@@ -225,7 +225,13 @@ func TestHSMSecretControllerGRPCIntegration(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify data was written to HSM via gRPC
-		agentClient, err := agentManager.CreateGRPCClient(ctx, "test-hsm-device", "default", logger)
+		testDevice := hsmv1alpha1.DiscoveredDevice{
+			SerialNumber: "test-device",
+			DevicePath:   "/dev/test/test-device",
+			NodeName:     "test-node",
+			Available:    true,
+		}
+		agentClient, err := agentManager.CreateGRPCClient(ctx, testDevice, logger) // TODO Fix Test
 		require.NoError(t, err)
 		defer func() {
 			assert.NoError(t, agentClient.Close())
@@ -340,7 +346,13 @@ func TestHSMSecretControllerGRPCIntegration(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify data exists in HSM
-		agentClient, err := agentManager.CreateGRPCClient(ctx, "test-hsm-device", "default", logger)
+		testDevice2 := hsmv1alpha1.DiscoveredDevice{
+			SerialNumber: "test-device-2",
+			DevicePath:   "/dev/test/test-device-2",
+			NodeName:     "test-node",
+			Available:    true,
+		}
+		agentClient, err := agentManager.CreateGRPCClient(ctx, testDevice2, logger) // TODO Fix Test
 		require.NoError(t, err)
 		defer func() {
 			assert.NoError(t, agentClient.Close())

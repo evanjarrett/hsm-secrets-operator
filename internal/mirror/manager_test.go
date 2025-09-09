@@ -25,7 +25,6 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -48,17 +47,32 @@ func NewMockAgentManager() *MockAgentManager {
 	}
 }
 
-func (m *MockAgentManager) CreateGRPCClient(ctx context.Context, deviceName, namespace string, logger logr.Logger) (hsm.Client, error) {
-	if err, exists := m.creationErrors[deviceName]; exists {
+func (m *MockAgentManager) CreateGRPCClient(ctx context.Context, device hsmv1alpha1.DiscoveredDevice, logger logr.Logger) (hsm.Client, error) {
+	deviceId := device.SerialNumber
+	if err, exists := m.creationErrors[deviceId]; exists {
 		return nil, err
 	}
 
-	if client, exists := m.clients[deviceName]; exists {
+	if client, exists := m.clients[deviceId]; exists {
 		return client, nil
 	}
 
 	// Return a mock client for testing
 	return hsm.NewMockClient(), nil
+}
+
+func (m *MockAgentManager) GetAvailableDevices(ctx context.Context, namespace string) ([]hsmv1alpha1.DiscoveredDevice, error) {
+	// Convert device names to DiscoveredDevice objects for testing
+	devices := make([]hsmv1alpha1.DiscoveredDevice, 0, len(m.clients))
+	for deviceId := range m.clients {
+		devices = append(devices, hsmv1alpha1.DiscoveredDevice{
+			SerialNumber: deviceId,
+			DevicePath:   "/dev/test/" + deviceId,
+			NodeName:     "test-node",
+			Available:    true,
+		})
+	}
+	return devices, nil
 }
 
 func (m *MockAgentManager) SetClient(deviceName string, client hsm.Client) {
@@ -591,61 +605,18 @@ func TestCreateMirrorPlanForSecret(t *testing.T) {
 	}
 }
 
-// Test getAvailableDevices method
-func TestGetAvailableDevices(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = hsmv1alpha1.AddToScheme(scheme)
-
-	// Create test HSMPool resources
-	hsmPool1 := &hsmv1alpha1.HSMPool{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "pico-hsm",
-			Namespace: "test-namespace",
-			OwnerReferences: []metav1.OwnerReference{
-				{
-					Name: "pico-hsm",
-				},
-			},
-		},
-		Status: hsmv1alpha1.HSMPoolStatus{
-			Phase: hsmv1alpha1.HSMPoolPhaseReady,
-			AggregatedDevices: []hsmv1alpha1.DiscoveredDevice{
-				{DevicePath: "/dev/usb1", NodeName: "node1", Available: true, SerialNumber: "0"},
-				{DevicePath: "/dev/usb2", NodeName: "node2", Available: true, SerialNumber: "1"},
-			},
-		},
-	}
-
-	hsmPool2 := &hsmv1alpha1.HSMPool{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "yubikey",
-			Namespace: "test-namespace",
-			OwnerReferences: []metav1.OwnerReference{
-				{
-					Name: "yubikey",
-				},
-			},
-		},
-		Status: hsmv1alpha1.HSMPoolStatus{
-			Phase: hsmv1alpha1.HSMPoolPhaseReady,
-			AggregatedDevices: []hsmv1alpha1.DiscoveredDevice{
-				{DevicePath: "/dev/usb3", NodeName: "node3", Available: false, SerialNumber: "0"}, // Not available
-			},
-		},
-	}
-
-	client := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(hsmPool1, hsmPool2).
-		Build()
-
+// Test agent manager device discovery integration
+func TestAgentManagerIntegration(t *testing.T) {
 	mockAgentManager := NewMockAgentManager()
-	mirrorManager := NewMirrorManager(client, mockAgentManager, logr.Discard(), "test-namespace")
 
-	devices, err := mirrorManager.getAvailableDevices(context.Background())
+	// Test that mirror manager now uses agent manager for device discovery
+	mockAgentManager.SetClient("device1", hsm.NewMockClient())
+
+	devices, err := mockAgentManager.GetAvailableDevices(context.Background(), "test-namespace")
 
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"pico-hsm-0", "pico-hsm-1"}, devices)
+	assert.Len(t, devices, 1)
+	assert.Equal(t, "device1", devices[0].SerialNumber)
 }
 
 // Test buildSecretInventory method
@@ -683,9 +654,12 @@ func TestBuildSecretInventory(t *testing.T) {
 	mirrorManager := NewMirrorManager(client, mockAgentManager, logr.Discard(), "test-namespace")
 
 	secretPaths := []string{"test-secret"}
-	devices := []string{"device1", "device2"}
+	devices := []hsmv1alpha1.DiscoveredDevice{
+		{SerialNumber: "device1", DevicePath: "/dev/test/device1", NodeName: "test-node", Available: true},
+		{SerialNumber: "device2", DevicePath: "/dev/test/device2", NodeName: "test-node", Available: true},
+	}
 
-	inventory, err := mirrorManager.buildSecretInventory(ctx, secretPaths, devices, "test-namespace", logr.Discard())
+	inventory, err := mirrorManager.buildSecretInventory(ctx, secretPaths, devices, logr.Discard())
 
 	require.NoError(t, err)
 	assert.Contains(t, inventory, "test-secret")
@@ -783,7 +757,13 @@ func TestExecuteMirrorPlans(t *testing.T) {
 		},
 	}
 
-	result := mirrorManager.executeMirrorPlans(context.Background(), plans, "test-namespace", logr.Discard())
+	// Create device lookup for test
+	deviceLookup := map[string]hsmv1alpha1.DiscoveredDevice{
+		"device1": {SerialNumber: "device1", DevicePath: "/dev/test/device1", NodeName: "test-node", Available: true},
+		"device2": {SerialNumber: "device2", DevicePath: "/dev/test/device2", NodeName: "test-node", Available: true},
+	}
+
+	result := mirrorManager.executeMirrorPlans(context.Background(), plans, deviceLookup, logr.Discard())
 
 	assert.NotNil(t, result)
 	// Success may be false if some operations fail, which is expected in testing
@@ -841,11 +821,17 @@ func TestReadSecretWithMetadataErrorHandling(t *testing.T) {
 
 	mirrorManager := NewMirrorManager(client, mockAgentManager, logr.Discard(), "test-namespace")
 
+	failingDevice := hsmv1alpha1.DiscoveredDevice{
+		SerialNumber: "failing-device",
+		DevicePath:   "/dev/test/failing-device",
+		NodeName:     "test-node",
+		Available:    true,
+	}
+
 	data, metadata, err := mirrorManager.readSecretWithMetadata(
 		context.Background(),
-		"failing-device",
+		failingDevice,
 		"test-secret",
-		"test-namespace",
 		logr.Discard(),
 	)
 

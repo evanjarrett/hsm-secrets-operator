@@ -871,16 +871,9 @@ func (m *Manager) isAgentHealthy(ctx context.Context, agentInfo *AgentInfo) bool
 }
 
 // GetAgentPodIPs returns all agent pod IPs for a device type from HSMPool
-func (m *Manager) GetAgentPodIPs(ctx context.Context, deviceName, namespace string) ([]string, error) {
-	// Get HSMPool for this device
-	poolName := deviceName + "-pool"
-	var hsmPool hsmv1alpha1.HSMPool
-	if err := m.Get(ctx, types.NamespacedName{
-		Name:      poolName,
-		Namespace: namespace,
-	}, &hsmPool); err != nil {
-		return nil, fmt.Errorf("failed to get HSMPool %s: %w", poolName, err)
-	}
+func (m *Manager) GetAgentPodIPs(hsmPool *hsmv1alpha1.HSMPool) ([]string, error) {
+	// Extract device name from pool name (remove "-pool" suffix)
+	deviceName := strings.TrimSuffix(hsmPool.Name, "-pool")
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -896,7 +889,7 @@ func (m *Manager) GetAgentPodIPs(ctx context.Context, deviceName, namespace stri
 	}
 
 	if len(allPodIPs) == 0 {
-		return nil, fmt.Errorf("no active agents found for device %s in pool %s", deviceName, poolName)
+		return nil, fmt.Errorf("no active agents found for device %s in pool %s", deviceName, hsmPool.Name)
 	}
 
 	return allPodIPs, nil
@@ -935,8 +928,8 @@ func sanitizeLabelValue(value string) string {
 }
 
 // GetGRPCEndpoints returns gRPC endpoints for all agent pods of a device
-func (m *Manager) GetGRPCEndpoints(ctx context.Context, deviceName, namespace string) ([]string, error) {
-	podIPs, err := m.GetAgentPodIPs(ctx, deviceName, namespace)
+func (m *Manager) GetGRPCEndpoints(hsmPool *hsmv1alpha1.HSMPool) ([]string, error) {
+	podIPs, err := m.GetAgentPodIPs(hsmPool)
 	if err != nil {
 		return nil, err
 	}
@@ -949,21 +942,48 @@ func (m *Manager) GetGRPCEndpoints(ctx context.Context, deviceName, namespace st
 	return endpoints, nil
 }
 
-// CreateGRPCClient creates a gRPC client for the first available agent pod of a device
-func (m *Manager) CreateGRPCClient(ctx context.Context, deviceName, namespace string, logger logr.Logger) (hsm.Client, error) {
-	endpoints, err := m.GetGRPCEndpoints(ctx, deviceName, namespace)
-	if err != nil {
-		return nil, err
+// CreateGRPCClient creates a gRPC client to the specific agent pod for the given DiscoveredDevice
+func (m *Manager) CreateGRPCClient(ctx context.Context, device hsmv1alpha1.DiscoveredDevice, logger logr.Logger) (hsm.Client, error) {
+	// Find the specific agent pod using labels based on the device's serial number
+	var podList corev1.PodList
+	listOpts := []client.ListOption{
+		client.MatchingLabels{
+			"app.kubernetes.io/name":      "hsm-agent",
+			"app.kubernetes.io/component": "hsm-agent",
+			"hsm.j5t.io/serial-number":    device.SerialNumber,
+		},
 	}
 
-	if len(endpoints) == 0 {
-		return nil, fmt.Errorf("no agent endpoints available for device %s", deviceName)
+	if err := m.List(ctx, &podList, listOpts...); err != nil {
+		return nil, fmt.Errorf("failed to list agent pods for device %s: %w", device.SerialNumber, err)
 	}
 
-	// Use the first endpoint for single client
-	grpcClient, err := NewGRPCClient(endpoints[0], deviceName, logger)
+	if len(podList.Items) == 0 {
+		return nil, fmt.Errorf("no agent pod found for device with serial number %s", device.SerialNumber)
+	}
+
+	// Find the first running pod
+	var targetPod *corev1.Pod
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		if pod.Status.Phase == corev1.PodRunning && len(pod.Status.PodIPs) > 0 {
+			targetPod = pod
+			break
+		}
+	}
+
+	if targetPod == nil {
+		return nil, fmt.Errorf("no running agent pod found for device with serial number %s", device.SerialNumber)
+	}
+
+	// Get the pod IP and create gRPC endpoint
+	podIP := targetPod.Status.PodIPs[0].IP
+	endpoint := fmt.Sprintf("%s:%d", podIP, AgentPort)
+
+	// Create gRPC client
+	grpcClient, err := NewGRPCClient(endpoint, logger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create gRPC client for %s: %w", endpoints[0], err)
+		return nil, fmt.Errorf("failed to create gRPC client for %s: %w", endpoint, err)
 	}
 
 	// Test the connection
@@ -971,38 +991,32 @@ func (m *Manager) CreateGRPCClient(ctx context.Context, deviceName, namespace st
 		if err := grpcClient.Close(); err != nil {
 			logger.Error(err, "Failed to close gRPC client after failed initialization")
 		}
-		return nil, fmt.Errorf("failed to initialize gRPC client for %s: %w", endpoints[0], err)
+		return nil, fmt.Errorf("failed to initialize gRPC client for %s: %w", endpoint, err)
 	}
 
 	return grpcClient, nil
 }
 
-// GetAvailableDevices finds all devices with ready HSMPools and active agents
-func (m *Manager) GetAvailableDevices(ctx context.Context, namespace string) ([]string, error) {
-	// List all HSMPools cluster-wide to find all with active agents
+// GetAvailableDevices finds all devices with ready HSMPools
+func (m *Manager) GetAvailableDevices(ctx context.Context, namespace string) ([]hsmv1alpha1.DiscoveredDevice, error) {
+	// List all HSMPools cluster-wide to find all ready pools
 	var hsmPoolList hsmv1alpha1.HSMPoolList
 	if err := m.List(ctx, &hsmPoolList); err != nil {
 		return nil, fmt.Errorf("failed to list HSM pools: %w", err)
 	}
 
-	var availableDevices []string
-	// Check all pools that have active agents
+	var availableDevices []hsmv1alpha1.DiscoveredDevice
+	// Check all pools that are in Ready phase
 	for _, pool := range hsmPoolList.Items {
 		if pool.Status.Phase != hsmv1alpha1.HSMPoolPhaseReady {
 			continue
 		}
 
-		// Extract device name from pool name (remove "-pool" suffix)
-		deviceName := strings.TrimSuffix(pool.Name, "-pool")
-
-		// Use the HSMPool's namespace for agent lookup
-		if podIPs, err := m.GetAgentPodIPs(ctx, deviceName, pool.Namespace); err == nil && len(podIPs) > 0 {
-			availableDevices = append(availableDevices, deviceName)
-		}
+		availableDevices = append(availableDevices, pool.Status.AggregatedDevices...)
 	}
 
 	if len(availableDevices) == 0 {
-		return nil, fmt.Errorf("no available HSM agents found")
+		return nil, fmt.Errorf("no available HSM devices found")
 	}
 
 	return availableDevices, nil

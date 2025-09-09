@@ -34,16 +34,15 @@ import (
 
 // GRPCClient implements the HSM client interface using gRPC
 type GRPCClient struct {
-	client     hsmv1.HSMAgentClient
-	conn       *grpc.ClientConn
-	logger     logr.Logger
-	deviceName string
-	endpoint   string
-	timeout    time.Duration
+	client   hsmv1.HSMAgentClient
+	conn     *grpc.ClientConn
+	logger   logr.Logger
+	endpoint string
+	timeout  time.Duration
 }
 
 // NewGRPCClient creates a new gRPC-based HSM client
-func NewGRPCClient(endpoint, deviceName string, logger logr.Logger) (*GRPCClient, error) {
+func NewGRPCClient(endpoint string, logger logr.Logger) (*GRPCClient, error) {
 	if endpoint == "" {
 		return nil, fmt.Errorf("endpoint cannot be empty")
 	}
@@ -64,12 +63,11 @@ func NewGRPCClient(endpoint, deviceName string, logger logr.Logger) (*GRPCClient
 	client := hsmv1.NewHSMAgentClient(conn)
 
 	return &GRPCClient{
-		client:     client,
-		conn:       conn,
-		logger:     logger.WithName("grpc-client"),
-		deviceName: deviceName,
-		endpoint:   endpoint,
-		timeout:    30 * time.Second,
+		client:   client,
+		conn:     conn,
+		logger:   logger.WithName("grpc-client"),
+		endpoint: endpoint,
+		timeout:  30 * time.Second,
 	}, nil
 }
 
@@ -84,7 +82,7 @@ func (c *GRPCClient) Initialize(ctx context.Context, config hsm.Config) error {
 		return fmt.Errorf("failed to initialize gRPC client: %w", err)
 	}
 
-	c.logger.Info("gRPC client initialized", "device", c.deviceName, "hsm_label", info.Label, "endpoint", c.endpoint)
+	c.logger.Info("gRPC client initialized", "hsm_label", info.Label, "endpoint", c.endpoint)
 	return nil
 }
 
