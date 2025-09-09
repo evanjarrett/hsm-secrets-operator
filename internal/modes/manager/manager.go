@@ -286,6 +286,7 @@ func Run(args []string) error {
 		AgentManager:      agentManager,
 		OperatorNamespace: operatorNamespace,
 		OperatorName:      operatorName,
+		StartupTime:       time.Now(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "HSMSecret")
 		return err

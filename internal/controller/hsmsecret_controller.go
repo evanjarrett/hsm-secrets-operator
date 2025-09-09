@@ -45,6 +45,9 @@ const (
 
 	// DefaultSyncInterval is the default sync interval in seconds
 	DefaultSyncInterval = 30
+
+	// StartupGracePeriod is the duration during which "no agents available" is logged at Info level
+	StartupGracePeriod = 2 * time.Minute
 )
 
 // HSMSecretReconciler reconciles a HSMSecret object
@@ -54,6 +57,7 @@ type HSMSecretReconciler struct {
 	AgentManager      *agent.Manager
 	OperatorNamespace string
 	OperatorName      string
+	StartupTime       time.Time
 }
 
 // HSMDeviceClients holds multiple HSM devices and their clients
@@ -139,11 +143,21 @@ func (r *HSMSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Find available devices via AgentManager
 	devices, err := r.AgentManager.GetAvailableDevices(ctx, r.OperatorNamespace)
 	if err != nil {
-		logger.Error(err, "Failed to get available devices")
+		// During startup grace period, log at Info level to reduce noise
+		if time.Since(r.StartupTime) < StartupGracePeriod {
+			logger.Info("No HSM agents available yet (startup grace period)", "error", err.Error(), "elapsed", time.Since(r.StartupTime).Round(time.Second))
+		} else {
+			logger.Error(err, "Failed to get available devices")
+		}
 		return ctrl.Result{RequeueAfter: time.Minute * 2}, nil
 	}
 	if len(devices) == 0 {
-		logger.Info("No HSM devices available")
+		// During startup grace period, log at Info level to reduce noise
+		if time.Since(r.StartupTime) < StartupGracePeriod {
+			logger.Info("No HSM devices available yet (startup grace period)", "elapsed", time.Since(r.StartupTime).Round(time.Second))
+		} else {
+			logger.Info("No HSM devices available")
+		}
 		return ctrl.Result{RequeueAfter: time.Minute * 2}, nil
 	}
 

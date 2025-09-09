@@ -642,7 +642,7 @@ func TestGetAvailableDevices(t *testing.T) {
 	mockAgentManager := NewMockAgentManager()
 	mirrorManager := NewMirrorManager(client, mockAgentManager, logr.Discard(), "test-namespace")
 
-	devices, err := mirrorManager.getAvailableDevices(context.Background(), "test-namespace")
+	devices, err := mirrorManager.getAvailableDevices(context.Background())
 
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"pico-hsm-0", "pico-hsm-1"}, devices)

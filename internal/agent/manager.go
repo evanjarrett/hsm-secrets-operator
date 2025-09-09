@@ -156,7 +156,7 @@ func (m *Manager) EnsureAgent(ctx context.Context, hsmPool *hsmv1alpha1.HSMPool)
 		workItems = append(workItems, deviceWork{
 			device:    aggregatedDevice,
 			agentName: fmt.Sprintf("%s-%d", m.generateAgentName(hsmPool), i),
-			agentKey:  aggregatedDevice.SerialNumber,
+			agentKey:  fmt.Sprintf("%s-%s", hsmPool.OwnerReferences[0].Name, aggregatedDevice.SerialNumber),
 			index:     i,
 		})
 	}

@@ -611,12 +611,12 @@ func (mm *MirrorManager) writeMetadataOnly(ctx context.Context, deviceName, secr
 	return nil
 }
 
-// getAvailableDevices gets list of available physical HSM device instances from HSMPools in the operator namespace
-func (mm *MirrorManager) getAvailableDevices(ctx context.Context, operatorNamespace string) ([]string, error) {
+// getAvailableDevices gets list of available physical HSM device instances from HSMPools cluster-wide
+func (mm *MirrorManager) getAvailableDevices(ctx context.Context) ([]string, error) {
 	var hsmPoolList hsmv1alpha1.HSMPoolList
-	// HSMPools are always in the operator namespace (where controller-manager runs)
-	if err := mm.client.List(ctx, &hsmPoolList, client.InNamespace(operatorNamespace)); err != nil {
-		return nil, fmt.Errorf("failed to list HSM pools in operator namespace %s: %w", operatorNamespace, err)
+	// List HSMPools cluster-wide since they exist in the same namespace as their HSMDevices
+	if err := mm.client.List(ctx, &hsmPoolList); err != nil {
+		return nil, fmt.Errorf("failed to list HSM pools cluster-wide: %w", err)
 	}
 
 	var devices = []string{}
@@ -645,7 +645,7 @@ func (mm *MirrorManager) MirrorAllSecrets(ctx context.Context) (*MirrorResult, e
 	logger.Info("Starting device-scoped mirroring of all HSM secrets")
 
 	// Get all available HSM devices
-	devices, err := mm.getAvailableDevices(ctx, mm.operatorNamespace)
+	devices, err := mm.getAvailableDevices(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get available devices: %w", err)
 	}
@@ -758,7 +758,7 @@ func (mm *MirrorManager) WaitForAgentsReady(ctx context.Context, timeout time.Du
 			return false, ctx.Err()
 
 		case <-ticker.C:
-			devices, err := mm.getAvailableDevices(ctx, mm.operatorNamespace)
+			devices, err := mm.getAvailableDevices(ctx)
 			if err != nil {
 				logger.V(1).Info("Failed to check available devices", "error", err)
 				continue
