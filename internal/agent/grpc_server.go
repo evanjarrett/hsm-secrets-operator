@@ -160,6 +160,8 @@ func (s *GRPCServer) ReadSecret(ctx context.Context, req *hsmv1.ReadSecretReques
 		pbData[key] = value
 	}
 
+	s.logger.V(1).Info("Successfully read secret", "path", req.Path, "keys_count", len(pbData))
+
 	return &hsmv1.ReadSecretResponse{
 		SecretData: &hsmv1.SecretData{Data: pbData},
 	}, nil
@@ -190,6 +192,7 @@ func (s *GRPCServer) WriteSecret(ctx context.Context, req *hsmv1.WriteSecretRequ
 		return nil, status.Errorf(codes.Internal, "failed to write secret: %v", err)
 	}
 
+	s.logger.V(1).Info("Successfully wrote secret", "path", req.Path, "keys_count", len(hsmData))
 	return &hsmv1.WriteSecretResponse{}, nil
 }
 
@@ -231,6 +234,7 @@ func (s *GRPCServer) WriteSecretWithMetadata(ctx context.Context, req *hsmv1.Wri
 		return nil, status.Errorf(codes.Internal, "failed to write secret with metadata: %v", err)
 	}
 
+	s.logger.V(1).Info("Successfully wrote secret with metadata", "path", req.Path, "keys_count", len(hsmData))
 	return &hsmv1.WriteSecretWithMetadataResponse{}, nil
 }
 
@@ -282,6 +286,7 @@ func (s *GRPCServer) DeleteSecret(ctx context.Context, req *hsmv1.DeleteSecretRe
 		return nil, status.Errorf(codes.Internal, "failed to delete secret: %v", err)
 	}
 
+	s.logger.V(1).Info("Successfully deleted secret", "path", req.Path)
 	return &hsmv1.DeleteSecretResponse{}, nil
 }
 
@@ -297,6 +302,7 @@ func (s *GRPCServer) ListSecrets(ctx context.Context, req *hsmv1.ListSecretsRequ
 		return nil, status.Errorf(codes.Internal, "failed to list secrets: %v", err)
 	}
 
+	s.logger.V(1).Info("Successfully listed secrets", "prefix", req.Prefix, "count", len(paths))
 	return &hsmv1.ListSecretsResponse{
 		Paths: paths,
 	}, nil
@@ -389,23 +395,75 @@ func (s *GRPCServer) handleReadyz(w http.ResponseWriter, r *http.Request) {
 func (s *GRPCServer) loggingInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 	start := time.Now()
 
+	// Extract request-specific details
+	logFields := []interface{}{
+		"method", info.FullMethod,
+		"device", s.deviceName,
+	}
+
+	// Add request-specific fields based on the method
+	switch r := req.(type) {
+	case *hsmv1.ReadSecretRequest:
+		logFields = append(logFields, "path", r.Path)
+	case *hsmv1.WriteSecretRequest:
+		logFields = append(logFields, "path", r.Path)
+		if r.SecretData != nil {
+			logFields = append(logFields, "keys_count", len(r.SecretData.Data))
+		}
+	case *hsmv1.WriteSecretWithMetadataRequest:
+		logFields = append(logFields, "path", r.Path)
+		if r.SecretData != nil {
+			logFields = append(logFields, "keys_count", len(r.SecretData.Data))
+		}
+	case *hsmv1.DeleteSecretRequest:
+		logFields = append(logFields, "path", r.Path)
+	case *hsmv1.ListSecretsRequest:
+		logFields = append(logFields, "prefix", r.Prefix)
+	case *hsmv1.GetChecksumRequest:
+		logFields = append(logFields, "path", r.Path)
+	case *hsmv1.ReadMetadataRequest:
+		logFields = append(logFields, "path", r.Path)
+	}
+
+	s.logger.Info("gRPC request started", logFields...)
+
 	resp, err := handler(ctx, req)
 
 	duration := time.Since(start)
 	code := codes.OK
+	errorMsg := ""
 	if err != nil {
 		if st, ok := status.FromError(err); ok {
 			code = st.Code()
+			errorMsg = st.Message()
 		} else {
 			code = codes.Unknown
+			errorMsg = err.Error()
 		}
 	}
 
-	s.logger.Info("gRPC request",
-		"method", info.FullMethod,
+	// Log completion with result details
+	resultFields := append(logFields,
 		"code", code.String(),
 		"duration", duration,
+		"success", err == nil,
 	)
+
+	if err != nil {
+		resultFields = append(resultFields, "error", errorMsg)
+		s.logger.Error(err, "gRPC request failed", resultFields...)
+	} else {
+		// Add response-specific fields for successful requests
+		switch r := resp.(type) {
+		case *hsmv1.ReadSecretResponse:
+			if r.SecretData != nil {
+				resultFields = append(resultFields, "keys_returned", len(r.SecretData.Data))
+			}
+		case *hsmv1.ListSecretsResponse:
+			resultFields = append(resultFields, "secrets_count", len(r.Paths))
+		}
+		s.logger.Info("gRPC request completed", resultFields...)
+	}
 
 	return resp, err
 }

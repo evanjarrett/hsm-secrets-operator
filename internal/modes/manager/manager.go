@@ -349,6 +349,7 @@ func Run(args []string) error {
 		setupLog.Info("starting device-scoped HSM mirroring", "interval", "30s")
 
 		// Wait for agents to be ready before starting mirroring
+		setupLog.Info("waiting for HSM agents to be ready before starting mirroring")
 		ctx := context.Background()
 		ready, err := mirrorManager.WaitForAgentsReady(ctx, 5*time.Minute)
 		if err != nil {
@@ -359,20 +360,27 @@ func Run(args []string) error {
 			setupLog.Info("no agents became ready within timeout, disabling mirroring")
 			return
 		}
+		setupLog.Info("HSM agents are ready, starting mirroring cycle")
 
 		for range mirrorTicker.C {
+			setupLog.Info("starting device-scoped mirroring cycle")
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			result, err := mirrorManager.MirrorAllSecrets(ctx)
 			cancel()
 
 			if err != nil {
 				setupLog.Error(err, "device-scoped mirroring failed")
-			} else if result.SecretsProcessed > 0 {
+			} else {
 				setupLog.Info("device-scoped mirroring completed",
 					"secretsProcessed", result.SecretsProcessed,
 					"secretsUpdated", result.SecretsUpdated,
 					"secretsCreated", result.SecretsCreated,
-					"errors", len(result.Errors))
+					"metadataRestored", result.MetadataRestored,
+					"errors", len(result.Errors),
+					"success", result.Success)
+				if len(result.Errors) > 0 {
+					setupLog.Info("mirroring errors details", "errors", result.Errors)
+				}
 			}
 		}
 	}()
