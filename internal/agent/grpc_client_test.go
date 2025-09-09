@@ -243,11 +243,28 @@ func TestNewGRPCClient(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("invalid endpoint", func(t *testing.T) {
-		// Use an endpoint that will actually fail to connect
+	t.Run("empty endpoint", func(t *testing.T) {
 		client, err := NewGRPCClient("", "test-device", logger)
 		require.Error(t, err)
 		assert.Nil(t, client)
+		assert.Contains(t, err.Error(), "endpoint cannot be empty")
+	})
+
+	t.Run("invalid host format", func(t *testing.T) {
+		// gRPC connections are lazy, so invalid format won't fail at creation
+		// but will fail when actually trying to connect during Initialize
+		client, err := NewGRPCClient("invalid://bad-host", "test-device", logger)
+		require.NoError(t, err)
+		require.NotNil(t, client)
+
+		// Initialize should fail when trying to use the connection
+		ctx := context.Background()
+		err = client.Initialize(ctx, hsm.Config{})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to initialize gRPC client")
+
+		err = client.Close()
+		assert.NoError(t, err)
 	})
 }
 
@@ -528,6 +545,43 @@ func TestGRPCClientConnectionHandling(t *testing.T) {
 		assert.False(t, connected)
 
 		err = client.Close()
+		assert.NoError(t, err)
+	})
+
+	t.Run("close with nil connection", func(t *testing.T) {
+		client := &GRPCClient{
+			conn: nil,
+		}
+		err := client.Close()
+		assert.NoError(t, err)
+	})
+
+	t.Run("initialize success", func(t *testing.T) {
+		mockServer := newMockHSMAgentServer()
+		server, listener := setupTestServer(t, mockServer)
+		defer server.Stop()
+
+		conn, err := grpc.NewClient("passthrough:///bufnet",
+			grpc.WithContextDialer(bufDialer(listener)),
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		)
+		require.NoError(t, err)
+		defer func() {
+			err := conn.Close()
+			assert.NoError(t, err)
+		}()
+
+		client := &GRPCClient{
+			client:     hsmv1.NewHSMAgentClient(conn),
+			conn:       conn,
+			logger:     logger,
+			deviceName: "test-device",
+			endpoint:   "passthrough:///bufnet",
+			timeout:    5 * time.Second,
+		}
+
+		ctx := context.Background()
+		err = client.Initialize(ctx, hsm.Config{})
 		assert.NoError(t, err)
 	})
 }

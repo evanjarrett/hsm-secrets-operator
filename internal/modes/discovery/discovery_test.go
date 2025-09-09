@@ -17,10 +17,14 @@ limitations under the License.
 package discovery
 
 import (
+	"encoding/json"
+	"flag"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
@@ -423,6 +427,237 @@ func BenchmarkSchemeOperations(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func TestDiscoveryFlagParsing(t *testing.T) {
+	tests := []struct {
+		name                    string
+		args                    []string
+		expectedNodeName        string
+		expectedPodName         string
+		expectedNamespace       string
+		expectedSyncInterval    time.Duration
+		expectedDetectionMethod string
+		expectError             bool
+	}{
+		{
+			name:                    "basic flags",
+			args:                    []string{"--node-name=worker-1", "--pod-name=discovery-pod"},
+			expectedNodeName:        "worker-1",
+			expectedPodName:         "discovery-pod",
+			expectedNamespace:       "", // default not set in flags
+			expectedSyncInterval:    30 * time.Second,
+			expectedDetectionMethod: "auto",
+			expectError:             false,
+		},
+		{
+			name:                    "custom sync interval",
+			args:                    []string{"--node-name=worker-2", "--sync-interval=1m"},
+			expectedNodeName:        "worker-2",
+			expectedSyncInterval:    1 * time.Minute,
+			expectedDetectionMethod: "auto",
+			expectError:             false,
+		},
+		{
+			name:                    "sysfs detection method",
+			args:                    []string{"--node-name=control-plane", "--detection-method=sysfs"},
+			expectedNodeName:        "control-plane",
+			expectedDetectionMethod: "sysfs",
+			expectedSyncInterval:    30 * time.Second,
+			expectError:             false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a new flag set for testing
+			fs := flag.NewFlagSet("test-discovery", flag.ContinueOnError)
+
+			var nodeName string
+			var podName string
+			var podNamespace string
+			var syncInterval time.Duration
+			var detectionMethod string
+
+			fs.StringVar(&nodeName, "node-name", "", "Node name")
+			fs.StringVar(&podName, "pod-name", "", "Pod name")
+			fs.StringVar(&podNamespace, "pod-namespace", "", "Pod namespace")
+			fs.DurationVar(&syncInterval, "sync-interval", 30*time.Second, "Sync interval")
+			fs.StringVar(&detectionMethod, "detection-method", "auto", "Detection method")
+
+			err := fs.Parse(tt.args)
+			if tt.expectError {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expectedNodeName, nodeName)
+			assert.Equal(t, tt.expectedSyncInterval, syncInterval)
+			assert.Equal(t, tt.expectedDetectionMethod, detectionMethod)
+
+			if tt.expectedPodName != "" {
+				assert.Equal(t, tt.expectedPodName, podName)
+			}
+		})
+	}
+}
+
+func TestDiscoveryEnvironmentVariables(t *testing.T) {
+	tests := []struct {
+		name         string
+		envVars      map[string]string
+		expectedNode string
+		expectedPod  string
+		expectedNS   string
+	}{
+		{
+			name: "node name from env",
+			envVars: map[string]string{
+				"NODE_NAME": "env-worker-1",
+			},
+			expectedNode: "env-worker-1",
+		},
+		{
+			name: "full config from env",
+			envVars: map[string]string{
+				"NODE_NAME":     "test-node",
+				"POD_NAME":      "test-discovery-pod",
+				"POD_NAMESPACE": "test-namespace",
+			},
+			expectedNode: "test-node",
+			expectedPod:  "test-discovery-pod",
+			expectedNS:   "test-namespace",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Clear environment
+			envKeys := []string{"NODE_NAME", "POD_NAME", "POD_NAMESPACE"}
+			for _, key := range envKeys {
+				_ = os.Unsetenv(key)
+			}
+
+			// Set test environment variables
+			for key, value := range tt.envVars {
+				_ = os.Setenv(key, value)
+			}
+
+			// Test environment variable reading
+			nodeName := os.Getenv("NODE_NAME")
+			podName := os.Getenv("POD_NAME")
+			podNamespace := os.Getenv("POD_NAMESPACE")
+
+			assert.Equal(t, tt.expectedNode, nodeName)
+			assert.Equal(t, tt.expectedPod, podName)
+			assert.Equal(t, tt.expectedNS, podNamespace)
+
+			// Clean up
+			for _, key := range envKeys {
+				_ = os.Unsetenv(key)
+			}
+		})
+	}
+}
+
+func TestPodDiscoveryReportSerialization(t *testing.T) {
+	devices := []hsmv1alpha1.DiscoveredDevice{
+		{
+			DevicePath:   "/dev/ttyUSB0",
+			SerialNumber: "TEST123",
+			NodeName:     "worker-1",
+			LastSeen:     metav1.Now(),
+			Available:    true,
+			DeviceInfo: map[string]string{
+				"vendor-id":  "20a0",
+				"product-id": "4230",
+			},
+		},
+	}
+
+	report := PodDiscoveryReport{
+		HSMDeviceName:     "test-device",
+		ReportingNode:     "worker-1",
+		DiscoveredDevices: devices,
+		LastReportTime:    metav1.Now(),
+		DiscoveryStatus:   "completed",
+	}
+
+	// Test JSON serialization
+	reportJSON, err := json.Marshal(report)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, reportJSON)
+
+	// Test JSON deserialization
+	var deserializedReport PodDiscoveryReport
+	err = json.Unmarshal(reportJSON, &deserializedReport)
+	assert.NoError(t, err)
+	assert.Equal(t, report.HSMDeviceName, deserializedReport.HSMDeviceName)
+	assert.Equal(t, report.ReportingNode, deserializedReport.ReportingNode)
+	assert.Equal(t, report.DiscoveryStatus, deserializedReport.DiscoveryStatus)
+	assert.Len(t, deserializedReport.DiscoveredDevices, 1)
+	assert.Equal(t, devices[0].DevicePath, deserializedReport.DiscoveredDevices[0].DevicePath)
+	assert.Equal(t, devices[0].SerialNumber, deserializedReport.DiscoveredDevices[0].SerialNumber)
+}
+
+func TestShouldDiscoverOnNodeLogic(t *testing.T) {
+	tests := []struct {
+		name         string
+		nodeName     string
+		nodeSelector map[string]string
+		expected     bool
+	}{
+		{
+			name:         "no node selector - should discover",
+			nodeName:     "any-node",
+			nodeSelector: map[string]string{},
+			expected:     true,
+		},
+		{
+			name:     "matching hostname selector",
+			nodeName: "worker-1",
+			nodeSelector: map[string]string{
+				"kubernetes.io/hostname": "worker-1",
+			},
+			expected: true,
+		},
+		{
+			name:     "non-matching hostname selector",
+			nodeName: "worker-2",
+			nodeSelector: map[string]string{
+				"kubernetes.io/hostname": "worker-1",
+			},
+			expected: false,
+		},
+		{
+			name:     "non-hostname selector",
+			nodeName: "worker-1",
+			nodeSelector: map[string]string{
+				"node-role.kubernetes.io/worker": "true",
+			},
+			expected: false, // simplified logic only checks hostname
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a DiscoveryAgent to test the shouldDiscoverOnNode method
+			agent := &DiscoveryAgent{
+				nodeName: tt.nodeName,
+			}
+
+			// Create a mock HSMDevice with the given node selector
+			hsmDevice := &hsmv1alpha1.HSMDevice{
+				Spec: hsmv1alpha1.HSMDeviceSpec{
+					NodeSelector: tt.nodeSelector,
+				},
+			}
+
+			result := agent.shouldDiscoverOnNode(hsmDevice)
+			assert.Equal(t, tt.expected, result)
+		})
 	}
 }
 

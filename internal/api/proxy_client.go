@@ -120,11 +120,13 @@ func (p *ProxyClient) findConsensusChecksum(results []checksumResult, path strin
 	}
 
 	// Find the most common checksum (consensus)
+	// In case of ties, prefer the first occurrence for deterministic behavior
 	var consensusChecksum string
 	var maxCount int
-	for checksum, count := range checksumCounts {
+	for _, result := range results {
+		count := checksumCounts[result.checksum]
 		if count > maxCount {
-			consensusChecksum = checksum
+			consensusChecksum = result.checksum
 			maxCount = count
 		}
 	}

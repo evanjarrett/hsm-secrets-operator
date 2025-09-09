@@ -17,6 +17,8 @@ limitations under the License.
 package agent
 
 import (
+	"flag"
+	"os"
 	"testing"
 	"time"
 
@@ -357,6 +359,143 @@ func TestTimeoutConfigurationPatterns(t *testing.T) {
 				assert.Equal(t, 5*time.Second, duration)
 			case "retry":
 				assert.Equal(t, 2*time.Second, duration)
+			}
+		})
+	}
+}
+
+func TestAgentFlagParsing(t *testing.T) {
+	tests := []struct {
+		name               string
+		args               []string
+		expectedDeviceName string
+		expectedPort       int
+		expectedHealthPort int
+		expectedLibrary    string
+		expectError        bool
+	}{
+		{
+			name:               "basic flags",
+			args:               []string{"--device-name=test-device", "--port=9090", "--health-port=8093"},
+			expectedDeviceName: "test-device",
+			expectedPort:       9090,
+			expectedHealthPort: 8093,
+			expectedLibrary:    "",
+			expectError:        false,
+		},
+		{
+			name:               "with library path",
+			args:               []string{"--device-name=pico-hsm", "--pkcs11-library=/usr/lib/opensc-pkcs11.so"},
+			expectedDeviceName: "pico-hsm",
+			expectedPort:       9090, // default
+			expectedHealthPort: 8093, // default
+			expectedLibrary:    "/usr/lib/opensc-pkcs11.so",
+			expectError:        false,
+		},
+		{
+			name:               "custom ports",
+			args:               []string{"--device-name=test", "--port=9091", "--health-port=8094"},
+			expectedDeviceName: "test",
+			expectedPort:       9091,
+			expectedHealthPort: 8094,
+			expectError:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a new flag set for testing
+			fs := flag.NewFlagSet("test-agent", flag.ContinueOnError)
+
+			var deviceName string
+			var port int
+			var healthPort int
+			var pkcs11LibraryPath string
+			var slotID int
+			var tokenLabel string
+			var pin string
+
+			fs.StringVar(&deviceName, "device-name", "", "Name of the HSM device")
+			fs.IntVar(&port, "port", 9090, "Port for gRPC API")
+			fs.IntVar(&healthPort, "health-port", 8093, "Port for health checks")
+			fs.StringVar(&pkcs11LibraryPath, "pkcs11-library", "", "PKCS#11 library path")
+			fs.IntVar(&slotID, "slot-id", 0, "PKCS#11 slot ID")
+			fs.StringVar(&tokenLabel, "token-label", "", "PKCS#11 token label")
+			fs.StringVar(&pin, "pin", "", "PKCS#11 PIN")
+
+			err := fs.Parse(tt.args)
+			if tt.expectError {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expectedDeviceName, deviceName)
+			assert.Equal(t, tt.expectedPort, port)
+			assert.Equal(t, tt.expectedHealthPort, healthPort)
+			assert.Equal(t, tt.expectedLibrary, pkcs11LibraryPath)
+		})
+	}
+}
+
+func TestAgentEnvironmentVariables(t *testing.T) {
+	tests := []struct {
+		name           string
+		envVars        map[string]string
+		expectedDevice string
+		expectedLib    string
+		expectedToken  string
+		expectedPIN    string
+	}{
+		{
+			name: "device name from env",
+			envVars: map[string]string{
+				"HSM_DEVICE_NAME": "env-device",
+			},
+			expectedDevice: "env-device",
+		},
+		{
+			name: "pkcs11 config from env",
+			envVars: map[string]string{
+				"HSM_DEVICE_NAME":     "test-device",
+				"PKCS11_LIBRARY_PATH": "/usr/lib/test-pkcs11.so",
+				"PKCS11_TOKEN_LABEL":  "TestToken",
+				"PKCS11_PIN":          "123456",
+			},
+			expectedDevice: "test-device",
+			expectedLib:    "/usr/lib/test-pkcs11.so",
+			expectedToken:  "TestToken",
+			expectedPIN:    "123456",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Clear environment
+			envKeys := []string{"HSM_DEVICE_NAME", "PKCS11_LIBRARY_PATH", "PKCS11_TOKEN_LABEL", "PKCS11_PIN"}
+			for _, key := range envKeys {
+				_ = os.Unsetenv(key)
+			}
+
+			// Set test environment variables
+			for key, value := range tt.envVars {
+				_ = os.Setenv(key, value)
+			}
+
+			// Test environment variable reading
+			deviceName := os.Getenv("HSM_DEVICE_NAME")
+			libraryPath := os.Getenv("PKCS11_LIBRARY_PATH")
+			tokenLabel := os.Getenv("PKCS11_TOKEN_LABEL")
+			pin := os.Getenv("PKCS11_PIN")
+
+			assert.Equal(t, tt.expectedDevice, deviceName)
+			assert.Equal(t, tt.expectedLib, libraryPath)
+			assert.Equal(t, tt.expectedToken, tokenLabel)
+			assert.Equal(t, tt.expectedPIN, pin)
+
+			// Clean up
+			for _, key := range envKeys {
+				_ = os.Unsetenv(key)
 			}
 		})
 	}

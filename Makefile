@@ -3,7 +3,7 @@
 # To re-generate a bundle for another specific version without changing the standard setup, you can:
 # - use the VERSION as arg of the bundle target (e.g make bundle VERSION=0.0.2)
 # - use environment variables to overwrite this value (e.g export VERSION=0.0.2)
-VERSION ?= 0.0.1
+VERSION ?= 0.5.22
 
 # CHANNELS define the bundle channels used in the bundle.
 # Add a new line here if you would like to change its default config. (E.g CHANNELS = "candidate,fast,stable")
@@ -90,6 +90,49 @@ all: build
 help: ## Display this help.
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
+##@ Version Management
+
+.PHONY: version-show
+version-show: ## Show current version
+	@echo "Current version: $(VERSION)"
+
+.PHONY: version-sync
+version-sync: ## Sync Chart.yaml versions with Makefile VERSION
+	@echo "Syncing Chart.yaml with VERSION=$(VERSION)..."
+	@sed -i 's/^version: .*/version: $(VERSION)/' helm/hsm-secrets-operator/Chart.yaml
+	@sed -i 's/^appVersion: .*/appVersion: v$(VERSION)/' helm/hsm-secrets-operator/Chart.yaml
+	@echo "✅ Chart.yaml synced with version $(VERSION)"
+
+.PHONY: version-patch
+version-patch: ## Increment patch version (x.y.Z+1)
+	$(call increment-version,patch)
+
+.PHONY: version-minor
+version-minor: ## Increment minor version (x.Y+1.0)
+	$(call increment-version,minor)
+
+.PHONY: version-major
+version-major: ## Increment major version (X+1.0.0)
+	$(call increment-version,major)
+
+# Helper function to increment version
+define increment-version
+$(eval NEW_VERSION := $(shell echo "$(VERSION)" | awk -F. -v component=$(1) '{ \
+	if (component == "major") { print ($$1+1) ".0.0" } \
+	else if (component == "minor") { print $$1 "." ($$2+1) ".0" } \
+	else if (component == "patch") { print $$1 "." $$2 "." ($$3+1) } \
+}'))
+@echo "Incrementing $(1): $(VERSION) → $(NEW_VERSION)"
+@sed -i 's/^VERSION ?= .*/VERSION ?= $(NEW_VERSION)/' Makefile
+@$(MAKE) version-sync VERSION=$(NEW_VERSION)
+@echo "✅ Version updated to $(NEW_VERSION)"
+@echo ""
+@echo "Next steps:"
+@echo "1. git add Makefile helm/hsm-secrets-operator/Chart.yaml"
+@echo "2. git commit -m 'chore: bump version to $(NEW_VERSION)'"
+@echo "3. git tag v$(NEW_VERSION) && git push --tags"
+endef
+
 ##@ Development
 
 .PHONY: manifests
@@ -116,7 +159,7 @@ vet: ## Run go vet against code.
 
 .PHONY: test
 test: manifests generate fmt vet setup-envtest ## Run tests.
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
+	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v -E '/(e2e|test/utils)') -coverprofile cover.out
 
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
