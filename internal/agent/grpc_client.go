@@ -47,12 +47,13 @@ func NewGRPCClient(endpoint string, logger logr.Logger) (*GRPCClient, error) {
 		return nil, fmt.Errorf("endpoint cannot be empty")
 	}
 
-	// Create gRPC connection with keepalive
+	// Create gRPC connection with conservative keepalive settings
+	// Reduce ping frequency to prevent "too_many_pings" errors
 	conn, err := grpc.NewClient(endpoint,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                10 * time.Second,
-			Timeout:             3 * time.Second,
+			Time:                30 * time.Second, // Reduced from 10s to 30s
+			Timeout:             10 * time.Second, // Increased from 3s to 10s
 			PermitWithoutStream: true,
 		}),
 	)

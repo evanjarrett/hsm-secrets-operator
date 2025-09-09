@@ -26,6 +26,7 @@ import (
 	"github.com/go-logr/logr"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 
 	hsmv1 "github.com/evanjarrett/hsm-secrets-operator/api/proto/hsm/v1"
@@ -69,8 +70,17 @@ func (s *GRPCServer) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to listen on port %d: %w", s.port, err)
 	}
 
+	// Configure server with lenient keepalive policy to prevent "too_many_pings" errors
 	grpcServer := grpc.NewServer(
 		grpc.UnaryInterceptor(s.loggingInterceptor),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             15 * time.Second, // Allow pings every 15s minimum
+			PermitWithoutStream: true,             // Allow pings without active streams
+		}),
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			Time:    60 * time.Second, // Send pings every 60s if no activity
+			Timeout: 10 * time.Second, // Wait 10s for ping response
+		}),
 	)
 
 	// Register the HSM agent service

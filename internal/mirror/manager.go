@@ -112,6 +112,8 @@ const (
 )
 
 // buildSecretInventory builds a comprehensive inventory of secrets across all devices
+//
+//nolint:unparam // Error return preserved for future error handling scenarios
 func (mm *MirrorManager) buildSecretInventory(ctx context.Context, secretPaths []string, devices []hsmv1alpha1.DiscoveredDevice, logger logr.Logger) (map[string]*SecretInventory, error) {
 	inventory := make(map[string]*SecretInventory)
 
@@ -145,12 +147,6 @@ func (mm *MirrorManager) buildSecretInventory(ctx context.Context, secretPaths [
 			}
 			continue
 		}
-
-		defer func(client hsm.Client, device string) {
-			if closeErr := client.Close(); closeErr != nil {
-				logger.V(1).Info("Failed to close gRPC client", "device", device, "error", closeErr)
-			}
-		}(grpcClient, deviceId)
 
 		// Check if device is connected
 		if !grpcClient.IsConnected() {
@@ -544,11 +540,6 @@ func (mm *MirrorManager) readSecretWithMetadata(ctx context.Context, device hsmv
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create gRPC client: %w", err)
 	}
-	defer func() {
-		if closeErr := grpcClient.Close(); closeErr != nil {
-			logger.V(1).Info("Failed to close gRPC client", "error", closeErr)
-		}
-	}()
 
 	if !grpcClient.IsConnected() {
 		return nil, nil, fmt.Errorf("device not connected")
@@ -576,12 +567,6 @@ func (mm *MirrorManager) writeSecretWithMetadata(ctx context.Context, device hsm
 	if err != nil {
 		return fmt.Errorf("failed to create gRPC client: %w", err)
 	}
-	defer func() {
-		if closeErr := grpcClient.Close(); closeErr != nil {
-			logger.V(1).Info("Failed to close gRPC client", "error", closeErr)
-		}
-	}()
-
 	if !grpcClient.IsConnected() {
 		return fmt.Errorf("device not connected")
 	}
@@ -600,11 +585,6 @@ func (mm *MirrorManager) writeMetadataOnly(ctx context.Context, device hsmv1alph
 	if err != nil {
 		return fmt.Errorf("failed to create gRPC client: %w", err)
 	}
-	defer func() {
-		if closeErr := grpcClient.Close(); closeErr != nil {
-			logger.V(1).Info("Failed to close gRPC client", "error", closeErr)
-		}
-	}()
 
 	if !grpcClient.IsConnected() {
 		return fmt.Errorf("device not connected")
@@ -778,9 +758,6 @@ func (mm *MirrorManager) WaitForAgentsReady(ctx context.Context, timeout time.Du
 						}
 						logger.Info("HSM agents are ready", "readyDevices", len(devices))
 						return true, nil
-					}
-					if closeErr := grpcClient.Close(); closeErr != nil {
-						logger.V(1).Info("Failed to close gRPC client", "error", closeErr)
 					}
 				}
 			}

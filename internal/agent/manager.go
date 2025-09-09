@@ -83,8 +83,9 @@ type Manager struct {
 	ImageResolver  ImageResolver
 
 	// Internal tracking
-	activeAgents map[string]*AgentInfo // deviceName -> AgentInfo
-	mu           sync.RWMutex
+	activeAgents   map[string]*AgentInfo // deviceName -> AgentInfo
+	connectionPool *ConnectionPool       // Shared connection pool for gRPC clients
+	mu             sync.RWMutex
 
 	// Test configuration
 	TestMode         bool          // Enable test mode for faster operations
@@ -107,12 +108,15 @@ type deviceWork struct {
 
 // NewManager creates a new agent manager
 func NewManager(k8sClient client.Client, namespace string, imageResolver ImageResolver) *Manager {
+	// Create logger for the manager
+	logger := logr.FromContextOrDiscard(context.Background()).WithName("agent-manager")
 
 	m := &Manager{
 		Client:         k8sClient,
 		AgentNamespace: namespace,
 		ImageResolver:  imageResolver,
 		activeAgents:   make(map[string]*AgentInfo),
+		connectionPool: NewConnectionPool(logger),
 		// Default production timeouts
 		WaitTimeout:      60 * time.Second,
 		WaitPollInterval: 2 * time.Second,
@@ -126,11 +130,15 @@ func NewManager(k8sClient client.Client, namespace string, imageResolver ImageRe
 
 // NewTestManager creates a new agent manager optimized for testing
 func NewTestManager(k8sClient client.Client, namespace string, imageResolver ImageResolver) *Manager {
+	// Create logger for the test manager
+	logger := logr.FromContextOrDiscard(context.Background()).WithName("agent-manager-test")
+
 	m := &Manager{
 		Client:         k8sClient,
 		AgentNamespace: namespace,
 		ImageResolver:  imageResolver,
 		activeAgents:   make(map[string]*AgentInfo),
+		connectionPool: NewConnectionPool(logger),
 		// Fast test timeouts
 		TestMode:         true,
 		WaitTimeout:      5 * time.Second,
@@ -980,18 +988,11 @@ func (m *Manager) CreateGRPCClient(ctx context.Context, device hsmv1alpha1.Disco
 	podIP := targetPod.Status.PodIPs[0].IP
 	endpoint := fmt.Sprintf("%s:%d", podIP, AgentPort)
 
-	// Create gRPC client
-	grpcClient, err := NewGRPCClient(endpoint, logger)
+	// Use connection pool to get or create cached client
+	// This significantly reduces connection overhead and prevents "too_many_pings" errors
+	grpcClient, err := m.connectionPool.GetClient(ctx, endpoint, logger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create gRPC client for %s: %w", endpoint, err)
-	}
-
-	// Test the connection
-	if err := grpcClient.Initialize(ctx, hsm.Config{}); err != nil {
-		if err := grpcClient.Close(); err != nil {
-			logger.Error(err, "Failed to close gRPC client after failed initialization")
-		}
-		return nil, fmt.Errorf("failed to initialize gRPC client for %s: %w", endpoint, err)
+		return nil, fmt.Errorf("failed to get pooled gRPC client for %s: %w", endpoint, err)
 	}
 
 	return grpcClient, nil
@@ -1041,4 +1042,11 @@ func hostPathTypePtr(t corev1.HostPathType) *corev1.HostPathType {
 func resourceQuantity(s string) resource.Quantity {
 	q, _ := resource.ParseQuantity(s)
 	return q
+}
+
+// Close closes the manager and all its resources including the connection pool
+func (m *Manager) Close() {
+	if m.connectionPool != nil {
+		m.connectionPool.Close()
+	}
 }
