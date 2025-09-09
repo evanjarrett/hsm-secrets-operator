@@ -20,10 +20,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"sort"
 
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/yaml"
-	
+
 	"github.com/evanjarrett/hsm-secrets-operator/kubectl-hsm/pkg/client"
 )
 
@@ -81,35 +83,71 @@ func (opts *HealthOptions) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to connect to HSM operator: %w", err)
 	}
 
-	// Get health status
+	// Get health status, device status, and device info in parallel
 	health, err := hsmClient.GetHealth(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get health status: %w", err)
 	}
 
+	var deviceStatus *client.DeviceStatusResponse
+	var deviceInfo *client.DeviceInfoResponse
+
+	// Get device information for enhanced health display
+	if deviceStatus, err = hsmClient.GetDeviceStatus(ctx); err != nil {
+		// Don't fail the health check if device status is unavailable
+		if opts.Verbose {
+			fmt.Fprintf(os.Stderr, "Warning: failed to get device status: %v\n", err)
+		}
+	}
+
+	if deviceInfo, err = hsmClient.GetDeviceInfo(ctx); err != nil {
+		// Don't fail the health check if device info is unavailable
+		if opts.Verbose {
+			fmt.Fprintf(os.Stderr, "Warning: failed to get device info: %v\n", err)
+		}
+	}
+
 	// Handle output formatting
 	switch opts.Output {
 	case "json":
-		jsonBytes, err := json.MarshalIndent(health, "", "  ")
+		combinedOutput := map[string]interface{}{
+			"health": health,
+		}
+		if deviceStatus != nil {
+			combinedOutput["deviceStatus"] = deviceStatus
+		}
+		if deviceInfo != nil {
+			combinedOutput["deviceInfo"] = deviceInfo
+		}
+		jsonBytes, err := json.MarshalIndent(combinedOutput, "", "  ")
 		if err != nil {
 			return fmt.Errorf("failed to marshal health status to JSON: %w", err)
 		}
 		fmt.Println(string(jsonBytes))
 	case "yaml":
-		yamlBytes, err := yaml.Marshal(health)
+		combinedOutput := map[string]interface{}{
+			"health": health,
+		}
+		if deviceStatus != nil {
+			combinedOutput["deviceStatus"] = deviceStatus
+		}
+		if deviceInfo != nil {
+			combinedOutput["deviceInfo"] = deviceInfo
+		}
+		yamlBytes, err := yaml.Marshal(combinedOutput)
 		if err != nil {
 			return fmt.Errorf("failed to marshal health status to YAML: %w", err)
 		}
 		fmt.Print(string(yamlBytes))
 	default:
-		return opts.displayHealthText(health, cm.GetCurrentNamespace())
+		return opts.displayHealthText(health, deviceStatus, deviceInfo, cm.GetCurrentNamespace())
 	}
 
 	return nil
 }
 
 // displayHealthText displays the health status in a human-readable format
-func (opts *HealthOptions) displayHealthText(health *client.HealthStatus, namespace string) error {
+func (opts *HealthOptions) displayHealthText(health *client.HealthStatus, deviceStatus *client.DeviceStatusResponse, deviceInfo *client.DeviceInfoResponse, namespace string) error {
 	fmt.Printf("HSM Operator Health Status\n")
 	fmt.Printf("==========================\n\n")
 
@@ -120,45 +158,111 @@ func (opts *HealthOptions) displayHealthText(health *client.HealthStatus, namesp
 	} else if health.Status == "unhealthy" {
 		statusEmoji = "❌"
 	}
-	
+
 	fmt.Printf("Overall Status:    %s %s\n", statusEmoji, health.Status)
 	fmt.Printf("Namespace:         %s\n", namespace)
 	fmt.Printf("Check Time:        %s\n", health.Timestamp.Format("2006-01-02 15:04:05 UTC"))
 	fmt.Printf("\n")
 
-	// HSM connectivity
-	hsmEmoji := "✅"
-	if !health.HSMConnected {
-		hsmEmoji = "❌"
+	// Device Status Section
+	if deviceStatus != nil && deviceStatus.TotalDevices > 0 {
+		fmt.Printf("Device Status:\n")
+
+		// Sort device names for consistent output
+		var deviceNames []string
+		for deviceName := range deviceStatus.Devices {
+			deviceNames = append(deviceNames, deviceName)
+		}
+		sort.Strings(deviceNames)
+
+		connectedCount := 0
+		for _, deviceName := range deviceNames {
+			connected := deviceStatus.Devices[deviceName]
+			statusIcon := "🔴"
+			statusText := "Disconnected"
+			if connected {
+				statusIcon = "🟢"
+				statusText = "Connected"
+				connectedCount++
+			}
+
+			deviceInfoText := ""
+			if deviceInfo != nil && deviceInfo.DeviceInfos[deviceName] != nil {
+				info := deviceInfo.DeviceInfos[deviceName]
+				if info.Manufacturer != "" && info.Model != "" {
+					deviceInfoText = fmt.Sprintf("    (%s %s)", info.Manufacturer, info.Model)
+				}
+			}
+
+			fmt.Printf("  %s %-15s %s%s\n", statusIcon, deviceName, statusText, deviceInfoText)
+		}
+
+		fmt.Printf("\n")
+		fmt.Printf("Device Summary:    %d/%d connected\n", connectedCount, deviceStatus.TotalDevices)
+	} else {
+		// Fallback to basic HSM connectivity info
+		hsmEmoji := "✅"
+		if !health.HSMConnected {
+			hsmEmoji = "❌"
+		}
+		fmt.Printf("HSM Connected:     %s %t\n", hsmEmoji, health.HSMConnected)
 	}
-	fmt.Printf("HSM Connected:     %s %t\n", hsmEmoji, health.HSMConnected)
-	
+
 	// Replication status
 	replicationEmoji := "✅"
 	if !health.ReplicationEnabled {
 		replicationEmoji = "⚠️"
 	}
-	fmt.Printf("Replication:       %s %t\n", replicationEmoji, health.ReplicationEnabled)
-	fmt.Printf("Active Nodes:      %d\n", health.ActiveNodes)
+	fmt.Printf("Replication:       %s %t (%d nodes)\n", replicationEmoji, health.ReplicationEnabled, health.ActiveNodes)
 	fmt.Printf("\n")
 
-	// Recommendations
-	if !health.HSMConnected {
+	// Enhanced recommendations based on device status
+	if deviceStatus != nil {
+		connectedCount := 0
+		for _, connected := range deviceStatus.Devices {
+			if connected {
+				connectedCount++
+			}
+		}
+
+		if connectedCount == 0 {
+			fmt.Printf("⚠️  Recommendations:\n")
+			fmt.Printf("   • All devices are disconnected - check device connections\n")
+			fmt.Printf("   • Verify HSM agent pods are running: kubectl get pods -l app.kubernetes.io/name=hsm-agent\n")
+			fmt.Printf("   • Check agent logs for connection errors\n")
+		} else if connectedCount < deviceStatus.TotalDevices {
+			fmt.Printf("⚠️  Recommendations:\n")
+			fmt.Printf("   • Some devices are disconnected - check device connections\n")
+			fmt.Printf("   • Verify all agent pods are healthy\n")
+		} else if connectedCount == 1 {
+			fmt.Printf("💡 Recommendations:\n")
+			fmt.Printf("   • Consider adding more HSM devices for high availability\n")
+			fmt.Printf("   • Multiple devices enable automatic replication and failover\n")
+		}
+	} else if !health.HSMConnected {
 		fmt.Printf("⚠️  Recommendations:\n")
 		fmt.Printf("   • Check if HSM devices are connected and accessible\n")
 		fmt.Printf("   • Verify HSM agent pods are running: kubectl get pods -l app.kubernetes.io/component=agent\n")
 		fmt.Printf("   • Check agent logs for connection errors\n")
 	}
 
-	if !health.ReplicationEnabled && health.ActiveNodes <= 1 {
-		fmt.Printf("💡 Recommendations:\n")
-		fmt.Printf("   • Consider adding more HSM devices for high availability\n")
-		fmt.Printf("   • Multiple devices enable automatic replication and failover\n")
-	}
-
 	// Overall assessment
 	if health.Status == "healthy" {
-		fmt.Printf("🎉 All systems operational!\n")
+		if deviceStatus != nil {
+			connectedCount := 0
+			for _, connected := range deviceStatus.Devices {
+				if connected {
+					connectedCount++
+				}
+			}
+			if connectedCount > 1 {
+				fmt.Printf("🎉 All systems operational with %d devices providing high availability!\n", connectedCount)
+			} else {
+				fmt.Printf("🎉 All systems operational!\n")
+			}
+		} else {
+			fmt.Printf("🎉 All systems operational!\n")
+		}
 	}
 
 	return nil

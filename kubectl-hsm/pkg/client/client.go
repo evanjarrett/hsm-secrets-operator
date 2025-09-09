@@ -58,17 +58,17 @@ func (c *Client) CreateSecretWithOptions(ctx context.Context, name string, data 
 		if err == nil && existing != nil {
 			// Merge existing data with new data (new data takes precedence)
 			mergedData := make(map[string]any)
-			
+
 			// Start with existing data
 			for k, v := range existing.Data {
 				mergedData[k] = v
 			}
-			
+
 			// Override/add with new data
 			for k, v := range data {
 				mergedData[k] = v
 			}
-			
+
 			data = mergedData
 		}
 		// If error reading existing secret, continue with original data (new secret)
@@ -94,7 +94,7 @@ func (c *Client) GetSecret(ctx context.Context, name string) (*SecretData, error
 // ListSecrets lists all secrets in the HSM
 func (c *Client) ListSecrets(ctx context.Context, page, pageSize int) (*SecretList, error) {
 	path := "/api/v1/hsm/secrets"
-	
+
 	// Add pagination parameters if specified
 	if page > 0 || pageSize > 0 {
 		params := url.Values{}
@@ -126,6 +126,26 @@ func (c *Client) DeleteSecret(ctx context.Context, name string) error {
 func (c *Client) GetHealth(ctx context.Context) (*HealthStatus, error) {
 	var result HealthStatus
 	err := c.doRequest(ctx, "GET", "/api/v1/health", nil, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetDeviceStatus retrieves the connectivity status of all HSM devices
+func (c *Client) GetDeviceStatus(ctx context.Context) (*DeviceStatusResponse, error) {
+	var result DeviceStatusResponse
+	err := c.doRequest(ctx, "GET", "/api/v1/hsm/status", nil, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetDeviceInfo retrieves detailed information about all HSM devices
+func (c *Client) GetDeviceInfo(ctx context.Context) (*DeviceInfoResponse, error) {
+	var result DeviceInfoResponse
+	err := c.doRequest(ctx, "GET", "/api/v1/hsm/info", nil, &result)
 	if err != nil {
 		return nil, err
 	}

@@ -439,7 +439,24 @@ func (p *ProxyClient) ReadSecret(c *gin.Context) {
 		return
 	}
 
-	response := ReadSecretResponse{Path: path, Data: data}
+	// Get checksum for the secret to include in response
+	checksum := ""
+	if len(successfulResults) > 0 {
+		// Get checksum from any available client (they should be consistent after consensus)
+		for _, grpcClient := range clients {
+			if checksumResult, checksumErr := grpcClient.GetChecksum(c.Request.Context(), path); checksumErr == nil {
+				checksum = checksumResult
+				break
+			}
+		}
+	}
+
+	response := ReadSecretResponse{
+		Path:        path,
+		Data:        data,
+		Checksum:    checksum,
+		DeviceCount: len(successfulResults),
+	}
 	p.server.sendResponse(c, http.StatusOK, "Secret read successfully", response)
 }
 

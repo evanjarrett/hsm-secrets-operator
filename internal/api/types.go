@@ -202,8 +202,10 @@ type ListSecretsResponse struct {
 
 // ReadSecretResponse represents the response for reading a secret
 type ReadSecretResponse struct {
-	Path string            `json:"path"`
-	Data map[string][]byte `json:"data"`
+	Path        string            `json:"path"`
+	Data        map[string][]byte `json:"data"`
+	Checksum    string            `json:"checksum,omitempty"`
+	DeviceCount int               `json:"deviceCount,omitempty"`
 }
 
 // WriteSecretResponse represents the response for writing a secret

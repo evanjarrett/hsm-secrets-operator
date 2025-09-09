@@ -22,6 +22,21 @@
                 <div class="stat-number" id="apiStatus">-</div>
                 <div class="stat-label">API Status</div>
             </div>
+            <div class="stat-card">
+                <div class="stat-number" id="deviceCount">-</div>
+                <div class="stat-label">HSM Devices</div>
+            </div>
+        </div>
+
+        <div class="section" id="deviceSection">
+            <h2>🔌 HSM Device Status</h2>
+            <div class="toolbar">
+                <button class="btn btn-secondary" onclick="refreshDeviceStatus()">🔄 Refresh Devices</button>
+                <button class="btn btn-secondary" onclick="refreshAll()">🔄 Refresh All</button>
+            </div>
+            <div id="deviceStatus" class="device-status">
+                <div class="loading">Loading device status...</div>
+            </div>
         </div>
 
         <div class="section">

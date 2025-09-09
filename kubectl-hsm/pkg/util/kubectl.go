@@ -81,7 +81,7 @@ func (k *KubectlUtil) GetCurrentNamespace() string {
 func (k *KubectlUtil) FindOperatorService(ctx context.Context) error {
 	svc, err := k.clientset.CoreV1().Services(k.namespace).Get(ctx, operatorServiceName, metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("HSM secrets operator service not found in namespace '%s': %w\n\nPlease check:\n  - Is the operator installed? Try: kubectl get deploy -n %s\n  - Are you in the correct namespace? Try: kubens <operator-namespace>", 
+		return fmt.Errorf("HSM secrets operator service not found in namespace '%s': %w\n\nPlease check:\n  - Is the operator installed? Try: kubectl get deploy -n %s\n  - Are you in the correct namespace? Try: kubens <operator-namespace>",
 			k.namespace, err, k.namespace)
 	}
 
@@ -174,7 +174,7 @@ func (pf *PortForward) Start(ctx context.Context) error {
 	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: transport}, "POST", req.URL())
 
 	ports := []string{fmt.Sprintf("%d:%d", pf.localPort, pf.remotePort)}
-	
+
 	// Control output based on verbose flag
 	var stdout, stderr io.Writer
 	if pf.verbose {
@@ -184,7 +184,7 @@ func (pf *PortForward) Start(ctx context.Context) error {
 		stdout = io.Discard
 		stderr = io.Discard
 	}
-	
+
 	forwarder, err := portforward.New(dialer, ports, pf.stopCh, pf.readyCh, stdout, stderr)
 	if err != nil {
 		return fmt.Errorf("failed to create port forwarder: %w", err)

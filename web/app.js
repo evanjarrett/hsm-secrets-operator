@@ -41,6 +41,14 @@ class HSMSecretsAPI {
         return this.request(`/hsm/secrets/${encodeURIComponent(secretName)}`);
     }
 
+    async getDeviceStatus() {
+        return this.request('/hsm/status');
+    }
+
+    async getDeviceInfo() {
+        return this.request('/hsm/info');
+    }
+
     async createSecret(secretName, data, metadata = null) {
         const requestBody = { data };
         if (metadata) {
@@ -88,6 +96,7 @@ class HSMSecretsUI {
 
     async loadInitialData() {
         await this.checkAPIHealth();
+        await this.loadDeviceStatus();
         await this.loadSecrets();
     }
 
@@ -95,6 +104,7 @@ class HSMSecretsUI {
         try {
             const health = await this.api.getHealth();
             const statusElement = document.getElementById('apiStatus');
+            const deviceCountElement = document.getElementById('deviceCount');
             
             if (health.success && health.data.status === 'healthy') {
                 statusElement.textContent = '✅ Healthy';
@@ -103,12 +113,72 @@ class HSMSecretsUI {
                 statusElement.textContent = '⚠️ Degraded';
                 statusElement.style.color = '#dd6b20';
             }
+
+            // Update device count if available
+            if (deviceCountElement && health.data.activeNodes !== undefined) {
+                deviceCountElement.textContent = health.data.activeNodes;
+            }
         } catch (error) {
             const statusElement = document.getElementById('apiStatus');
             statusElement.textContent = '❌ Error';
             statusElement.style.color = '#c53030';
             console.error('Health check failed:', error);
         }
+    }
+
+    async loadDeviceStatus() {
+        const statusElement = document.getElementById('deviceStatus');
+        statusElement.innerHTML = '<div class="loading">Loading device status...</div>';
+
+        try {
+            const [statusResponse, infoResponse] = await Promise.all([
+                this.api.getDeviceStatus(),
+                this.api.getDeviceInfo()
+            ]);
+
+            const devices = statusResponse.data.devices || {};
+            const deviceInfos = infoResponse.data.deviceInfos || {};
+            const totalDevices = statusResponse.data.totalDevices || 0;
+
+            this.renderDeviceStatus(devices, deviceInfos, totalDevices);
+        } catch (error) {
+            this.showError(statusElement, `Failed to load device status: ${error.message}`);
+        }
+    }
+
+    renderDeviceStatus(devices, deviceInfos, totalDevices) {
+        const statusElement = document.getElementById('deviceStatus');
+        
+        if (totalDevices === 0) {
+            statusElement.innerHTML = '<p style="text-align: center; color: #666; padding: 20px;">No HSM devices found.</p>';
+            return;
+        }
+
+        const deviceItems = Object.entries(devices).map(([deviceName, isConnected]) => {
+            const info = deviceInfos[deviceName];
+            const statusIcon = isConnected ? '🟢' : '🔴';
+            const statusText = isConnected ? 'Connected' : 'Disconnected';
+            
+            return `
+                <div class="device-item ${isConnected ? 'connected' : 'disconnected'}">
+                    <div class="device-header">
+                        <span class="device-name">${statusIcon} ${this.escapeHtml(deviceName)}</span>
+                        <span class="device-status-badge">${statusText}</span>
+                    </div>
+                    ${info ? `
+                        <div class="device-details">
+                            <div class="device-info">
+                                <span>Manufacturer: ${this.escapeHtml(info.manufacturer || 'Unknown')}</span>
+                                <span>Model: ${this.escapeHtml(info.model || 'Unknown')}</span>
+                                <span>Serial: ${this.escapeHtml(info.serialNumber || 'Unknown')}</span>
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }).join('');
+
+        statusElement.innerHTML = deviceItems;
     }
 
     async loadSecrets() {
@@ -166,16 +236,44 @@ class HSMSecretsUI {
             const response = await this.api.getSecret(secretName);
             const secretData = response.data;
             
+            // Convert byte arrays to strings for display
+            const displayData = {};
+            if (secretData.data) {
+                for (const [key, value] of Object.entries(secretData.data)) {
+                    // Handle byte arrays by converting to string
+                    if (Array.isArray(value)) {
+                        displayData[key] = String.fromCharCode.apply(null, value);
+                    } else {
+                        displayData[key] = value;
+                    }
+                }
+            }
+
+            const deviceBadge = secretData.deviceCount > 1 ? 
+                `<span class="device-badge multi-device">${secretData.deviceCount} devices</span>` :
+                `<span class="device-badge single-device">1 device</span>`;
+            
             detailsElement.innerHTML = `
-                <h3>Secret: ${this.escapeHtml(secretName)}</h3>
-                <div style="margin: 15px 0;">
-                    <strong>Path:</strong> ${this.escapeHtml(secretData.path || secretName)}<br>
-                    <strong>Checksum:</strong> ${this.escapeHtml(secretData.checksum || 'N/A')}<br>
-                    <strong>Size:</strong> ${secretData.data ? Object.keys(secretData.data).length : 0} keys
+                <h3>Secret: ${this.escapeHtml(secretName)} ${deviceBadge}</h3>
+                <div class="secret-metadata">
+                    <div class="metadata-item">
+                        <strong>Path:</strong> ${this.escapeHtml(secretData.path || secretName)}
+                    </div>
+                    <div class="metadata-item">
+                        <strong>Checksum:</strong> ${this.escapeHtml(secretData.checksum || 'N/A')}
+                    </div>
+                    <div class="metadata-item">
+                        <strong>Keys:</strong> ${Object.keys(displayData).length}
+                    </div>
+                    ${secretData.deviceCount ? `
+                        <div class="metadata-item">
+                            <strong>Device Count:</strong> ${secretData.deviceCount}
+                        </div>
+                    ` : ''}
                 </div>
-                <div>
+                <div class="secret-data">
                     <strong>Data:</strong>
-                    <div class="json-preview">${this.escapeHtml(JSON.stringify(secretData.data || {}, null, 2))}</div>
+                    <div class="json-preview">${this.escapeHtml(JSON.stringify(displayData, null, 2))}</div>
                 </div>
             `;
         } catch (error) {
@@ -453,6 +551,14 @@ class HSMSecretsUI {
         await this.loadSecrets();
     }
 
+    async refreshDeviceStatus() {
+        await this.loadDeviceStatus();
+    }
+
+    async refreshAll() {
+        await this.loadInitialData();
+    }
+
     showError(element, message) {
         const errorHTML = `<div class="error">❌ ${this.escapeHtml(message)}</div>`;
         if (element) {
@@ -516,6 +622,8 @@ window.addEventListener('DOMContentLoaded', () => {
 
 // Expose functions globally for onclick handlers
 window.refreshSecrets = () => ui.refreshSecrets();
+window.refreshDeviceStatus = () => ui.refreshDeviceStatus();
+window.refreshAll = () => ui.refreshAll();
 window.showCreateForm = () => ui.showCreateForm();
 window.hideCreateForm = () => ui.hideCreateForm();
 window.hideViewSection = () => ui.hideViewSection();

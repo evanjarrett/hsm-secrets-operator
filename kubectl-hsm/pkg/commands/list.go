@@ -26,7 +26,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/yaml"
-	
+
 	"github.com/evanjarrett/hsm-secrets-operator/kubectl-hsm/pkg/client"
 )
 
@@ -34,6 +34,7 @@ import (
 type ListOptions struct {
 	CommonOptions
 	AllNamespaces bool
+	ShowDevices   bool
 }
 
 // NewListCmd creates the list command
@@ -65,6 +66,7 @@ Examples:
 	}
 
 	cmd.Flags().BoolVar(&opts.AllNamespaces, "all-namespaces", false, "List secrets from all namespaces")
+	cmd.Flags().BoolVar(&opts.ShowDevices, "show-devices", false, "Show device count and sync status for each secret")
 	cmd.Flags().StringVarP(&opts.Namespace, "namespace", "n", "", "Override the default namespace")
 	cmd.Flags().StringVarP(&opts.Output, "output", "o", "text", "Output format (text, json, yaml)")
 	cmd.Flags().BoolVarP(&opts.Verbose, "verbose", "v", false, "Show verbose output including port forward details")
@@ -98,6 +100,15 @@ func (opts *ListOptions) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to list secrets: %w", err)
 	}
 
+	// Get device status if showing device information
+	var deviceStatus *client.DeviceStatusResponse
+	if opts.ShowDevices || opts.Output != "text" {
+		deviceStatus, err = hsmClient.GetDeviceStatus(ctx)
+		if err != nil && opts.Verbose {
+			fmt.Fprintf(os.Stderr, "Warning: failed to get device status: %v\n", err)
+		}
+	}
+
 	// Handle output formatting
 	switch opts.Output {
 	case "json":
@@ -106,16 +117,22 @@ func (opts *ListOptions) Run(ctx context.Context) error {
 			"count":   secretList.Count,
 			"secrets": secretList.Secrets,
 		}
+		if deviceStatus != nil {
+			cleanOutput["deviceStatus"] = deviceStatus
+		}
 		jsonBytes, err := json.MarshalIndent(cleanOutput, "", "  ")
 		if err != nil {
 			return fmt.Errorf("failed to marshal secrets to JSON: %w", err)
 		}
 		fmt.Println(string(jsonBytes))
 	case "yaml":
-		// Create clean output without pagination fields  
+		// Create clean output without pagination fields
 		cleanOutput := map[string]interface{}{
 			"count":   secretList.Count,
 			"secrets": secretList.Secrets,
+		}
+		if deviceStatus != nil {
+			cleanOutput["deviceStatus"] = deviceStatus
 		}
 		yamlBytes, err := yaml.Marshal(cleanOutput)
 		if err != nil {
@@ -123,14 +140,14 @@ func (opts *ListOptions) Run(ctx context.Context) error {
 		}
 		fmt.Print(string(yamlBytes))
 	default:
-		return opts.displaySecretsText(secretList, cm.GetCurrentNamespace())
+		return opts.displaySecretsText(secretList, deviceStatus, cm.GetCurrentNamespace())
 	}
 
 	return nil
 }
 
 // displaySecretsText displays the secrets in a human-readable table format
-func (opts *ListOptions) displaySecretsText(secretList *client.SecretList, currentNamespace string) error {
+func (opts *ListOptions) displaySecretsText(secretList *client.SecretList, deviceStatus *client.DeviceStatusResponse, currentNamespace string) error {
 	if secretList == nil {
 		fmt.Println("No secrets found")
 		return nil
@@ -150,26 +167,86 @@ func (opts *ListOptions) displaySecretsText(secretList *client.SecretList, curre
 	// Create table writer
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 
-	// Print header
-	if opts.AllNamespaces {
-		fmt.Fprintln(w, "NAMESPACE\tNAME")
+	// Print header based on options
+	if opts.ShowDevices {
+		if opts.AllNamespaces {
+			fmt.Fprintln(w, "NAMESPACE\tNAME\tDEVICES\tSTATUS")
+		} else {
+			fmt.Fprintln(w, "NAME\tDEVICES\tSTATUS")
+		}
 	} else {
-		fmt.Fprintln(w, "NAME")
+		if opts.AllNamespaces {
+			fmt.Fprintln(w, "NAMESPACE\tNAME")
+		} else {
+			fmt.Fprintln(w, "NAME")
+		}
 	}
 
-	// Print each secret name
+	// Print each secret name with device info if requested
 	for _, secret := range secrets {
-		if opts.AllNamespaces {
-			fmt.Fprintf(w, "%s\t%s\n", currentNamespace, secret)
+		if opts.ShowDevices {
+			deviceInfo := ""
+			statusInfo := ""
+
+			if deviceStatus != nil && deviceStatus.TotalDevices > 0 {
+				connectedCount := 0
+				for _, connected := range deviceStatus.Devices {
+					if connected {
+						connectedCount++
+					}
+				}
+
+				// Device count information
+				if connectedCount > 1 {
+					deviceInfo = fmt.Sprintf("🔗 %d", connectedCount)
+					statusInfo = "synced"
+				} else if connectedCount == 1 {
+					deviceInfo = "📱 1"
+					statusInfo = "single"
+				} else {
+					deviceInfo = "❌ 0"
+					statusInfo = "unavailable"
+				}
+			} else {
+				deviceInfo = "?"
+				statusInfo = "unknown"
+			}
+
+			if opts.AllNamespaces {
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", currentNamespace, secret, deviceInfo, statusInfo)
+			} else {
+				fmt.Fprintf(w, "%s\t%s\t%s\n", secret, deviceInfo, statusInfo)
+			}
 		} else {
-			fmt.Fprintf(w, "%s\n", secret)
+			if opts.AllNamespaces {
+				fmt.Fprintf(w, "%s\t%s\n", currentNamespace, secret)
+			} else {
+				fmt.Fprintf(w, "%s\n", secret)
+			}
 		}
 	}
 
 	w.Flush()
 
-	// Show summary
-	fmt.Printf("\nTotal: %d secrets\n", secretList.Count)
+	// Show enhanced summary
+	fmt.Printf("\nTotal: %d secrets", secretList.Count)
+	if opts.ShowDevices && deviceStatus != nil {
+		connectedCount := 0
+		for _, connected := range deviceStatus.Devices {
+			if connected {
+				connectedCount++
+			}
+		}
+		fmt.Printf(" • %d/%d devices connected", connectedCount, deviceStatus.TotalDevices)
+		if connectedCount > 1 {
+			fmt.Printf(" • ✅ Replication enabled")
+		} else if connectedCount == 1 {
+			fmt.Printf(" • ⚠️  Single device mode")
+		} else {
+			fmt.Printf(" • ❌ No devices available")
+		}
+	}
+	fmt.Println()
 
 	return nil
 }
@@ -218,16 +295,16 @@ func formatBytes(bytes int64) string {
 	if bytes < 1024 {
 		return fmt.Sprintf("%dB", bytes)
 	}
-	
+
 	units := []string{"B", "KB", "MB", "GB"}
 	size := float64(bytes)
 	unitIndex := 0
-	
+
 	for unitIndex < len(units)-1 && size >= 1024 {
 		size /= 1024
 		unitIndex++
 	}
-	
+
 	if size == float64(int64(size)) {
 		return fmt.Sprintf("%.0f%s", size, units[unitIndex])
 	}

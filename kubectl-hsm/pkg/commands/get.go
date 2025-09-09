@@ -26,7 +26,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/yaml"
-	
+
 	"github.com/evanjarrett/hsm-secrets-operator/kubectl-hsm/pkg/client"
 )
 
@@ -156,9 +156,36 @@ func (opts *GetOptions) Run(ctx context.Context, secretName string) error {
 
 // displaySecretText displays the secret in a human-readable text format
 func (opts *GetOptions) displaySecretText(secretName string, secretData *client.SecretData, namespace string) error {
-	fmt.Printf("Name:         %s\n", secretName)
+	// Create device badge
+	deviceBadge := ""
+	if secretData.DeviceCount > 1 {
+		deviceBadge = fmt.Sprintf(" 🔗 %d devices", secretData.DeviceCount)
+	} else if secretData.DeviceCount == 1 {
+		deviceBadge = " 📱 1 device"
+	}
+
+	fmt.Printf("Name:         %s%s\n", secretName, deviceBadge)
 	fmt.Printf("Namespace:    %s\n", namespace)
 
+	// Display path if different from name
+	if secretData.Path != "" && secretData.Path != secretName {
+		fmt.Printf("Path:         %s\n", secretData.Path)
+	}
+
+	// Display checksum if available
+	if secretData.Checksum != "" {
+		fmt.Printf("Checksum:     %s\n", secretData.Checksum)
+	}
+
+	// Display device count
+	if secretData.DeviceCount > 0 {
+		fmt.Printf("Device Count: %d\n", secretData.DeviceCount)
+		if secretData.DeviceCount > 1 {
+			fmt.Printf("Replication:  ✅ Enabled\n")
+		} else {
+			fmt.Printf("Replication:  ⚠️  Single device\n")
+		}
+	}
 
 	// Parse metadata from _metadata key if present
 	if metadataValue, hasMetadata := secretData.Data["_metadata"]; hasMetadata {
@@ -174,12 +201,19 @@ func (opts *GetOptions) displaySecretText(secretName string, secretData *client.
 			keys = append(keys, k)
 		}
 	}
-	
+
 	if len(keys) > 0 {
 		sort.Strings(keys)
-		fmt.Printf("Keys:         %s\n", strings.Join(keys, ", "))
+		fmt.Printf("Keys:         %s (%d total)\n", strings.Join(keys, ", "), len(keys))
 	} else {
 		fmt.Printf("Keys:         <none>\n")
+	}
+
+	// Multi-device recommendations
+	if secretData.DeviceCount == 1 {
+		fmt.Printf("\n💡 Recommendation: Consider adding more HSM devices for high availability\n")
+	} else if secretData.DeviceCount > 1 {
+		fmt.Printf("\n🎉 Secret is replicated across %d devices for high availability\n", secretData.DeviceCount)
 	}
 
 	return nil
@@ -188,7 +222,7 @@ func (opts *GetOptions) displaySecretText(secretName string, secretData *client.
 // parseAndDisplayMetadata parses and displays metadata from the _metadata key
 func (opts *GetOptions) parseAndDisplayMetadata(metadataValue any) error {
 	var metadataMap map[string]any
-	
+
 	switch v := metadataValue.(type) {
 	case string:
 		// First try to decode as base64, then parse JSON
@@ -209,10 +243,10 @@ func (opts *GetOptions) parseAndDisplayMetadata(metadataValue any) error {
 	default:
 		return fmt.Errorf("unexpected metadata type: %T", v)
 	}
-	
+
 	// Display all metadata fields with proper formatting
 	opts.displayMetadataFields(metadataMap, "")
-	
+
 	return nil
 }
 
@@ -224,32 +258,32 @@ func (opts *GetOptions) displayMetadataFields(data map[string]any, indent string
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	
+
 	for _, key := range keys {
 		value := data[key]
-		
+
 		// Handle nested objects (like labels)
 		if nested, ok := value.(map[string]any); ok {
 			// Display the parent key with capitalization
 			displayKey := opts.formatMetadataKey(key)
 			fmt.Printf("%s%-13s\n", indent, displayKey+":")
-			
+
 			// Display nested items with indentation, keeping original keys
 			nestedKeys := make([]string, 0, len(nested))
 			for k := range nested {
 				nestedKeys = append(nestedKeys, k)
 			}
 			sort.Strings(nestedKeys)
-			
+
 			for _, nestedKey := range nestedKeys {
 				fmt.Printf("%s  %-11s %v\n", indent, nestedKey+":", nested[nestedKey])
 			}
 			continue
 		}
-		
+
 		// Format the display key (capitalize first letter, replace underscores with spaces)
 		displayKey := opts.formatMetadataKey(key)
-		
+
 		// Display the key-value pair
 		fmt.Printf("%s%-13s %v\n", indent, displayKey+":", value)
 	}
@@ -259,7 +293,7 @@ func (opts *GetOptions) displayMetadataFields(data map[string]any, indent string
 func (opts *GetOptions) formatMetadataKey(key string) string {
 	// Replace underscores with spaces
 	formatted := strings.ReplaceAll(key, "_", " ")
-	
+
 	// Split into words and capitalize each word
 	words := strings.Fields(formatted)
 	for i, word := range words {
@@ -267,6 +301,6 @@ func (opts *GetOptions) formatMetadataKey(key string) string {
 			words[i] = strings.ToUpper(word[:1]) + word[1:]
 		}
 	}
-	
+
 	return strings.Join(words, " ")
 }

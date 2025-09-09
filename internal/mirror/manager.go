@@ -611,7 +611,7 @@ func (mm *MirrorManager) writeMetadataOnly(ctx context.Context, deviceName, secr
 	return nil
 }
 
-// getAvailableDevices gets list of available physical HSM device instances from HSMPools cluster-wide
+// getAvailableDevices gets list of available HSM device types from HSMPools cluster-wide
 func (mm *MirrorManager) getAvailableDevices(ctx context.Context) ([]string, error) {
 	var hsmPoolList hsmv1alpha1.HSMPoolList
 	// List HSMPools cluster-wide since they exist in the same namespace as their HSMDevices
@@ -619,21 +619,32 @@ func (mm *MirrorManager) getAvailableDevices(ctx context.Context) ([]string, err
 		return nil, fmt.Errorf("failed to list HSM pools cluster-wide: %w", err)
 	}
 
-	var devices = []string{}
+	deviceTypes := make(map[string]bool)
 
 	for _, pool := range hsmPoolList.Items {
 		if pool.Status.Phase == hsmv1alpha1.HSMPoolPhaseReady && len(pool.Status.AggregatedDevices) > 0 {
+			// Check if any devices in this pool are available
+			hasAvailableDevices := false
 			for _, aggregatedDevice := range pool.Status.AggregatedDevices {
 				if aggregatedDevice.Available {
-					deviceName := &pool.OwnerReferences[0].Name
-					// Create device instance name: deviceRef-index (e.g., "pico-hsm-0", "pico-hsm-1")
-					deviceInstanceName := fmt.Sprintf("%s-%s", *deviceName, aggregatedDevice.SerialNumber)
-					devices = append(devices, deviceInstanceName)
+					hasAvailableDevices = true
+					break
 				}
+			}
+			
+			if hasAvailableDevices {
+				deviceName := pool.OwnerReferences[0].Name
+				// Use base device name (e.g., "pico-hsm") - agent manager handles multiple instances internally
+				deviceTypes[deviceName] = true
 			}
 		}
 	}
 
+	// Convert map to sorted slice
+	devices := make([]string, 0, len(deviceTypes))
+	for deviceName := range deviceTypes {
+		devices = append(devices, deviceName)
+	}
 	sort.Strings(devices) // Ensure consistent ordering
 	return devices, nil
 }

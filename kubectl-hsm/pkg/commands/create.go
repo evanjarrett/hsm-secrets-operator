@@ -185,7 +185,7 @@ func (opts *CreateOptions) Run(ctx context.Context, secretName string) error {
 	} else {
 		fmt.Printf("Creating/updating secret '%s' in namespace '%s'...\n", secretName, cm.GetCurrentNamespace())
 	}
-	
+
 	if err := hsmClient.CreateSecretWithOptions(ctx, secretName, secretData, opts.Replace); err != nil {
 		return fmt.Errorf("failed to create/update secret: %w", err)
 	}

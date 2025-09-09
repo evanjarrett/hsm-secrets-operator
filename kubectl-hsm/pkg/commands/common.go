@@ -74,7 +74,7 @@ func (cm *ClientManager) GetClient(ctx context.Context) (*client.Client, error) 
 	}
 
 	cm.portForward = pf
-	
+
 	// Create HSM client pointing to the forwarded port
 	baseURL := fmt.Sprintf("http://localhost:%d", pf.GetLocalPort())
 	cm.hsmClient = client.NewClient(baseURL)
@@ -97,7 +97,7 @@ func (cm *ClientManager) GetCurrentNamespace() string {
 // readSecretValue reads a secret value, optionally hiding input for passwords
 func readSecretValue(prompt string, hidden bool) (string, error) {
 	fmt.Print(prompt)
-	
+
 	if hidden {
 		// Read password without echoing
 		byteValue, err := term.ReadPassword(int(syscall.Stdin))
@@ -119,7 +119,7 @@ func readSecretValue(prompt string, hidden bool) (string, error) {
 // parseFromLiteral parses key=value pairs from --from-literal flags
 func parseFromLiteral(literals []string) (map[string]any, error) {
 	data := make(map[string]any)
-	
+
 	for _, literal := range literals {
 		parts := strings.SplitN(literal, "=", 2)
 		if len(parts) != 2 {
@@ -127,45 +127,44 @@ func parseFromLiteral(literals []string) (map[string]any, error) {
 		}
 		data[parts[0]] = parts[1]
 	}
-	
+
 	return data, nil
 }
-
 
 // promptForInteractiveInput prompts the user for secret values interactively
 func promptForInteractiveInput() (map[string]any, error) {
 	data := make(map[string]any)
-	
+
 	fmt.Println("Enter secret data (press Enter with empty key to finish):")
-	
+
 	for {
 		key, err := readSecretValue("Key: ", false)
 		if err != nil {
 			return nil, err
 		}
-		
+
 		if key == "" {
 			break
 		}
-		
+
 		// Determine if this looks like a password field
 		isPassword := strings.Contains(strings.ToLower(key), "password") ||
 			strings.Contains(strings.ToLower(key), "secret") ||
 			strings.Contains(strings.ToLower(key), "token") ||
 			strings.Contains(strings.ToLower(key), "key")
-		
+
 		value, err := readSecretValue(fmt.Sprintf("Value for '%s': ", key), isPassword)
 		if err != nil {
 			return nil, err
 		}
-		
+
 		data[key] = value
 	}
-	
+
 	if len(data) == 0 {
 		return nil, fmt.Errorf("no secret data provided")
 	}
-	
+
 	return data, nil
 }
 
@@ -210,7 +209,7 @@ func readFromFileImproved(key, filename string) (map[string]any, error) {
 	if key == "" {
 		// Only filename provided (no explicit key)
 		key = filepath.Base(filename)
-		
+
 		// Remove file extension for the key
 		if ext := filepath.Ext(key); ext != "" {
 			key = strings.TrimSuffix(key, ext)
@@ -247,7 +246,7 @@ func CompletionSecretNames(cmd *cobra.Command, args []string, toComplete string)
 	// Get namespace from flag or use default
 	namespace, _ := cmd.Flags().GetString("namespace")
 	verbose, _ := cmd.Flags().GetBool("verbose")
-	
+
 	// Create client manager
 	cm, err := NewClientManager(namespace, verbose)
 	if err != nil {
