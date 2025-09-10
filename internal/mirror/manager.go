@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -658,29 +659,40 @@ func (mm *MirrorManager) MirrorAllSecrets(ctx context.Context) (*MirrorResult, e
 	return mm.executeMirrorPlans(ctx, plans, deviceLookup, logger), nil
 }
 
-// discoverAllSecrets discovers all secrets present on any HSM device
+// discoverAllSecrets discovers all secrets present on any HSM device with retry logic
 func (mm *MirrorManager) discoverAllSecrets(ctx context.Context, devices []hsmv1alpha1.DiscoveredDevice, logger logr.Logger) []string {
 	secretPaths := make(map[string]bool)
+	failedDevices := make([]hsmv1alpha1.DiscoveredDevice, 0)
+
+	logger.Info("Starting secret discovery", "totalDevices", len(devices))
 
 	for _, device := range devices {
 		deviceId := device.SerialNumber
 		deviceLogger := logger.WithValues("device", deviceId)
 
-		hsmClient, err := mm.agentManager.CreateGRPCClient(ctx, device, deviceLogger)
+		secrets, err := mm.discoverDeviceSecretsWithRetry(ctx, device, deviceLogger, 3)
 		if err != nil {
-			deviceLogger.Info("Failed to connect to device for discovery, skipping", "error", err)
+			deviceLogger.Error(err, "Failed to discover secrets on device after retries")
+			failedDevices = append(failedDevices, device)
 			continue
 		}
 
-		secrets, err := hsmClient.ListSecrets(ctx, "")
-		if err != nil {
-			deviceLogger.Info("Failed to list secrets on device, skipping", "error", err)
-			continue
-		}
-
-		deviceLogger.Info("Discovered secrets on device", "secretCount", len(secrets))
+		deviceLogger.Info("Successfully discovered secrets on device", "secretCount", len(secrets))
 		for _, secretPath := range secrets {
 			secretPaths[secretPath] = true
+		}
+	}
+
+	// Log summary of discovery results
+	successCount := len(devices) - len(failedDevices)
+	logger.Info("Discovery completed",
+		"successfulDevices", successCount,
+		"failedDevices", len(failedDevices),
+		"totalSecretsFound", len(secretPaths))
+
+	if len(failedDevices) > 0 {
+		for _, device := range failedDevices {
+			logger.Info("Device failed discovery", "device", device.SerialNumber, "nodeName", device.NodeName, "devicePath", device.DevicePath)
 		}
 	}
 
@@ -692,6 +704,96 @@ func (mm *MirrorManager) discoverAllSecrets(ctx context.Context, devices []hsmv1
 	sort.Strings(result)
 
 	return result
+}
+
+// discoverDeviceSecretsWithRetry attempts to discover secrets from a single device with retry logic
+func (mm *MirrorManager) discoverDeviceSecretsWithRetry(ctx context.Context, device hsmv1alpha1.DiscoveredDevice, logger logr.Logger, maxRetries int) ([]string, error) {
+	var lastErr error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		attemptLogger := logger.WithValues("attempt", attempt, "maxRetries", maxRetries)
+
+		// Create client with connection pool retry logic
+		hsmClient, err := mm.agentManager.CreateGRPCClient(ctx, device, attemptLogger)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to create gRPC client: %w", err)
+			attemptLogger.Info("Failed to connect to device", "error", err)
+
+			if attempt < maxRetries {
+				backoffDuration := time.Duration(attempt) * time.Second
+				attemptLogger.Info("Retrying device connection after backoff", "backoff", backoffDuration.String())
+				time.Sleep(backoffDuration)
+				continue
+			}
+			break
+		}
+
+		// Ensure client is closed after use
+		defer func() {
+			if closeErr := hsmClient.Close(); closeErr != nil {
+				logger.V(1).Info("Error closing HSM client", "error", closeErr)
+			}
+		}()
+
+		// Add timeout for list secrets operation
+		listCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		secrets, err := hsmClient.ListSecrets(listCtx, "")
+		cancel()
+
+		if err != nil {
+			lastErr = fmt.Errorf("failed to list secrets: %w", err)
+			attemptLogger.Info("Failed to list secrets on device", "error", err)
+
+			// Check for specific connection-related errors that might benefit from retry
+			if isConnectionError(err) && attempt < maxRetries {
+				backoffDuration := time.Duration(attempt) * time.Second
+				attemptLogger.Info("Connection error detected, retrying after backoff",
+					"backoff", backoffDuration.String(), "error", err)
+				time.Sleep(backoffDuration)
+				continue
+			}
+
+			if attempt < maxRetries {
+				backoffDuration := time.Duration(attempt) * time.Second
+				attemptLogger.Info("Retrying list secrets after backoff", "backoff", backoffDuration.String())
+				time.Sleep(backoffDuration)
+				continue
+			}
+			break
+		}
+
+		// Success case
+		attemptLogger.Info("Successfully listed secrets", "secretCount", len(secrets))
+		return secrets, nil
+	}
+
+	return nil, fmt.Errorf("failed to discover secrets after %d attempts: %w", maxRetries, lastErr)
+}
+
+// isConnectionError checks if an error is related to connection issues that might benefit from retry
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errStr := err.Error()
+	connectionErrors := []string{
+		"grpc: the client connection is closing",
+		"connection refused",
+		"connection reset",
+		"connection timeout",
+		"context deadline exceeded",
+		"rpc error: code = Canceled",
+		"rpc error: code = Unavailable",
+	}
+
+	for _, connErr := range connectionErrors {
+		if strings.Contains(errStr, connErr) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // calculateChecksum calculates SHA256 checksum of secret data
