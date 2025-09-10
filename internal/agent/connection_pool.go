@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -76,11 +77,14 @@ func (cw *ClientWrapper) IsConnected() bool {
 }
 
 func (cw *ClientWrapper) Close() error {
-	// Mark client as no longer in use when closed
+	// Decrease reference count when closed
 	cw.pool.mutex.Lock()
 	if pooled, exists := cw.pool.clients[cw.endpoint]; exists {
-		pooled.InUse = false
-		cw.pool.logger.V(1).Info("Client marked as not in use", "endpoint", cw.endpoint)
+		newRefCount := atomic.AddInt32(&pooled.RefCount, -1)
+		if newRefCount <= 0 {
+			pooled.InUse = false
+		}
+		cw.pool.logger.V(1).Info("Client reference decreased", "endpoint", cw.endpoint, "refCount", newRefCount)
 	}
 	cw.pool.mutex.Unlock()
 
@@ -90,12 +94,14 @@ func (cw *ClientWrapper) Close() error {
 
 // PooledClient represents a cached gRPC client with metadata
 type PooledClient struct {
-	Client     hsm.Client
-	Endpoint   string
-	CreatedAt  time.Time
-	LastUsed   time.Time
-	UsageCount int64 // Track how many times this client has been used
-	InUse      bool  // Track if client is currently being used
+	Client      hsm.Client
+	Endpoint    string
+	CreatedAt   time.Time
+	LastUsed    time.Time
+	UsageCount  int64     // Track how many times this client has been used
+	InUse       bool      // Track if client is currently being used
+	RefCount    int32     // Active reference count (atomic operations)
+	LastOpStart time.Time // When the last operation started
 }
 
 // ConnectionPoolMetrics tracks connection pool performance
@@ -112,29 +118,23 @@ type ConnectionPoolMetrics struct {
 
 // ConnectionPool manages a pool of gRPC connections to HSM agents
 type ConnectionPool struct {
-	clients         map[string]*PooledClient // endpoint -> client
-	mutex           sync.RWMutex
-	logger          logr.Logger
-	maxAge          time.Duration // Maximum age before client is recreated
-	cleanupInterval time.Duration
-	stopChan        chan struct{}
-	stopOnce        sync.Once
-	metrics         ConnectionPoolMetrics
+	clients  map[string]*PooledClient // endpoint -> client
+	mutex    sync.RWMutex
+	logger   logr.Logger
+	stopChan chan struct{}
+	stopOnce sync.Once
+	metrics  ConnectionPoolMetrics
 }
 
 // NewConnectionPool creates a new connection pool
 func NewConnectionPool(logger logr.Logger) *ConnectionPool {
 	pool := &ConnectionPool{
-		clients:         make(map[string]*PooledClient),
-		logger:          logger.WithName("connection-pool"),
-		maxAge:          5 * time.Minute, // Recreate connections every 5 minutes
-		cleanupInterval: 1 * time.Minute, // Cleanup every minute
-		stopChan:        make(chan struct{}),
+		clients:  make(map[string]*PooledClient),
+		logger:   logger.WithName("connection-pool"),
+		stopChan: make(chan struct{}),
 	}
 
-	// Start background cleanup goroutine
-	go pool.cleanupLoop()
-
+	pool.logger.Info("Connection pool created - connections will be kept alive until pod termination")
 	return pool
 }
 
@@ -192,41 +192,25 @@ func (cp *ConnectionPool) getClientAttempt(ctx context.Context, endpoint string,
 
 	// Check if we have a cached client
 	if pooled, exists := cp.clients[endpoint]; exists {
-		// Check if client is still valid and not too old
-		if now.Sub(pooled.CreatedAt) < cp.maxAge {
-			// Check if client is currently in use - avoid closing active connections
-			if pooled.InUse {
-				cp.logger.Info("Client is in use, extending max age", "endpoint", endpoint,
-					"age", now.Sub(pooled.CreatedAt).String(), "usage_count", pooled.UsageCount)
-				// Extend the client's life while it's in use
-				pooled.CreatedAt = now.Add(-cp.maxAge / 2)
-			}
-
+		// Check if client is still connected
+		if pooled.Client.IsConnected() {
 			// Update usage tracking
 			pooled.LastUsed = now
 			pooled.UsageCount++
 			pooled.InUse = true
+			pooled.LastOpStart = now
+			atomic.AddInt32(&pooled.RefCount, 1)
 
-			cp.logger.Info("Reusing cached gRPC client", "endpoint", endpoint,
-				"age", now.Sub(pooled.CreatedAt).String(), "usage_count", pooled.UsageCount)
+			cp.logger.V(1).Info("Reusing cached gRPC client", "endpoint", endpoint,
+				"age", now.Sub(pooled.CreatedAt).String(), "usage_count", pooled.UsageCount, "refCount", pooled.RefCount)
 			cp.metrics.ConnectionReuses++
 			return &ClientWrapper{client: pooled.Client, pool: cp, endpoint: endpoint}, nil
 		} else {
-			// Client is too old, but check if it's in use
-			if pooled.InUse {
-				cp.logger.Info("Client expired but in use, extending life", "endpoint", endpoint,
-					"age", now.Sub(pooled.CreatedAt).String())
-				pooled.CreatedAt = now.Add(-cp.maxAge / 2)
-				pooled.LastUsed = now
-				pooled.UsageCount++
-				return &ClientWrapper{client: pooled.Client, pool: cp, endpoint: endpoint}, nil
-			}
-
-			// Client is too old and not in use, close it and remove from cache
-			cp.logger.Info("gRPC client expired, closing", "endpoint", endpoint,
+			// Client is disconnected, remove it and create a new one
+			cp.logger.Info("Cached client is disconnected, removing", "endpoint", endpoint,
 				"age", now.Sub(pooled.CreatedAt).String(), "usage_count", pooled.UsageCount)
 			if err := pooled.Client.Close(); err != nil {
-				cp.logger.V(1).Info("Error closing expired client", "endpoint", endpoint, "error", err)
+				cp.logger.V(1).Info("Error closing disconnected client", "endpoint", endpoint, "error", err)
 			}
 			delete(cp.clients, endpoint)
 		}
@@ -253,12 +237,14 @@ func (cp *ConnectionPool) getClientAttempt(ctx context.Context, endpoint string,
 
 	// Cache the client
 	cp.clients[endpoint] = &PooledClient{
-		Client:     client,
-		Endpoint:   endpoint,
-		CreatedAt:  now,
-		LastUsed:   now,
-		UsageCount: 1,
-		InUse:      true,
+		Client:      client,
+		Endpoint:    endpoint,
+		CreatedAt:   now,
+		LastUsed:    now,
+		UsageCount:  1,
+		InUse:       true,
+		RefCount:    1,
+		LastOpStart: now,
 	}
 
 	cp.logger.Info("Created and cached new gRPC client", "endpoint", endpoint)
@@ -298,58 +284,6 @@ func (cp *ConnectionPool) Close() {
 	})
 }
 
-// cleanupLoop periodically removes unused/expired connections
-func (cp *ConnectionPool) cleanupLoop() {
-	ticker := time.NewTicker(cp.cleanupInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			cp.cleanup()
-		case <-cp.stopChan:
-			return
-		}
-	}
-}
-
-// cleanup removes expired connections
-func (cp *ConnectionPool) cleanup() {
-	cp.mutex.Lock()
-	defer cp.mutex.Unlock()
-
-	now := time.Now()
-	var toRemove []string
-
-	for endpoint, pooled := range cp.clients {
-		// Remove if too old or unused for too long, but not if currently in use
-		shouldRemove := (now.Sub(pooled.CreatedAt) > cp.maxAge || now.Sub(pooled.LastUsed) > cp.maxAge) && !pooled.InUse
-		if shouldRemove {
-			cp.logger.V(1).Info("Marking client for cleanup", "endpoint", endpoint,
-				"age", now.Sub(pooled.CreatedAt).String(),
-				"last_used_ago", now.Sub(pooled.LastUsed).String(),
-				"usage_count", pooled.UsageCount, "in_use", pooled.InUse)
-			toRemove = append(toRemove, endpoint)
-		} else if pooled.InUse && (now.Sub(pooled.CreatedAt) > cp.maxAge) {
-			cp.logger.Info("Client is old but still in use, keeping alive", "endpoint", endpoint,
-				"age", now.Sub(pooled.CreatedAt).String(), "usage_count", pooled.UsageCount)
-		}
-	}
-
-	if len(toRemove) > 0 {
-		cp.logger.V(1).Info("Cleaning up expired connections", "count", len(toRemove))
-		for _, endpoint := range toRemove {
-			if pooled, exists := cp.clients[endpoint]; exists {
-				if err := pooled.Client.Close(); err != nil {
-					cp.logger.V(1).Info("Error closing expired client during cleanup",
-						"endpoint", endpoint, "error", err)
-				}
-				delete(cp.clients, endpoint)
-			}
-		}
-	}
-}
-
 // GetStats returns pool statistics
 func (cp *ConnectionPool) GetStats() map[string]interface{} {
 	cp.mutex.RLock()
@@ -358,8 +292,7 @@ func (cp *ConnectionPool) GetStats() map[string]interface{} {
 	now := time.Now()
 	stats := make(map[string]interface{})
 	stats["active_connections"] = len(cp.clients)
-	stats["max_age_seconds"] = cp.maxAge.Seconds()
-	stats["cleanup_interval_seconds"] = cp.cleanupInterval.Seconds()
+	stats["connection_lifetime"] = "permanent"
 
 	var totalUsage int64
 	inUseCount := 0
