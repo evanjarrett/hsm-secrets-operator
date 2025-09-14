@@ -12,11 +12,8 @@ service HSMAgent {
   // ReadSecret reads secret data from the specified HSM path
   rpc ReadSecret(ReadSecretRequest) returns (ReadSecretResponse);
   
-  // WriteSecret writes secret data to the specified HSM path
+  // WriteSecret writes secret data and metadata to the specified HSM path
   rpc WriteSecret(WriteSecretRequest) returns (WriteSecretResponse);
-  
-  // WriteSecretWithMetadata writes secret data and metadata to the specified HSM path
-  rpc WriteSecretWithMetadata(WriteSecretWithMetadataRequest) returns (WriteSecretWithMetadataResponse);
   
   // ReadMetadata reads metadata for a secret at the given path
   rpc ReadMetadata(ReadMetadataRequest) returns (ReadMetadataResponse);
@@ -77,17 +74,10 @@ message ReadSecretResponse {
 message WriteSecretRequest {
   string path = 1;
   SecretData secret_data = 2;
-}
-
-message WriteSecretResponse {}
-
-message WriteSecretWithMetadataRequest {
-  string path = 1;
-  SecretData secret_data = 2;
   SecretMetadata metadata = 3;
 }
 
-message WriteSecretWithMetadataResponse {}
+message WriteSecretResponse {}
 
 message ReadMetadataRequest {
   string path = 1;

@@ -19,16 +19,15 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	HSMAgent_GetInfo_FullMethodName                 = "/hsm.v1.HSMAgent/GetInfo"
-	HSMAgent_ReadSecret_FullMethodName              = "/hsm.v1.HSMAgent/ReadSecret"
-	HSMAgent_WriteSecret_FullMethodName             = "/hsm.v1.HSMAgent/WriteSecret"
-	HSMAgent_WriteSecretWithMetadata_FullMethodName = "/hsm.v1.HSMAgent/WriteSecretWithMetadata"
-	HSMAgent_ReadMetadata_FullMethodName            = "/hsm.v1.HSMAgent/ReadMetadata"
-	HSMAgent_DeleteSecret_FullMethodName            = "/hsm.v1.HSMAgent/DeleteSecret"
-	HSMAgent_ListSecrets_FullMethodName             = "/hsm.v1.HSMAgent/ListSecrets"
-	HSMAgent_GetChecksum_FullMethodName             = "/hsm.v1.HSMAgent/GetChecksum"
-	HSMAgent_IsConnected_FullMethodName             = "/hsm.v1.HSMAgent/IsConnected"
-	HSMAgent_Health_FullMethodName                  = "/hsm.v1.HSMAgent/Health"
+	HSMAgent_GetInfo_FullMethodName      = "/hsm.v1.HSMAgent/GetInfo"
+	HSMAgent_ReadSecret_FullMethodName   = "/hsm.v1.HSMAgent/ReadSecret"
+	HSMAgent_WriteSecret_FullMethodName  = "/hsm.v1.HSMAgent/WriteSecret"
+	HSMAgent_ReadMetadata_FullMethodName = "/hsm.v1.HSMAgent/ReadMetadata"
+	HSMAgent_DeleteSecret_FullMethodName = "/hsm.v1.HSMAgent/DeleteSecret"
+	HSMAgent_ListSecrets_FullMethodName  = "/hsm.v1.HSMAgent/ListSecrets"
+	HSMAgent_GetChecksum_FullMethodName  = "/hsm.v1.HSMAgent/GetChecksum"
+	HSMAgent_IsConnected_FullMethodName  = "/hsm.v1.HSMAgent/IsConnected"
+	HSMAgent_Health_FullMethodName       = "/hsm.v1.HSMAgent/Health"
 )
 
 // HSMAgentClient is the client API for HSMAgent service.
@@ -41,10 +40,8 @@ type HSMAgentClient interface {
 	GetInfo(ctx context.Context, in *GetInfoRequest, opts ...grpc.CallOption) (*GetInfoResponse, error)
 	// ReadSecret reads secret data from the specified HSM path
 	ReadSecret(ctx context.Context, in *ReadSecretRequest, opts ...grpc.CallOption) (*ReadSecretResponse, error)
-	// WriteSecret writes secret data to the specified HSM path
+	// WriteSecret writes secret data and metadata to the specified HSM path
 	WriteSecret(ctx context.Context, in *WriteSecretRequest, opts ...grpc.CallOption) (*WriteSecretResponse, error)
-	// WriteSecretWithMetadata writes secret data and metadata to the specified HSM path
-	WriteSecretWithMetadata(ctx context.Context, in *WriteSecretWithMetadataRequest, opts ...grpc.CallOption) (*WriteSecretWithMetadataResponse, error)
 	// ReadMetadata reads metadata for a secret at the given path
 	ReadMetadata(ctx context.Context, in *ReadMetadataRequest, opts ...grpc.CallOption) (*ReadMetadataResponse, error)
 	// DeleteSecret removes secret data from the specified HSM path
@@ -91,16 +88,6 @@ func (c *hSMAgentClient) WriteSecret(ctx context.Context, in *WriteSecretRequest
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(WriteSecretResponse)
 	err := c.cc.Invoke(ctx, HSMAgent_WriteSecret_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *hSMAgentClient) WriteSecretWithMetadata(ctx context.Context, in *WriteSecretWithMetadataRequest, opts ...grpc.CallOption) (*WriteSecretWithMetadataResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(WriteSecretWithMetadataResponse)
-	err := c.cc.Invoke(ctx, HSMAgent_WriteSecretWithMetadata_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -177,10 +164,8 @@ type HSMAgentServer interface {
 	GetInfo(context.Context, *GetInfoRequest) (*GetInfoResponse, error)
 	// ReadSecret reads secret data from the specified HSM path
 	ReadSecret(context.Context, *ReadSecretRequest) (*ReadSecretResponse, error)
-	// WriteSecret writes secret data to the specified HSM path
+	// WriteSecret writes secret data and metadata to the specified HSM path
 	WriteSecret(context.Context, *WriteSecretRequest) (*WriteSecretResponse, error)
-	// WriteSecretWithMetadata writes secret data and metadata to the specified HSM path
-	WriteSecretWithMetadata(context.Context, *WriteSecretWithMetadataRequest) (*WriteSecretWithMetadataResponse, error)
 	// ReadMetadata reads metadata for a secret at the given path
 	ReadMetadata(context.Context, *ReadMetadataRequest) (*ReadMetadataResponse, error)
 	// DeleteSecret removes secret data from the specified HSM path
@@ -211,9 +196,6 @@ func (UnimplementedHSMAgentServer) ReadSecret(context.Context, *ReadSecretReques
 }
 func (UnimplementedHSMAgentServer) WriteSecret(context.Context, *WriteSecretRequest) (*WriteSecretResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method WriteSecret not implemented")
-}
-func (UnimplementedHSMAgentServer) WriteSecretWithMetadata(context.Context, *WriteSecretWithMetadataRequest) (*WriteSecretWithMetadataResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method WriteSecretWithMetadata not implemented")
 }
 func (UnimplementedHSMAgentServer) ReadMetadata(context.Context, *ReadMetadataRequest) (*ReadMetadataResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReadMetadata not implemented")
@@ -304,24 +286,6 @@ func _HSMAgent_WriteSecret_Handler(srv interface{}, ctx context.Context, dec fun
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HSMAgentServer).WriteSecret(ctx, req.(*WriteSecretRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _HSMAgent_WriteSecretWithMetadata_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(WriteSecretWithMetadataRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(HSMAgentServer).WriteSecretWithMetadata(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: HSMAgent_WriteSecretWithMetadata_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HSMAgentServer).WriteSecretWithMetadata(ctx, req.(*WriteSecretWithMetadataRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -452,10 +416,6 @@ var HSMAgent_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "WriteSecret",
 			Handler:    _HSMAgent_WriteSecret_Handler,
-		},
-		{
-			MethodName: "WriteSecretWithMetadata",
-			Handler:    _HSMAgent_WriteSecretWithMetadata_Handler,
 		},
 		{
 			MethodName: "ReadMetadata",

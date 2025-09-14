@@ -40,10 +40,6 @@ func (cw *ClientWrapper) Initialize(ctx context.Context, config hsm.Config) erro
 	return cw.client.Initialize(ctx, config)
 }
 
-func (cw *ClientWrapper) WriteSecret(ctx context.Context, path string, data hsm.SecretData) error {
-	return cw.client.WriteSecret(ctx, path, data)
-}
-
 func (cw *ClientWrapper) ReadSecret(ctx context.Context, path string) (hsm.SecretData, error) {
 	return cw.client.ReadSecret(ctx, path)
 }
@@ -56,8 +52,8 @@ func (cw *ClientWrapper) ListSecrets(ctx context.Context, prefix string) ([]stri
 	return cw.client.ListSecrets(ctx, prefix)
 }
 
-func (cw *ClientWrapper) WriteSecretWithMetadata(ctx context.Context, path string, data hsm.SecretData, metadata *hsm.SecretMetadata) error {
-	return cw.client.WriteSecretWithMetadata(ctx, path, data, metadata)
+func (cw *ClientWrapper) WriteSecret(ctx context.Context, path string, data hsm.SecretData, metadata *hsm.SecretMetadata) error {
+	return cw.client.WriteSecret(ctx, path, data, metadata)
 }
 
 func (cw *ClientWrapper) ReadMetadata(ctx context.Context, path string) (*hsm.SecretMetadata, error) {

@@ -399,6 +399,7 @@ type WriteSecretRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
 	SecretData    *SecretData            `protobuf:"bytes,2,opt,name=secret_data,json=secretData,proto3" json:"secret_data,omitempty"`
+	Metadata      *SecretMetadata        `protobuf:"bytes,3,opt,name=metadata,proto3" json:"metadata,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -447,6 +448,13 @@ func (x *WriteSecretRequest) GetSecretData() *SecretData {
 	return nil
 }
 
+func (x *WriteSecretRequest) GetMetadata() *SecretMetadata {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
 type WriteSecretResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -483,102 +491,6 @@ func (*WriteSecretResponse) Descriptor() ([]byte, []int) {
 	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{8}
 }
 
-type WriteSecretWithMetadataRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	SecretData    *SecretData            `protobuf:"bytes,2,opt,name=secret_data,json=secretData,proto3" json:"secret_data,omitempty"`
-	Metadata      *SecretMetadata        `protobuf:"bytes,3,opt,name=metadata,proto3" json:"metadata,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *WriteSecretWithMetadataRequest) Reset() {
-	*x = WriteSecretWithMetadataRequest{}
-	mi := &file_hsm_v1_hsm_proto_msgTypes[9]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *WriteSecretWithMetadataRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*WriteSecretWithMetadataRequest) ProtoMessage() {}
-
-func (x *WriteSecretWithMetadataRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_hsm_v1_hsm_proto_msgTypes[9]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use WriteSecretWithMetadataRequest.ProtoReflect.Descriptor instead.
-func (*WriteSecretWithMetadataRequest) Descriptor() ([]byte, []int) {
-	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{9}
-}
-
-func (x *WriteSecretWithMetadataRequest) GetPath() string {
-	if x != nil {
-		return x.Path
-	}
-	return ""
-}
-
-func (x *WriteSecretWithMetadataRequest) GetSecretData() *SecretData {
-	if x != nil {
-		return x.SecretData
-	}
-	return nil
-}
-
-func (x *WriteSecretWithMetadataRequest) GetMetadata() *SecretMetadata {
-	if x != nil {
-		return x.Metadata
-	}
-	return nil
-}
-
-type WriteSecretWithMetadataResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *WriteSecretWithMetadataResponse) Reset() {
-	*x = WriteSecretWithMetadataResponse{}
-	mi := &file_hsm_v1_hsm_proto_msgTypes[10]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *WriteSecretWithMetadataResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*WriteSecretWithMetadataResponse) ProtoMessage() {}
-
-func (x *WriteSecretWithMetadataResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_hsm_v1_hsm_proto_msgTypes[10]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use WriteSecretWithMetadataResponse.ProtoReflect.Descriptor instead.
-func (*WriteSecretWithMetadataResponse) Descriptor() ([]byte, []int) {
-	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{10}
-}
-
 type ReadMetadataRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
@@ -588,7 +500,7 @@ type ReadMetadataRequest struct {
 
 func (x *ReadMetadataRequest) Reset() {
 	*x = ReadMetadataRequest{}
-	mi := &file_hsm_v1_hsm_proto_msgTypes[11]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -600,7 +512,7 @@ func (x *ReadMetadataRequest) String() string {
 func (*ReadMetadataRequest) ProtoMessage() {}
 
 func (x *ReadMetadataRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_hsm_v1_hsm_proto_msgTypes[11]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -613,7 +525,7 @@ func (x *ReadMetadataRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadMetadataRequest.ProtoReflect.Descriptor instead.
 func (*ReadMetadataRequest) Descriptor() ([]byte, []int) {
-	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{11}
+	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ReadMetadataRequest) GetPath() string {
@@ -632,7 +544,7 @@ type ReadMetadataResponse struct {
 
 func (x *ReadMetadataResponse) Reset() {
 	*x = ReadMetadataResponse{}
-	mi := &file_hsm_v1_hsm_proto_msgTypes[12]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -644,7 +556,7 @@ func (x *ReadMetadataResponse) String() string {
 func (*ReadMetadataResponse) ProtoMessage() {}
 
 func (x *ReadMetadataResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_hsm_v1_hsm_proto_msgTypes[12]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -657,7 +569,7 @@ func (x *ReadMetadataResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadMetadataResponse.ProtoReflect.Descriptor instead.
 func (*ReadMetadataResponse) Descriptor() ([]byte, []int) {
-	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{12}
+	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ReadMetadataResponse) GetMetadata() *SecretMetadata {
@@ -676,7 +588,7 @@ type DeleteSecretRequest struct {
 
 func (x *DeleteSecretRequest) Reset() {
 	*x = DeleteSecretRequest{}
-	mi := &file_hsm_v1_hsm_proto_msgTypes[13]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -688,7 +600,7 @@ func (x *DeleteSecretRequest) String() string {
 func (*DeleteSecretRequest) ProtoMessage() {}
 
 func (x *DeleteSecretRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_hsm_v1_hsm_proto_msgTypes[13]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -701,7 +613,7 @@ func (x *DeleteSecretRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteSecretRequest.ProtoReflect.Descriptor instead.
 func (*DeleteSecretRequest) Descriptor() ([]byte, []int) {
-	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{13}
+	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *DeleteSecretRequest) GetPath() string {
@@ -719,7 +631,7 @@ type DeleteSecretResponse struct {
 
 func (x *DeleteSecretResponse) Reset() {
 	*x = DeleteSecretResponse{}
-	mi := &file_hsm_v1_hsm_proto_msgTypes[14]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -731,7 +643,7 @@ func (x *DeleteSecretResponse) String() string {
 func (*DeleteSecretResponse) ProtoMessage() {}
 
 func (x *DeleteSecretResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_hsm_v1_hsm_proto_msgTypes[14]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -744,7 +656,7 @@ func (x *DeleteSecretResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteSecretResponse.ProtoReflect.Descriptor instead.
 func (*DeleteSecretResponse) Descriptor() ([]byte, []int) {
-	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{14}
+	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{12}
 }
 
 type ListSecretsRequest struct {
@@ -756,7 +668,7 @@ type ListSecretsRequest struct {
 
 func (x *ListSecretsRequest) Reset() {
 	*x = ListSecretsRequest{}
-	mi := &file_hsm_v1_hsm_proto_msgTypes[15]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -768,7 +680,7 @@ func (x *ListSecretsRequest) String() string {
 func (*ListSecretsRequest) ProtoMessage() {}
 
 func (x *ListSecretsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_hsm_v1_hsm_proto_msgTypes[15]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -781,7 +693,7 @@ func (x *ListSecretsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSecretsRequest.ProtoReflect.Descriptor instead.
 func (*ListSecretsRequest) Descriptor() ([]byte, []int) {
-	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{15}
+	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ListSecretsRequest) GetPrefix() string {
@@ -800,7 +712,7 @@ type ListSecretsResponse struct {
 
 func (x *ListSecretsResponse) Reset() {
 	*x = ListSecretsResponse{}
-	mi := &file_hsm_v1_hsm_proto_msgTypes[16]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -812,7 +724,7 @@ func (x *ListSecretsResponse) String() string {
 func (*ListSecretsResponse) ProtoMessage() {}
 
 func (x *ListSecretsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_hsm_v1_hsm_proto_msgTypes[16]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -825,7 +737,7 @@ func (x *ListSecretsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSecretsResponse.ProtoReflect.Descriptor instead.
 func (*ListSecretsResponse) Descriptor() ([]byte, []int) {
-	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{16}
+	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ListSecretsResponse) GetPaths() []string {
@@ -844,7 +756,7 @@ type GetChecksumRequest struct {
 
 func (x *GetChecksumRequest) Reset() {
 	*x = GetChecksumRequest{}
-	mi := &file_hsm_v1_hsm_proto_msgTypes[17]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -856,7 +768,7 @@ func (x *GetChecksumRequest) String() string {
 func (*GetChecksumRequest) ProtoMessage() {}
 
 func (x *GetChecksumRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_hsm_v1_hsm_proto_msgTypes[17]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -869,7 +781,7 @@ func (x *GetChecksumRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetChecksumRequest.ProtoReflect.Descriptor instead.
 func (*GetChecksumRequest) Descriptor() ([]byte, []int) {
-	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{17}
+	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *GetChecksumRequest) GetPath() string {
@@ -888,7 +800,7 @@ type GetChecksumResponse struct {
 
 func (x *GetChecksumResponse) Reset() {
 	*x = GetChecksumResponse{}
-	mi := &file_hsm_v1_hsm_proto_msgTypes[18]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -900,7 +812,7 @@ func (x *GetChecksumResponse) String() string {
 func (*GetChecksumResponse) ProtoMessage() {}
 
 func (x *GetChecksumResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_hsm_v1_hsm_proto_msgTypes[18]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -913,7 +825,7 @@ func (x *GetChecksumResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetChecksumResponse.ProtoReflect.Descriptor instead.
 func (*GetChecksumResponse) Descriptor() ([]byte, []int) {
-	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{18}
+	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *GetChecksumResponse) GetChecksum() string {
@@ -931,7 +843,7 @@ type IsConnectedRequest struct {
 
 func (x *IsConnectedRequest) Reset() {
 	*x = IsConnectedRequest{}
-	mi := &file_hsm_v1_hsm_proto_msgTypes[19]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -943,7 +855,7 @@ func (x *IsConnectedRequest) String() string {
 func (*IsConnectedRequest) ProtoMessage() {}
 
 func (x *IsConnectedRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_hsm_v1_hsm_proto_msgTypes[19]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -956,7 +868,7 @@ func (x *IsConnectedRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IsConnectedRequest.ProtoReflect.Descriptor instead.
 func (*IsConnectedRequest) Descriptor() ([]byte, []int) {
-	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{19}
+	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{17}
 }
 
 type IsConnectedResponse struct {
@@ -968,7 +880,7 @@ type IsConnectedResponse struct {
 
 func (x *IsConnectedResponse) Reset() {
 	*x = IsConnectedResponse{}
-	mi := &file_hsm_v1_hsm_proto_msgTypes[20]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -980,7 +892,7 @@ func (x *IsConnectedResponse) String() string {
 func (*IsConnectedResponse) ProtoMessage() {}
 
 func (x *IsConnectedResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_hsm_v1_hsm_proto_msgTypes[20]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -993,7 +905,7 @@ func (x *IsConnectedResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IsConnectedResponse.ProtoReflect.Descriptor instead.
 func (*IsConnectedResponse) Descriptor() ([]byte, []int) {
-	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{20}
+	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *IsConnectedResponse) GetConnected() bool {
@@ -1011,7 +923,7 @@ type HealthRequest struct {
 
 func (x *HealthRequest) Reset() {
 	*x = HealthRequest{}
-	mi := &file_hsm_v1_hsm_proto_msgTypes[21]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1023,7 +935,7 @@ func (x *HealthRequest) String() string {
 func (*HealthRequest) ProtoMessage() {}
 
 func (x *HealthRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_hsm_v1_hsm_proto_msgTypes[21]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1036,7 +948,7 @@ func (x *HealthRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthRequest.ProtoReflect.Descriptor instead.
 func (*HealthRequest) Descriptor() ([]byte, []int) {
-	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{21}
+	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{19}
 }
 
 type HealthResponse struct {
@@ -1049,7 +961,7 @@ type HealthResponse struct {
 
 func (x *HealthResponse) Reset() {
 	*x = HealthResponse{}
-	mi := &file_hsm_v1_hsm_proto_msgTypes[22]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1061,7 +973,7 @@ func (x *HealthResponse) String() string {
 func (*HealthResponse) ProtoMessage() {}
 
 func (x *HealthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_hsm_v1_hsm_proto_msgTypes[22]
+	mi := &file_hsm_v1_hsm_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1074,7 +986,7 @@ func (x *HealthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthResponse.ProtoReflect.Descriptor instead.
 func (*HealthResponse) Descriptor() ([]byte, []int) {
-	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{22}
+	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *HealthResponse) GetStatus() string {
@@ -1126,18 +1038,13 @@ const file_hsm_v1_hsm_proto_rawDesc = "" +
 	"\x04path\x18\x01 \x01(\tR\x04path\"I\n" +
 	"\x12ReadSecretResponse\x123\n" +
 	"\vsecret_data\x18\x01 \x01(\v2\x12.hsm.v1.SecretDataR\n" +
-	"secretData\"]\n" +
+	"secretData\"\x91\x01\n" +
 	"\x12WriteSecretRequest\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x123\n" +
 	"\vsecret_data\x18\x02 \x01(\v2\x12.hsm.v1.SecretDataR\n" +
-	"secretData\"\x15\n" +
-	"\x13WriteSecretResponse\"\x9d\x01\n" +
-	"\x1eWriteSecretWithMetadataRequest\x12\x12\n" +
-	"\x04path\x18\x01 \x01(\tR\x04path\x123\n" +
-	"\vsecret_data\x18\x02 \x01(\v2\x12.hsm.v1.SecretDataR\n" +
 	"secretData\x122\n" +
-	"\bmetadata\x18\x03 \x01(\v2\x16.hsm.v1.SecretMetadataR\bmetadata\"!\n" +
-	"\x1fWriteSecretWithMetadataResponse\")\n" +
+	"\bmetadata\x18\x03 \x01(\v2\x16.hsm.v1.SecretMetadataR\bmetadata\"\x15\n" +
+	"\x13WriteSecretResponse\")\n" +
 	"\x13ReadMetadataRequest\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\"J\n" +
 	"\x14ReadMetadataResponse\x122\n" +
@@ -1159,13 +1066,12 @@ const file_hsm_v1_hsm_proto_rawDesc = "" +
 	"\rHealthRequest\"B\n" +
 	"\x0eHealthResponse\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage2\xe6\x05\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage2\xfa\x04\n" +
 	"\bHSMAgent\x12:\n" +
 	"\aGetInfo\x12\x16.hsm.v1.GetInfoRequest\x1a\x17.hsm.v1.GetInfoResponse\x12C\n" +
 	"\n" +
 	"ReadSecret\x12\x19.hsm.v1.ReadSecretRequest\x1a\x1a.hsm.v1.ReadSecretResponse\x12F\n" +
-	"\vWriteSecret\x12\x1a.hsm.v1.WriteSecretRequest\x1a\x1b.hsm.v1.WriteSecretResponse\x12j\n" +
-	"\x17WriteSecretWithMetadata\x12&.hsm.v1.WriteSecretWithMetadataRequest\x1a'.hsm.v1.WriteSecretWithMetadataResponse\x12I\n" +
+	"\vWriteSecret\x12\x1a.hsm.v1.WriteSecretRequest\x1a\x1b.hsm.v1.WriteSecretResponse\x12I\n" +
 	"\fReadMetadata\x12\x1b.hsm.v1.ReadMetadataRequest\x1a\x1c.hsm.v1.ReadMetadataResponse\x12I\n" +
 	"\fDeleteSecret\x12\x1b.hsm.v1.DeleteSecretRequest\x1a\x1c.hsm.v1.DeleteSecretResponse\x12F\n" +
 	"\vListSecrets\x12\x1a.hsm.v1.ListSecretsRequest\x1a\x1b.hsm.v1.ListSecretsResponse\x12F\n" +
@@ -1185,68 +1091,63 @@ func file_hsm_v1_hsm_proto_rawDescGZIP() []byte {
 	return file_hsm_v1_hsm_proto_rawDescData
 }
 
-var file_hsm_v1_hsm_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
+var file_hsm_v1_hsm_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_hsm_v1_hsm_proto_goTypes = []any{
-	(*HSMInfo)(nil),                         // 0: hsm.v1.HSMInfo
-	(*SecretData)(nil),                      // 1: hsm.v1.SecretData
-	(*SecretMetadata)(nil),                  // 2: hsm.v1.SecretMetadata
-	(*GetInfoRequest)(nil),                  // 3: hsm.v1.GetInfoRequest
-	(*GetInfoResponse)(nil),                 // 4: hsm.v1.GetInfoResponse
-	(*ReadSecretRequest)(nil),               // 5: hsm.v1.ReadSecretRequest
-	(*ReadSecretResponse)(nil),              // 6: hsm.v1.ReadSecretResponse
-	(*WriteSecretRequest)(nil),              // 7: hsm.v1.WriteSecretRequest
-	(*WriteSecretResponse)(nil),             // 8: hsm.v1.WriteSecretResponse
-	(*WriteSecretWithMetadataRequest)(nil),  // 9: hsm.v1.WriteSecretWithMetadataRequest
-	(*WriteSecretWithMetadataResponse)(nil), // 10: hsm.v1.WriteSecretWithMetadataResponse
-	(*ReadMetadataRequest)(nil),             // 11: hsm.v1.ReadMetadataRequest
-	(*ReadMetadataResponse)(nil),            // 12: hsm.v1.ReadMetadataResponse
-	(*DeleteSecretRequest)(nil),             // 13: hsm.v1.DeleteSecretRequest
-	(*DeleteSecretResponse)(nil),            // 14: hsm.v1.DeleteSecretResponse
-	(*ListSecretsRequest)(nil),              // 15: hsm.v1.ListSecretsRequest
-	(*ListSecretsResponse)(nil),             // 16: hsm.v1.ListSecretsResponse
-	(*GetChecksumRequest)(nil),              // 17: hsm.v1.GetChecksumRequest
-	(*GetChecksumResponse)(nil),             // 18: hsm.v1.GetChecksumResponse
-	(*IsConnectedRequest)(nil),              // 19: hsm.v1.IsConnectedRequest
-	(*IsConnectedResponse)(nil),             // 20: hsm.v1.IsConnectedResponse
-	(*HealthRequest)(nil),                   // 21: hsm.v1.HealthRequest
-	(*HealthResponse)(nil),                  // 22: hsm.v1.HealthResponse
-	nil,                                     // 23: hsm.v1.SecretData.DataEntry
-	nil,                                     // 24: hsm.v1.SecretMetadata.LabelsEntry
+	(*HSMInfo)(nil),              // 0: hsm.v1.HSMInfo
+	(*SecretData)(nil),           // 1: hsm.v1.SecretData
+	(*SecretMetadata)(nil),       // 2: hsm.v1.SecretMetadata
+	(*GetInfoRequest)(nil),       // 3: hsm.v1.GetInfoRequest
+	(*GetInfoResponse)(nil),      // 4: hsm.v1.GetInfoResponse
+	(*ReadSecretRequest)(nil),    // 5: hsm.v1.ReadSecretRequest
+	(*ReadSecretResponse)(nil),   // 6: hsm.v1.ReadSecretResponse
+	(*WriteSecretRequest)(nil),   // 7: hsm.v1.WriteSecretRequest
+	(*WriteSecretResponse)(nil),  // 8: hsm.v1.WriteSecretResponse
+	(*ReadMetadataRequest)(nil),  // 9: hsm.v1.ReadMetadataRequest
+	(*ReadMetadataResponse)(nil), // 10: hsm.v1.ReadMetadataResponse
+	(*DeleteSecretRequest)(nil),  // 11: hsm.v1.DeleteSecretRequest
+	(*DeleteSecretResponse)(nil), // 12: hsm.v1.DeleteSecretResponse
+	(*ListSecretsRequest)(nil),   // 13: hsm.v1.ListSecretsRequest
+	(*ListSecretsResponse)(nil),  // 14: hsm.v1.ListSecretsResponse
+	(*GetChecksumRequest)(nil),   // 15: hsm.v1.GetChecksumRequest
+	(*GetChecksumResponse)(nil),  // 16: hsm.v1.GetChecksumResponse
+	(*IsConnectedRequest)(nil),   // 17: hsm.v1.IsConnectedRequest
+	(*IsConnectedResponse)(nil),  // 18: hsm.v1.IsConnectedResponse
+	(*HealthRequest)(nil),        // 19: hsm.v1.HealthRequest
+	(*HealthResponse)(nil),       // 20: hsm.v1.HealthResponse
+	nil,                          // 21: hsm.v1.SecretData.DataEntry
+	nil,                          // 22: hsm.v1.SecretMetadata.LabelsEntry
 }
 var file_hsm_v1_hsm_proto_depIdxs = []int32{
-	23, // 0: hsm.v1.SecretData.data:type_name -> hsm.v1.SecretData.DataEntry
-	24, // 1: hsm.v1.SecretMetadata.labels:type_name -> hsm.v1.SecretMetadata.LabelsEntry
+	21, // 0: hsm.v1.SecretData.data:type_name -> hsm.v1.SecretData.DataEntry
+	22, // 1: hsm.v1.SecretMetadata.labels:type_name -> hsm.v1.SecretMetadata.LabelsEntry
 	0,  // 2: hsm.v1.GetInfoResponse.hsm_info:type_name -> hsm.v1.HSMInfo
 	1,  // 3: hsm.v1.ReadSecretResponse.secret_data:type_name -> hsm.v1.SecretData
 	1,  // 4: hsm.v1.WriteSecretRequest.secret_data:type_name -> hsm.v1.SecretData
-	1,  // 5: hsm.v1.WriteSecretWithMetadataRequest.secret_data:type_name -> hsm.v1.SecretData
-	2,  // 6: hsm.v1.WriteSecretWithMetadataRequest.metadata:type_name -> hsm.v1.SecretMetadata
-	2,  // 7: hsm.v1.ReadMetadataResponse.metadata:type_name -> hsm.v1.SecretMetadata
-	3,  // 8: hsm.v1.HSMAgent.GetInfo:input_type -> hsm.v1.GetInfoRequest
-	5,  // 9: hsm.v1.HSMAgent.ReadSecret:input_type -> hsm.v1.ReadSecretRequest
-	7,  // 10: hsm.v1.HSMAgent.WriteSecret:input_type -> hsm.v1.WriteSecretRequest
-	9,  // 11: hsm.v1.HSMAgent.WriteSecretWithMetadata:input_type -> hsm.v1.WriteSecretWithMetadataRequest
-	11, // 12: hsm.v1.HSMAgent.ReadMetadata:input_type -> hsm.v1.ReadMetadataRequest
-	13, // 13: hsm.v1.HSMAgent.DeleteSecret:input_type -> hsm.v1.DeleteSecretRequest
-	15, // 14: hsm.v1.HSMAgent.ListSecrets:input_type -> hsm.v1.ListSecretsRequest
-	17, // 15: hsm.v1.HSMAgent.GetChecksum:input_type -> hsm.v1.GetChecksumRequest
-	19, // 16: hsm.v1.HSMAgent.IsConnected:input_type -> hsm.v1.IsConnectedRequest
-	21, // 17: hsm.v1.HSMAgent.Health:input_type -> hsm.v1.HealthRequest
-	4,  // 18: hsm.v1.HSMAgent.GetInfo:output_type -> hsm.v1.GetInfoResponse
-	6,  // 19: hsm.v1.HSMAgent.ReadSecret:output_type -> hsm.v1.ReadSecretResponse
-	8,  // 20: hsm.v1.HSMAgent.WriteSecret:output_type -> hsm.v1.WriteSecretResponse
-	10, // 21: hsm.v1.HSMAgent.WriteSecretWithMetadata:output_type -> hsm.v1.WriteSecretWithMetadataResponse
-	12, // 22: hsm.v1.HSMAgent.ReadMetadata:output_type -> hsm.v1.ReadMetadataResponse
-	14, // 23: hsm.v1.HSMAgent.DeleteSecret:output_type -> hsm.v1.DeleteSecretResponse
-	16, // 24: hsm.v1.HSMAgent.ListSecrets:output_type -> hsm.v1.ListSecretsResponse
-	18, // 25: hsm.v1.HSMAgent.GetChecksum:output_type -> hsm.v1.GetChecksumResponse
-	20, // 26: hsm.v1.HSMAgent.IsConnected:output_type -> hsm.v1.IsConnectedResponse
-	22, // 27: hsm.v1.HSMAgent.Health:output_type -> hsm.v1.HealthResponse
-	18, // [18:28] is the sub-list for method output_type
-	8,  // [8:18] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	2,  // 5: hsm.v1.WriteSecretRequest.metadata:type_name -> hsm.v1.SecretMetadata
+	2,  // 6: hsm.v1.ReadMetadataResponse.metadata:type_name -> hsm.v1.SecretMetadata
+	3,  // 7: hsm.v1.HSMAgent.GetInfo:input_type -> hsm.v1.GetInfoRequest
+	5,  // 8: hsm.v1.HSMAgent.ReadSecret:input_type -> hsm.v1.ReadSecretRequest
+	7,  // 9: hsm.v1.HSMAgent.WriteSecret:input_type -> hsm.v1.WriteSecretRequest
+	9,  // 10: hsm.v1.HSMAgent.ReadMetadata:input_type -> hsm.v1.ReadMetadataRequest
+	11, // 11: hsm.v1.HSMAgent.DeleteSecret:input_type -> hsm.v1.DeleteSecretRequest
+	13, // 12: hsm.v1.HSMAgent.ListSecrets:input_type -> hsm.v1.ListSecretsRequest
+	15, // 13: hsm.v1.HSMAgent.GetChecksum:input_type -> hsm.v1.GetChecksumRequest
+	17, // 14: hsm.v1.HSMAgent.IsConnected:input_type -> hsm.v1.IsConnectedRequest
+	19, // 15: hsm.v1.HSMAgent.Health:input_type -> hsm.v1.HealthRequest
+	4,  // 16: hsm.v1.HSMAgent.GetInfo:output_type -> hsm.v1.GetInfoResponse
+	6,  // 17: hsm.v1.HSMAgent.ReadSecret:output_type -> hsm.v1.ReadSecretResponse
+	8,  // 18: hsm.v1.HSMAgent.WriteSecret:output_type -> hsm.v1.WriteSecretResponse
+	10, // 19: hsm.v1.HSMAgent.ReadMetadata:output_type -> hsm.v1.ReadMetadataResponse
+	12, // 20: hsm.v1.HSMAgent.DeleteSecret:output_type -> hsm.v1.DeleteSecretResponse
+	14, // 21: hsm.v1.HSMAgent.ListSecrets:output_type -> hsm.v1.ListSecretsResponse
+	16, // 22: hsm.v1.HSMAgent.GetChecksum:output_type -> hsm.v1.GetChecksumResponse
+	18, // 23: hsm.v1.HSMAgent.IsConnected:output_type -> hsm.v1.IsConnectedResponse
+	20, // 24: hsm.v1.HSMAgent.Health:output_type -> hsm.v1.HealthResponse
+	16, // [16:25] is the sub-list for method output_type
+	7,  // [7:16] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_hsm_v1_hsm_proto_init() }
@@ -1260,7 +1161,7 @@ func file_hsm_v1_hsm_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_hsm_v1_hsm_proto_rawDesc), len(file_hsm_v1_hsm_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   25,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

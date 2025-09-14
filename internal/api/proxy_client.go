@@ -790,9 +790,7 @@ func (p *ProxyClient) writeToAllDevices(ctx context.Context, clients map[string]
 
 			var err error
 			if metadata != nil {
-				err = client.WriteSecretWithMetadata(ctx, path, data, metadata)
-			} else {
-				err = client.WriteSecret(ctx, path, data)
+				err = client.WriteSecret(ctx, path, data, metadata)
 			}
 
 			resultsMutex.Lock()
@@ -840,7 +838,7 @@ func (p *ProxyClient) tombstoneDeleteFromAllDevices(ctx context.Context, clients
 
 			// Write tombstone metadata (empty data with deletion markers)
 			emptyData := make(hsm.SecretData)
-			err = client.WriteSecretWithMetadata(ctx, path, emptyData, tombstoneMetadata)
+			err = client.WriteSecret(ctx, path, emptyData, tombstoneMetadata)
 
 			resultsMutex.Lock()
 			results[deviceName] = WriteResult{

@@ -640,12 +640,12 @@ func TestBuildSecretInventory(t *testing.T) {
 
 	// Add test secrets to client1
 	testData := hsm.SecretData{"username": []byte("user1"), "password": []byte("pass1")}
-	err = mockClient1.WriteSecret(ctx, "test-secret", testData)
+	err = mockClient1.WriteSecret(ctx, "test-secret", testData, nil)
 	require.NoError(t, err)
 
 	// Add different secret to client2
 	testData2 := hsm.SecretData{"api_key": []byte("key123")}
-	err = mockClient2.WriteSecret(ctx, "test-secret", testData2)
+	err = mockClient2.WriteSecret(ctx, "test-secret", testData2, nil)
 	require.NoError(t, err)
 
 	mockAgentManager.SetClient("device1", mockClient1)

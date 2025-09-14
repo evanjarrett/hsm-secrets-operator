@@ -693,8 +693,7 @@ func TestMockClient_ErrorConditions(t *testing.T) {
 		}{
 			{"GetInfo", func() error { _, err := client.GetInfo(ctx); return err }},
 			{"ReadSecret", func() error { _, err := client.ReadSecret(ctx, "test"); return err }},
-			{"WriteSecret", func() error { return client.WriteSecret(ctx, "test", SecretData{}) }},
-			{"WriteSecretWithMetadata", func() error { return client.WriteSecretWithMetadata(ctx, "test", SecretData{}, nil) }},
+			{"WriteSecret", func() error { return client.WriteSecret(ctx, "test", SecretData{}, nil) }},
 			{"ReadMetadata", func() error { _, err := client.ReadMetadata(ctx, "test"); return err }},
 			{"DeleteSecret", func() error { return client.DeleteSecret(ctx, "test") }},
 			{"ListSecrets", func() error { _, err := client.ListSecrets(ctx, ""); return err }},
@@ -720,7 +719,7 @@ func TestMockClient_ErrorConditions(t *testing.T) {
 		longPath := strings.Repeat("very-long-path-segment/", 50) + "final-secret"
 		data := SecretData{"key": []byte("value")}
 
-		err = client.WriteSecret(ctx, longPath, data)
+		err = client.WriteSecret(ctx, longPath, data, nil)
 		assert.NoError(t, err, "should handle long paths")
 
 		readData, err := client.ReadSecret(ctx, longPath)
@@ -746,7 +745,7 @@ func TestMockClient_ErrorConditions(t *testing.T) {
 			t.Run(fmt.Sprintf("path: %s", path), func(t *testing.T) {
 				data := SecretData{"key": []byte("test-value")}
 
-				err := client.WriteSecret(ctx, path, data)
+				err := client.WriteSecret(ctx, path, data, nil)
 				assert.NoError(t, err, "should handle special character paths")
 
 				readData, err := client.ReadSecret(ctx, path)
@@ -772,7 +771,7 @@ func TestMockClient_ErrorConditions(t *testing.T) {
 			"password": []byte("original-pass"),
 		}
 
-		err = client.WriteSecret(ctx, "test/memory-safety", originalData)
+		err = client.WriteSecret(ctx, "test/memory-safety", originalData, nil)
 		require.NoError(t, err)
 
 		// Read and modify the returned data
@@ -801,7 +800,7 @@ func TestMockClient_ErrorConditions(t *testing.T) {
 		require.NoError(t, err)
 
 		// Test writing nil data
-		err = client.WriteSecret(ctx, "test/nil-data", nil)
+		err = client.WriteSecret(ctx, "test/nil-data", nil, nil)
 		assert.NoError(t, err)
 
 		readData, err := client.ReadSecret(ctx, "test/nil-data")
@@ -816,7 +815,7 @@ func TestMockClient_ErrorConditions(t *testing.T) {
 			"real":      []byte("value"),
 		}
 
-		err = client.WriteSecret(ctx, "test/with-nils", dataWithNils)
+		err = client.WriteSecret(ctx, "test/with-nils", dataWithNils, nil)
 		assert.NoError(t, err)
 
 		readData, err = client.ReadSecret(ctx, "test/with-nils")

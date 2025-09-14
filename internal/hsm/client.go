@@ -59,11 +59,8 @@ type Client interface {
 	// ReadSecret reads secret data from the specified HSM path
 	ReadSecret(ctx context.Context, path string) (SecretData, error)
 
-	// WriteSecret writes secret data to the specified HSM path
-	WriteSecret(ctx context.Context, path string, data SecretData) error
-
-	// WriteSecretWithMetadata writes secret data and metadata to the specified HSM path
-	WriteSecretWithMetadata(ctx context.Context, path string, data SecretData, metadata *SecretMetadata) error
+	// WriteSecret writes secret data and metadata to the specified HSM path
+	WriteSecret(ctx context.Context, path string, data SecretData, metadata *SecretMetadata) error
 
 	// ReadMetadata reads metadata for a secret at the given path
 	ReadMetadata(ctx context.Context, path string) (*SecretMetadata, error)

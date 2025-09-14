@@ -137,8 +137,8 @@ func (c *GRPCClient) ReadSecret(ctx context.Context, path string) (hsm.SecretDat
 	return secretData, nil
 }
 
-// WriteSecret writes secret data to the specified HSM path
-func (c *GRPCClient) WriteSecret(ctx context.Context, path string, data hsm.SecretData) error {
+// WriteSecret writes secret data and metadata to the specified HSM path
+func (c *GRPCClient) WriteSecret(ctx context.Context, path string, data hsm.SecretData, metadata *hsm.SecretMetadata) error {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -148,31 +148,7 @@ func (c *GRPCClient) WriteSecret(ctx context.Context, path string, data hsm.Secr
 		pbData[key] = value
 	}
 
-	_, err := c.client.WriteSecret(ctx, &hsmv1.WriteSecretRequest{
-		Path: path,
-		SecretData: &hsmv1.SecretData{
-			Data: pbData,
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("failed to write secret: %w", err)
-	}
-
-	return nil
-}
-
-// WriteSecretWithMetadata writes secret data and metadata to the specified HSM path
-func (c *GRPCClient) WriteSecretWithMetadata(ctx context.Context, path string, data hsm.SecretData, metadata *hsm.SecretMetadata) error {
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
-
-	// Convert hsm.SecretData to protobuf format
-	pbData := make(map[string][]byte)
-	for key, value := range data {
-		pbData[key] = value
-	}
-
-	req := &hsmv1.WriteSecretWithMetadataRequest{
+	req := &hsmv1.WriteSecretRequest{
 		Path: path,
 		SecretData: &hsmv1.SecretData{
 			Data: pbData,
@@ -191,7 +167,7 @@ func (c *GRPCClient) WriteSecretWithMetadata(ctx context.Context, path string, d
 		}
 	}
 
-	_, err := c.client.WriteSecretWithMetadata(ctx, req)
+	_, err := c.client.WriteSecret(ctx, req)
 	if err != nil {
 		return fmt.Errorf("failed to write secret with metadata: %w", err)
 	}

@@ -54,7 +54,7 @@ func TestGRPCClientServerIntegration(t *testing.T) {
 	}
 
 	for path, data := range testData {
-		err := mockHSMClient.WriteSecret(ctx, path, data)
+		err := mockHSMClient.WriteSecret(ctx, path, data, nil)
 		require.NoError(t, err)
 	}
 
@@ -123,7 +123,7 @@ func TestGRPCClientServerIntegration(t *testing.T) {
 			"db_password": []byte("secret123"),
 		}
 
-		err := client.WriteSecret(ctx, "new-secret", newSecret)
+		err := client.WriteSecret(ctx, "new-secret", newSecret, nil)
 		require.NoError(t, err)
 
 		// Read it back
@@ -132,7 +132,7 @@ func TestGRPCClientServerIntegration(t *testing.T) {
 		assert.Equal(t, newSecret, readData)
 	})
 
-	t.Run("WriteSecretWithMetadata", func(t *testing.T) {
+	t.Run("WriteSecret", func(t *testing.T) {
 		secretData := hsm.SecretData{
 			"certificate": []byte("-----BEGIN CERTIFICATE-----"),
 		}
@@ -145,7 +145,7 @@ func TestGRPCClientServerIntegration(t *testing.T) {
 			Source:      "integration-test",
 		}
 
-		err := client.WriteSecretWithMetadata(ctx, "ssl-cert", secretData, metadata)
+		err := client.WriteSecret(ctx, "ssl-cert", secretData, metadata)
 		require.NoError(t, err)
 
 		// Verify the data
@@ -194,7 +194,7 @@ func TestGRPCClientServerIntegration(t *testing.T) {
 	t.Run("DeleteSecret", func(t *testing.T) {
 		// First create a secret to delete
 		tempData := hsm.SecretData{"temp": []byte("data")}
-		err := client.WriteSecret(ctx, "temp-secret", tempData)
+		err := client.WriteSecret(ctx, "temp-secret", tempData, nil)
 		require.NoError(t, err)
 
 		// Verify it exists
@@ -222,7 +222,7 @@ func TestGRPCClientServerIntegration(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "path is required")
 
-		err = client.WriteSecret(ctx, "", hsm.SecretData{"key": []byte("value")})
+		err = client.WriteSecret(ctx, "", hsm.SecretData{"key": []byte("value")}, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "path is required")
 	})

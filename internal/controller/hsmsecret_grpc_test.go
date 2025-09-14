@@ -78,7 +78,7 @@ func TestHSMSecretControllerGRPCIntegration(t *testing.T) {
 		"password": []byte("testpass123"),
 		"api_key":  []byte("secret-api-key"),
 	}
-	err = mockHSMClient.WriteSecret(context.Background(), "existing-secret", testData)
+	err = mockHSMClient.WriteSecret(context.Background(), "existing-secret", testData, nil)
 	require.NoError(t, err)
 
 	// Start gRPC server

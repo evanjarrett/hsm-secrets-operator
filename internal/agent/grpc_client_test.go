@@ -113,28 +113,11 @@ func (m *mockHSMAgentServer) WriteSecret(ctx context.Context, req *hsmv1.WriteSe
 	}
 
 	m.secrets[req.Path] = req.SecretData.Data
-	return &hsmv1.WriteSecretResponse{}, nil
-}
-
-func (m *mockHSMAgentServer) WriteSecretWithMetadata(ctx context.Context, req *hsmv1.WriteSecretWithMetadataRequest) (*hsmv1.WriteSecretWithMetadataResponse, error) {
-	if m.returnError {
-		return nil, status.Error(m.errorCode, m.errorMessage)
-	}
-
-	if req.Path == "" {
-		return nil, status.Error(codes.InvalidArgument, "path is required")
-	}
-
-	if req.SecretData == nil {
-		return nil, status.Error(codes.InvalidArgument, "secret data is required")
-	}
-
-	m.secrets[req.Path] = req.SecretData.Data
 	if req.Metadata != nil {
 		m.metadata[req.Path] = req.Metadata
 	}
 
-	return &hsmv1.WriteSecretWithMetadataResponse{}, nil
+	return &hsmv1.WriteSecretResponse{}, nil
 }
 
 func (m *mockHSMAgentServer) ReadMetadata(ctx context.Context, req *hsmv1.ReadMetadataRequest) (*hsmv1.ReadMetadataResponse, error) {
@@ -307,23 +290,22 @@ func TestGRPCClientOperations(t *testing.T) {
 		assert.Equal(t, "1.0.0", info.FirmwareVersion)
 	})
 
-	t.Run("WriteSecret", func(t *testing.T) {
-		secretData := hsm.SecretData{
-			"username": []byte("testuser"),
-			"password": []byte("testpass"),
-		}
-
-		err := client.WriteSecret(ctx, "test-secret", secretData)
-		assert.NoError(t, err)
-	})
-
 	t.Run("ReadSecret", func(t *testing.T) {
 		// First write a secret
 		secretData := hsm.SecretData{
 			"api_key": []byte("secret-key"),
 			"token":   []byte("secret-token"),
 		}
-		err := client.WriteSecret(ctx, "read-test", secretData)
+		metadata := &hsm.SecretMetadata{
+			Description: "A test secret",
+			Labels:      map[string]string{"category": "test", "env": "demo"},
+			Format:      "raw",
+			DataType:    "plaintext",
+			CreatedAt:   "2025-01-01T00:00:00Z",
+			Source:      "test",
+		}
+
+		err := client.WriteSecret(ctx, "read-test", secretData, metadata)
 		require.NoError(t, err)
 
 		// Then read it back
@@ -332,7 +314,7 @@ func TestGRPCClientOperations(t *testing.T) {
 		assert.Equal(t, secretData, readData)
 	})
 
-	t.Run("WriteSecretWithMetadata", func(t *testing.T) {
+	t.Run("WriteSecret", func(t *testing.T) {
 		secretData := hsm.SecretData{
 			"data": []byte("test-data"),
 		}
@@ -345,7 +327,7 @@ func TestGRPCClientOperations(t *testing.T) {
 			Source:      "test",
 		}
 
-		err := client.WriteSecretWithMetadata(ctx, "metadata-test", secretData, metadata)
+		err := client.WriteSecret(ctx, "metadata-test", secretData, metadata)
 		assert.NoError(t, err)
 	})
 
@@ -360,7 +342,7 @@ func TestGRPCClientOperations(t *testing.T) {
 			CreatedAt:   "2025-01-01T12:00:00Z",
 			Source:      "unit-test",
 		}
-		err := client.WriteSecretWithMetadata(ctx, "metadata-read-test", secretData, metadata)
+		err := client.WriteSecret(ctx, "metadata-read-test", secretData, metadata)
 		require.NoError(t, err)
 
 		// Then read metadata
@@ -376,7 +358,15 @@ func TestGRPCClientOperations(t *testing.T) {
 	t.Run("DeleteSecret", func(t *testing.T) {
 		// First write a secret
 		secretData := hsm.SecretData{"temp": []byte("data")}
-		err := client.WriteSecret(ctx, "delete-test", secretData)
+		metadata := &hsm.SecretMetadata{
+			Description: "A test secret",
+			Labels:      map[string]string{"category": "test", "env": "demo"},
+			Format:      "raw",
+			DataType:    "plaintext",
+			CreatedAt:   "2025-01-01T00:00:00Z",
+			Source:      "test",
+		}
+		err := client.WriteSecret(ctx, "delete-test", secretData, metadata)
 		require.NoError(t, err)
 
 		// Verify it exists
@@ -399,9 +389,17 @@ func TestGRPCClientOperations(t *testing.T) {
 			"list/secret2": {"data": []byte("data2")},
 			"other/secret": {"data": []byte("data3")},
 		}
+		metadata := &hsm.SecretMetadata{
+			Description: "A test secret",
+			Labels:      map[string]string{"category": "test", "env": "demo"},
+			Format:      "raw",
+			DataType:    "plaintext",
+			CreatedAt:   "2025-01-01T00:00:00Z",
+			Source:      "test",
+		}
 
 		for path, data := range secrets {
-			err := client.WriteSecret(ctx, path, data)
+			err := client.WriteSecret(ctx, path, data, metadata)
 			require.NoError(t, err)
 		}
 
@@ -491,7 +489,7 @@ func TestGRPCClientErrorHandling(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to read secret")
 
-		err = client.WriteSecret(ctx, "test", hsm.SecretData{"key": []byte("value")})
+		err = client.WriteSecret(ctx, "test", hsm.SecretData{"key": []byte("value")}, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to write secret")
 	})
@@ -513,7 +511,7 @@ func TestGRPCClientErrorHandling(t *testing.T) {
 		_, err := client.ReadSecret(ctx, "")
 		assert.Error(t, err)
 
-		err = client.WriteSecret(ctx, "", hsm.SecretData{"key": []byte("value")})
+		err = client.WriteSecret(ctx, "", hsm.SecretData{"key": []byte("value")}, nil)
 		assert.Error(t, err)
 
 		err = client.DeleteSecret(ctx, "")

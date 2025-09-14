@@ -74,12 +74,7 @@ func (m *MockHSMClient) ReadSecret(ctx context.Context, path string) (hsm.Secret
 	return args.Get(0).(hsm.SecretData), args.Error(1)
 }
 
-func (m *MockHSMClient) WriteSecret(ctx context.Context, path string, data hsm.SecretData) error {
-	args := m.Called(ctx, path, data)
-	return args.Error(0)
-}
-
-func (m *MockHSMClient) WriteSecretWithMetadata(ctx context.Context, path string, data hsm.SecretData, metadata *hsm.SecretMetadata) error {
+func (m *MockHSMClient) WriteSecret(ctx context.Context, path string, data hsm.SecretData, metadata *hsm.SecretMetadata) error {
 	args := m.Called(ctx, path, data, metadata)
 	return args.Error(0)
 }

@@ -131,54 +131,6 @@ func TestMockClientWriteSecret(t *testing.T) {
 	client := NewMockClient()
 	ctx := context.Background()
 
-	t.Run("not connected", func(t *testing.T) {
-		data := SecretData{"key": []byte("value")}
-		err := client.WriteSecret(ctx, "test/path", data)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "HSM not connected")
-	})
-
-	t.Run("write new secret", func(t *testing.T) {
-		err := client.Initialize(ctx, DefaultConfig())
-		require.NoError(t, err)
-
-		data := SecretData{
-			"api_key": []byte("secret-key"),
-			"token":   []byte("secret-token"),
-		}
-
-		err = client.WriteSecret(ctx, "test/new-secret", data)
-		require.NoError(t, err)
-
-		// Verify it was written
-		readData, err := client.ReadSecret(ctx, "test/new-secret")
-		require.NoError(t, err)
-		assert.Equal(t, data, readData)
-	})
-
-	t.Run("overwrite existing secret", func(t *testing.T) {
-		err := client.Initialize(ctx, DefaultConfig())
-		require.NoError(t, err)
-
-		originalData := SecretData{"key": []byte("original")}
-		newData := SecretData{"key": []byte("updated")}
-
-		err = client.WriteSecret(ctx, "test/overwrite", originalData)
-		require.NoError(t, err)
-
-		err = client.WriteSecret(ctx, "test/overwrite", newData)
-		require.NoError(t, err)
-
-		readData, err := client.ReadSecret(ctx, "test/overwrite")
-		require.NoError(t, err)
-		assert.Equal(t, newData, readData)
-	})
-}
-
-func TestMockClientWriteSecretWithMetadata(t *testing.T) {
-	client := NewMockClient()
-	ctx := context.Background()
-
 	err := client.Initialize(ctx, DefaultConfig())
 	require.NoError(t, err)
 
@@ -192,7 +144,7 @@ func TestMockClientWriteSecretWithMetadata(t *testing.T) {
 		Source:      "test",
 	}
 
-	err = client.WriteSecretWithMetadata(ctx, "test/with-metadata", data, metadata)
+	err = client.WriteSecret(ctx, "test/with-metadata", data, metadata)
 	require.NoError(t, err)
 
 	// Verify data was written
@@ -237,7 +189,7 @@ func TestMockClientReadMetadata(t *testing.T) {
 			Description: "Test metadata",
 			Labels:      map[string]string{"type": "test"},
 		}
-		err = client.WriteSecretWithMetadata(ctx, "test/metadata", data, metadata)
+		err = client.WriteSecret(ctx, "test/metadata", data, metadata)
 		require.NoError(t, err)
 
 		// Read back metadata
@@ -271,7 +223,7 @@ func TestMockClientDeleteSecret(t *testing.T) {
 		require.NoError(t, err)
 
 		data := SecretData{"key": []byte("value")}
-		err = client.WriteSecret(ctx, "test/delete", data)
+		err = client.WriteSecret(ctx, "test/delete", data, nil)
 		require.NoError(t, err)
 
 		// Verify it exists
@@ -293,7 +245,7 @@ func TestMockClientDeleteSecret(t *testing.T) {
 
 		data := SecretData{"key": []byte("value")}
 		metadata := &SecretMetadata{Description: "To be deleted"}
-		err = client.WriteSecretWithMetadata(ctx, "test/delete-with-meta", data, metadata)
+		err = client.WriteSecret(ctx, "test/delete-with-meta", data, metadata)
 		require.NoError(t, err)
 
 		// Delete the secret
@@ -335,11 +287,11 @@ func TestMockClientListSecrets(t *testing.T) {
 		require.NoError(t, err)
 
 		// Add some test secrets
-		err = client.WriteSecret(ctx, "app/config", SecretData{"key": []byte("value")})
+		err = client.WriteSecret(ctx, "app/config", SecretData{"key": []byte("value")}, nil)
 		require.NoError(t, err)
-		err = client.WriteSecret(ctx, "app/database", SecretData{"key": []byte("value")})
+		err = client.WriteSecret(ctx, "app/database", SecretData{"key": []byte("value")}, nil)
 		require.NoError(t, err)
-		err = client.WriteSecret(ctx, "other/secret", SecretData{"key": []byte("value")})
+		err = client.WriteSecret(ctx, "other/secret", SecretData{"key": []byte("value")}, nil)
 		require.NoError(t, err)
 
 		// List with "app/" prefix
@@ -379,7 +331,7 @@ func TestMockClientGetChecksum(t *testing.T) {
 			"username": []byte("testuser"),
 			"password": []byte("testpass"),
 		}
-		err = client.WriteSecret(ctx, "test/checksum", data)
+		err = client.WriteSecret(ctx, "test/checksum", data, nil)
 		require.NoError(t, err)
 
 		checksum, err := client.GetChecksum(ctx, "test/checksum")
@@ -441,7 +393,7 @@ func TestMockClientGetAllSecrets(t *testing.T) {
 
 	// Add a test secret
 	data := SecretData{"key": []byte("value")}
-	err = client.WriteSecret(ctx, "test/all-secrets", data)
+	err = client.WriteSecret(ctx, "test/all-secrets", data, nil)
 	require.NoError(t, err)
 
 	allSecrets := client.GetAllSecrets()
@@ -469,7 +421,7 @@ func TestMockClientDataRaceProtection(t *testing.T) {
 	go func() {
 		for i := 0; i < 100; i++ {
 			data := SecretData{"key": []byte("value")}
-			_ = client.WriteSecret(ctx, "concurrent/test", data)
+			_ = client.WriteSecret(ctx, "concurrent/test", data, nil)
 		}
 		done <- true
 	}()

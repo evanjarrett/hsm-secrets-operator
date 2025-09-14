@@ -133,7 +133,7 @@ func (r *HSMSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Add finalizer if not present
 	if !controllerutil.ContainsFinalizer(&hsmSecret, HSMSecretFinalizer) {
 		controllerutil.AddFinalizer(&hsmSecret, HSMSecretFinalizer)
-		if err := r.Update(ctx, &hsmSecret); err != nil {
+		if err := r.updateWithRetry(ctx, &hsmSecret); err != nil {
 			logger.Error(err, "Failed to add finalizer")
 			return ctrl.Result{}, err
 		}
@@ -282,7 +282,7 @@ func (r *HSMSecretReconciler) updateKubernetesSecret(ctx context.Context, hsmSec
 		UID:        k8sSecret.UID,
 	}
 
-	if err := r.Status().Update(ctx, hsmSecret); err != nil {
+	if err := r.updateStatusWithRetry(ctx, hsmSecret); err != nil {
 		logger.Error(err, "Failed to update HSMSecret status")
 		return ctrl.Result{}, err
 	}
@@ -324,7 +324,7 @@ func (r *HSMSecretReconciler) reconcileDelete(ctx context.Context, hsmSecret *hs
 
 		// Remove finalizer
 		controllerutil.RemoveFinalizer(hsmSecret, HSMSecretFinalizer)
-		if err := r.Update(ctx, hsmSecret); err != nil {
+		if err := r.updateWithRetry(ctx, hsmSecret); err != nil {
 			logger.Error(err, "Failed to remove finalizer")
 			return err
 		}
@@ -485,6 +485,72 @@ func (r *HSMSecretReconciler) convertSecretDataToHSMData(secretData map[string][
 	result := make(hsm.SecretData)
 	maps.Copy(result, secretData)
 	return result
+}
+
+// updateWithRetry updates the HSMSecret with conflict retry logic
+func (r *HSMSecretReconciler) updateWithRetry(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret) error {
+	logger := log.FromContext(ctx)
+	maxRetries := 3
+
+	for attempt := range maxRetries {
+		if err := r.Update(ctx, hsmSecret); err != nil {
+			if errors.IsConflict(err) && attempt < maxRetries-1 {
+				logger.V(1).Info("Update conflict, retrying", "attempt", attempt+1)
+				// Fresh read of the HSMSecret to get latest resourceVersion
+				var freshSecret hsmv1alpha1.HSMSecret
+				if err := r.Get(ctx, types.NamespacedName{Name: hsmSecret.Name, Namespace: hsmSecret.Namespace}, &freshSecret); err != nil {
+					if errors.IsNotFound(err) {
+						return nil // Resource was deleted
+					}
+					return fmt.Errorf("failed to get fresh HSMSecret: %w", err)
+				}
+				// Copy our changes to the fresh copy
+				freshSecret.Finalizers = hsmSecret.Finalizers
+				*hsmSecret = freshSecret
+				continue
+			}
+			return err
+		}
+
+		// Success
+		return nil
+	}
+
+	return fmt.Errorf("failed to update after %d attempts", maxRetries)
+}
+
+// updateStatusWithRetry updates the HSMSecret status with conflict retry logic
+func (r *HSMSecretReconciler) updateStatusWithRetry(ctx context.Context, hsmSecret *hsmv1alpha1.HSMSecret) error {
+	logger := log.FromContext(ctx)
+	maxRetries := 3
+
+	for attempt := range maxRetries {
+		// Fresh read of the HSMSecret to get latest resourceVersion
+		var freshSecret hsmv1alpha1.HSMSecret
+		if err := r.Get(ctx, types.NamespacedName{Name: hsmSecret.Name, Namespace: hsmSecret.Namespace}, &freshSecret); err != nil {
+			if errors.IsNotFound(err) {
+				return nil // Resource was deleted, no need to update status
+			}
+			return fmt.Errorf("failed to get fresh HSMSecret: %w", err)
+		}
+
+		// Copy the status from our working copy to the fresh copy
+		freshSecret.Status = hsmSecret.Status
+
+		// Attempt to update status
+		if err := r.Status().Update(ctx, &freshSecret); err != nil {
+			if errors.IsConflict(err) && attempt < maxRetries-1 {
+				logger.V(1).Info("Status update conflict, retrying", "attempt", attempt+1)
+				continue
+			}
+			return err
+		}
+
+		// Success
+		return nil
+	}
+
+	return fmt.Errorf("failed to update status after %d attempts", maxRetries)
 }
 
 // updateStatus updates the HSMSecret status

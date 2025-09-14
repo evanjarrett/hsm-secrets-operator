@@ -87,7 +87,7 @@ func TestGRPCServerReadSecret(t *testing.T) {
 		"username": []byte("testuser"),
 		"password": []byte("testpass"),
 	}
-	err = mockClient.WriteSecret(ctx, "test-secret", testData)
+	err = mockClient.WriteSecret(ctx, "test-secret", testData, nil)
 	require.NoError(t, err)
 
 	t.Run("success", func(t *testing.T) {
@@ -126,81 +126,8 @@ func TestGRPCServerWriteSecret(t *testing.T) {
 	err := mockClient.Initialize(ctx, hsm.Config{})
 	require.NoError(t, err)
 
-	t.Run("success", func(t *testing.T) {
-		req := &hsmv1.WriteSecretRequest{
-			Path: "new-secret",
-			SecretData: &hsmv1.SecretData{
-				Data: map[string][]byte{
-					"api_key": []byte("secret-key"),
-					"token":   []byte("secret-token"),
-				},
-			},
-		}
-
-		resp, err := server.WriteSecret(ctx, req)
-		require.NoError(t, err)
-		assert.NotNil(t, resp)
-
-		// Verify it was written
-		data, err := mockClient.ReadSecret(ctx, "new-secret")
-		require.NoError(t, err)
-		assert.Equal(t, []byte("secret-key"), data["api_key"])
-		assert.Equal(t, []byte("secret-token"), data["token"])
-	})
-
-	t.Run("empty path", func(t *testing.T) {
-		req := &hsmv1.WriteSecretRequest{
-			Path: "",
-			SecretData: &hsmv1.SecretData{
-				Data: map[string][]byte{"key": []byte("value")},
-			},
-		}
-
-		resp, err := server.WriteSecret(ctx, req)
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-		assert.Contains(t, err.Error(), "path is required")
-	})
-
-	t.Run("nil secret data", func(t *testing.T) {
-		req := &hsmv1.WriteSecretRequest{
-			Path:       "test-path",
-			SecretData: nil,
-		}
-
-		resp, err := server.WriteSecret(ctx, req)
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-		assert.Contains(t, err.Error(), "secret data is required")
-	})
-
-	t.Run("client not connected", func(t *testing.T) {
-		server := NewGRPCServer(nil, 9090, 8080, logger)
-		req := &hsmv1.WriteSecretRequest{
-			Path: "test-secret",
-			SecretData: &hsmv1.SecretData{
-				Data: map[string][]byte{"key": []byte("value")},
-			},
-		}
-
-		resp, err := server.WriteSecret(ctx, req)
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-		assert.Contains(t, err.Error(), "HSM client not connected")
-	})
-}
-
-func TestGRPCServerWriteSecretWithMetadata(t *testing.T) {
-	mockClient := hsm.NewMockClient()
-	logger := logr.Discard()
-	server := NewGRPCServer(mockClient, 9090, 8080, logger)
-
-	ctx := context.Background()
-	err := mockClient.Initialize(ctx, hsm.Config{})
-	require.NoError(t, err)
-
 	t.Run("success with metadata", func(t *testing.T) {
-		req := &hsmv1.WriteSecretWithMetadataRequest{
+		req := &hsmv1.WriteSecretRequest{
 			Path: "secret-with-metadata",
 			SecretData: &hsmv1.SecretData{
 				Data: map[string][]byte{
@@ -217,7 +144,7 @@ func TestGRPCServerWriteSecretWithMetadata(t *testing.T) {
 			},
 		}
 
-		resp, err := server.WriteSecretWithMetadata(ctx, req)
+		resp, err := server.WriteSecret(ctx, req)
 		require.NoError(t, err)
 		assert.NotNil(t, resp)
 
@@ -236,7 +163,7 @@ func TestGRPCServerWriteSecretWithMetadata(t *testing.T) {
 	})
 
 	t.Run("success without metadata", func(t *testing.T) {
-		req := &hsmv1.WriteSecretWithMetadataRequest{
+		req := &hsmv1.WriteSecretRequest{
 			Path: "secret-no-metadata",
 			SecretData: &hsmv1.SecretData{
 				Data: map[string][]byte{"data": []byte("test")},
@@ -244,32 +171,32 @@ func TestGRPCServerWriteSecretWithMetadata(t *testing.T) {
 			Metadata: nil,
 		}
 
-		resp, err := server.WriteSecretWithMetadata(ctx, req)
+		resp, err := server.WriteSecret(ctx, req)
 		require.NoError(t, err)
 		assert.NotNil(t, resp)
 	})
 
 	t.Run("validation errors", func(t *testing.T) {
 		// Empty path
-		req := &hsmv1.WriteSecretWithMetadataRequest{
+		req := &hsmv1.WriteSecretRequest{
 			Path: "",
 			SecretData: &hsmv1.SecretData{
 				Data: map[string][]byte{"key": []byte("value")},
 			},
 		}
 
-		resp, err := server.WriteSecretWithMetadata(ctx, req)
+		resp, err := server.WriteSecret(ctx, req)
 		assert.Error(t, err)
 		assert.Nil(t, resp)
 		assert.Contains(t, err.Error(), "path is required")
 
 		// Nil secret data
-		req = &hsmv1.WriteSecretWithMetadataRequest{
+		req = &hsmv1.WriteSecretRequest{
 			Path:       "test",
 			SecretData: nil,
 		}
 
-		resp, err = server.WriteSecretWithMetadata(ctx, req)
+		resp, err = server.WriteSecret(ctx, req)
 		assert.Error(t, err)
 		assert.Nil(t, resp)
 		assert.Contains(t, err.Error(), "secret data is required")
@@ -295,7 +222,7 @@ func TestGRPCServerReadMetadata(t *testing.T) {
 		CreatedAt:   "2025-01-01T12:00:00Z",
 		Source:      "unit-test",
 	}
-	err = mockClient.WriteSecretWithMetadata(ctx, "metadata-test", testData, metadata)
+	err = mockClient.WriteSecret(ctx, "metadata-test", testData, metadata)
 	require.NoError(t, err)
 
 	t.Run("success", func(t *testing.T) {
@@ -311,7 +238,7 @@ func TestGRPCServerReadMetadata(t *testing.T) {
 
 	t.Run("no metadata", func(t *testing.T) {
 		// Write secret without metadata
-		err := mockClient.WriteSecret(ctx, "no-metadata", hsm.SecretData{"key": []byte("value")})
+		err := mockClient.WriteSecret(ctx, "no-metadata", hsm.SecretData{"key": []byte("value")}, nil)
 		require.NoError(t, err)
 
 		req := &hsmv1.ReadMetadataRequest{Path: "no-metadata"}
@@ -342,7 +269,7 @@ func TestGRPCServerDeleteSecret(t *testing.T) {
 
 	// Write test secret
 	testData := hsm.SecretData{"temp": []byte("data")}
-	err = mockClient.WriteSecret(ctx, "delete-test", testData)
+	err = mockClient.WriteSecret(ctx, "delete-test", testData, nil)
 	require.NoError(t, err)
 
 	t.Run("success", func(t *testing.T) {
@@ -388,7 +315,7 @@ func TestGRPCServerListSecrets(t *testing.T) {
 	}
 
 	for path, data := range secrets {
-		err := mockClient.WriteSecret(ctx, path, data)
+		err := mockClient.WriteSecret(ctx, path, data, nil)
 		require.NoError(t, err)
 	}
 
@@ -425,7 +352,7 @@ func TestGRPCServerGetChecksum(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		// Write a secret first since checksum needs data to exist
-		err := mockClient.WriteSecret(ctx, "checksum-test", hsm.SecretData{"data": []byte("test")})
+		err := mockClient.WriteSecret(ctx, "checksum-test", hsm.SecretData{"data": []byte("test")}, nil)
 		require.NoError(t, err)
 
 		req := &hsmv1.GetChecksumRequest{Path: "checksum-test"}

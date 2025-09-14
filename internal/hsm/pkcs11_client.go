@@ -367,21 +367,8 @@ func (c *PKCS11Client) ReadSecret(ctx context.Context, path string) (SecretData,
 	return data, nil
 }
 
-// WriteSecretWithMetadata writes secret data and metadata to the specified HSM path
-func (c *PKCS11Client) WriteSecretWithMetadata(ctx context.Context, path string, data SecretData, metadata *SecretMetadata) error {
-	if err := c.WriteSecret(ctx, path, data); err != nil {
-		return err
-	}
-
-	if metadata != nil {
-		return c.writeMetadata(path, metadata)
-	}
-
-	return nil
-}
-
-// WriteSecret writes secret data to the specified HSM path
-func (c *PKCS11Client) WriteSecret(ctx context.Context, path string, data SecretData) error {
+// WriteSecret writes secret data and metadata to the specified HSM path
+func (c *PKCS11Client) WriteSecret(ctx context.Context, path string, data SecretData, metadata *SecretMetadata) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
@@ -450,6 +437,11 @@ func (c *PKCS11Client) WriteSecret(ctx context.Context, path string, data Secret
 	}
 
 	c.logger.Info("Successfully wrote secret to HSM", "path", path)
+
+	if metadata != nil {
+		return c.writeMetadata(path, metadata)
+	}
+
 	return nil
 }
 

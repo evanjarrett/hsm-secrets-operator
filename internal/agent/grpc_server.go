@@ -175,37 +175,8 @@ func (s *GRPCServer) ReadSecret(ctx context.Context, req *hsmv1.ReadSecretReques
 	}, nil
 }
 
-// WriteSecret writes secret data to the specified HSM path
+// WriteSecret writes secret data and metadata to the specified HSM path
 func (s *GRPCServer) WriteSecret(ctx context.Context, req *hsmv1.WriteSecretRequest) (*hsmv1.WriteSecretResponse, error) {
-	if req.Path == "" {
-		return nil, status.Error(codes.InvalidArgument, "path is required")
-	}
-
-	if req.SecretData == nil {
-		return nil, status.Error(codes.InvalidArgument, "secret data is required")
-	}
-
-	if s.hsmClient == nil || !s.hsmClient.IsConnected() {
-		return nil, status.Error(codes.Unavailable, "HSM client not connected")
-	}
-
-	// Convert protobuf format to hsm.SecretData
-	hsmData := make(hsm.SecretData)
-	for key, value := range req.SecretData.Data {
-		hsmData[key] = value
-	}
-
-	if err := s.hsmClient.WriteSecret(ctx, req.Path, hsmData); err != nil {
-		s.logger.Error(err, "Failed to write secret", "path", req.Path)
-		return nil, status.Errorf(codes.Internal, "failed to write secret: %v", err)
-	}
-
-	s.logger.V(1).Info("Successfully wrote secret", "path", req.Path, "keys_count", len(hsmData))
-	return &hsmv1.WriteSecretResponse{}, nil
-}
-
-// WriteSecretWithMetadata writes secret data and metadata to the specified HSM path
-func (s *GRPCServer) WriteSecretWithMetadata(ctx context.Context, req *hsmv1.WriteSecretWithMetadataRequest) (*hsmv1.WriteSecretWithMetadataResponse, error) {
 	if req.Path == "" {
 		return nil, status.Error(codes.InvalidArgument, "path is required")
 	}
@@ -237,13 +208,13 @@ func (s *GRPCServer) WriteSecretWithMetadata(ctx context.Context, req *hsmv1.Wri
 		}
 	}
 
-	if err := s.hsmClient.WriteSecretWithMetadata(ctx, req.Path, hsmData, metadata); err != nil {
+	if err := s.hsmClient.WriteSecret(ctx, req.Path, hsmData, metadata); err != nil {
 		s.logger.Error(err, "Failed to write secret with metadata", "path", req.Path)
 		return nil, status.Errorf(codes.Internal, "failed to write secret with metadata: %v", err)
 	}
 
 	s.logger.V(1).Info("Successfully wrote secret with metadata", "path", req.Path, "keys_count", len(hsmData))
-	return &hsmv1.WriteSecretWithMetadataResponse{}, nil
+	return &hsmv1.WriteSecretResponse{}, nil
 }
 
 // ReadMetadata reads metadata for a secret at the given path
@@ -413,11 +384,6 @@ func (s *GRPCServer) loggingInterceptor(ctx context.Context, req interface{}, in
 	case *hsmv1.ReadSecretRequest:
 		logFields = append(logFields, "path", r.Path)
 	case *hsmv1.WriteSecretRequest:
-		logFields = append(logFields, "path", r.Path)
-		if r.SecretData != nil {
-			logFields = append(logFields, "keys_count", len(r.SecretData.Data))
-		}
-	case *hsmv1.WriteSecretWithMetadataRequest:
 		logFields = append(logFields, "path", r.Path)
 		if r.SecretData != nil {
 			logFields = append(logFields, "keys_count", len(r.SecretData.Data))

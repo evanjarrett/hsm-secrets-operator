@@ -60,7 +60,7 @@ func (c *PKCS11Client) ReadSecret(ctx context.Context, path string) (SecretData,
 }
 
 // WriteSecret returns an error indicating PKCS#11 is not available
-func (c *PKCS11Client) WriteSecret(ctx context.Context, path string, data SecretData) error {
+func (c *PKCS11Client) WriteSecret(ctx context.Context, path string, data SecretData, metadata *SecretMetadata) error {
 	return fmt.Errorf("PKCS#11 support not available: binary was built without CGO")
 }
 

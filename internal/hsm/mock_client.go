@@ -123,8 +123,8 @@ func (m *MockClient) ReadSecret(ctx context.Context, path string) (SecretData, e
 	return result, nil
 }
 
-// WriteSecret writes secret data to mock storage
-func (m *MockClient) WriteSecret(ctx context.Context, path string, data SecretData) error {
+// WriteSecret writes secret data and metadata to the specified HSM path
+func (m *MockClient) WriteSecret(ctx context.Context, path string, data SecretData, metadata *SecretMetadata) error {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
@@ -141,18 +141,8 @@ func (m *MockClient) WriteSecret(ctx context.Context, path string, data SecretDa
 	m.secrets[path] = stored
 	m.logger.Info("Wrote secret to mock HSM",
 		"path", path, "keys", len(data))
-	return nil
-}
-
-// WriteSecretWithMetadata writes secret data and metadata to the specified HSM path
-func (m *MockClient) WriteSecretWithMetadata(ctx context.Context, path string, data SecretData, metadata *SecretMetadata) error {
-	if err := m.WriteSecret(ctx, path, data); err != nil {
-		return err
-	}
 
 	if metadata != nil {
-		m.mutex.Lock()
-		defer m.mutex.Unlock()
 		m.metadata[path] = metadata
 		m.logger.V(1).Info("Wrote metadata to mock HSM", "path", path)
 	}
