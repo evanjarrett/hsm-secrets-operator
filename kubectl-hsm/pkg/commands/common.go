@@ -17,6 +17,7 @@ limitations under the License.
 package commands
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -168,43 +169,182 @@ func promptForInteractiveInput() (map[string]any, error) {
 	return data, nil
 }
 
-// JsonSecretImport represents the structure of a JSON secret import file
-type JsonSecretImport struct {
-	Name    string             `json:"name"`
-	Secrets []JsonSecretKVPair `json:"secrets"`
-}
-
-// JsonSecretKVPair represents a key-value pair in the JSON import
-type JsonSecretKVPair struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
-}
-
-// readFromJsonFile reads secret data from a JSON file
-func readFromJsonFile(filename string) (map[string]any, error) {
+// readFromFile reads from file with smart format detection
+// Supports:
+// - .env files: KEY=VALUE format
+// - .json files: {"key":"value"} format
+// - Other files: content as single key-value (key derived from filename)
+func readFromFile(key, filename string) (map[string]any, error) {
 	content, err := os.ReadFile(filename)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read JSON file %s: %w", filename, err)
+		return nil, fmt.Errorf("failed to read file %s: %w", filename, err)
 	}
 
-	var importData JsonSecretImport
-	if err := json.Unmarshal(content, &importData); err != nil {
-		return nil, fmt.Errorf("failed to parse JSON file %s: %w", filename, err)
-	}
-
-	data := make(map[string]any)
-	for _, kv := range importData.Secrets {
-		if kv.Key == "" {
-			return nil, fmt.Errorf("empty key found in JSON file %s", filename)
+	ext := strings.ToLower(filepath.Ext(filename))
+	
+	// Auto-detect format based on file extension
+	switch ext {
+	case ".env":
+		return readFromEnvContent(filename, content)
+	case ".json":
+		return readFromJsonContent(filename, content)
+	default:
+		// Try to auto-detect format by content
+		if data, err := tryParseAsJson(content); err == nil {
+			return data, nil
 		}
-		data[kv.Key] = kv.Value
+		if data, err := tryParseAsEnv(filename, content); err == nil {
+			return data, nil
+		}
+		
+		// Fall back to single key-value format
+		return readAsSingleKeyValue(key, filename, content)
+	}
+}
+
+// tryParseAsJson attempts to parse content as JSON
+func tryParseAsJson(content []byte) (map[string]any, error) {
+	var data map[string]any
+	if err := json.Unmarshal(content, &data); err != nil {
+		return nil, err
+	}
+	
+	// Check if this looks like secret data (not nested structures)
+	for key, value := range data {
+		if key == "" {
+			return nil, fmt.Errorf("empty key found")
+		}
+		
+		// Convert all values to strings, reject complex nested structures
+		switch v := value.(type) {
+		case string:
+			// Good - string value
+		case nil:
+			data[key] = ""
+		case map[string]any, []any:
+			// Reject nested objects/arrays - not simple key-value format
+			return nil, fmt.Errorf("nested structures not supported, expected simple key-value format")
+		default:
+			// Convert other types (numbers, booleans, etc.) to string
+			data[key] = fmt.Sprintf("%v", v)
+		}
+	}
+	
+	return data, nil
+}
+
+// tryParseAsEnv attempts to parse content as .env format
+func tryParseAsEnv(filename string, content []byte) (map[string]any, error) {
+	lines := strings.Split(string(content), "\n")
+	hasKeyValuePairs := false
+	
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.Contains(line, "=") {
+			hasKeyValuePairs = true
+			break
+		}
+	}
+	
+	if !hasKeyValuePairs {
+		return nil, fmt.Errorf("no KEY=VALUE pairs found")
+	}
+	
+	return readFromEnvContent(filename, content)
+}
+
+// readFromEnvContent parses env content (extracted from readFromEnvFile)
+func readFromEnvContent(filename string, content []byte) (map[string]any, error) {
+	data := make(map[string]any)
+	scanner := bufio.NewScanner(strings.NewReader(string(content)))
+	lineNum := 0
+
+	for scanner.Scan() {
+		lineNum++
+		line := strings.TrimSpace(scanner.Text())
+
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		// Parse KEY=VALUE format
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid format at line %d in %s: expected KEY=VALUE, got: %s", lineNum, filename, line)
+		}
+
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+
+		// Remove quotes if present
+		if len(value) >= 2 {
+			if (strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"")) ||
+				(strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'")) {
+				value = value[1 : len(value)-1]
+			}
+		}
+
+		if key == "" {
+			return nil, fmt.Errorf("empty key at line %d in %s", lineNum, filename)
+		}
+
+		// Check for duplicate keys
+		if _, exists := data[key]; exists {
+			return nil, fmt.Errorf("duplicate key '%s' found at line %d in %s", key, lineNum, filename)
+		}
+
+		data[key] = value
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error reading env content from %s: %w", filename, err)
+	}
+
+	if len(data) == 0 {
+		return nil, fmt.Errorf("no valid key-value pairs found in %s", filename)
 	}
 
 	return data, nil
 }
 
-// readFromFileImproved reads from file with improved key derivation logic
-func readFromFileImproved(key, filename string) (map[string]any, error) {
+// readFromJsonContent parses JSON content directly
+func readFromJsonContent(filename string, content []byte) (map[string]any, error) {
+	var data map[string]any
+	if err := json.Unmarshal(content, &data); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON file %s: expected simple key-value format {\"key\":\"value\"}: %w", filename, err)
+	}
+
+	// Validate that all values can be converted to strings
+	for key, value := range data {
+		if key == "" {
+			return nil, fmt.Errorf("empty key found in JSON file %s", filename)
+		}
+		
+		// Convert non-string values to strings
+		switch v := value.(type) {
+		case string:
+			// Already a string, keep as-is
+		case nil:
+			data[key] = ""
+		default:
+			// Convert other types (numbers, booleans, etc.) to strings
+			data[key] = fmt.Sprintf("%v", v)
+		}
+	}
+
+	if len(data) == 0 {
+		return nil, fmt.Errorf("no key-value pairs found in JSON file %s", filename)
+	}
+
+	return data, nil
+}
+
+// readAsSingleKeyValue treats file content as a single value
+func readAsSingleKeyValue(key, filename string, content []byte) (map[string]any, error) {
 	// Handle both "key=file" and "file" formats
 	if key == "" {
 		// Only filename provided (no explicit key)
@@ -214,11 +354,6 @@ func readFromFileImproved(key, filename string) (map[string]any, error) {
 		if ext := filepath.Ext(key); ext != "" {
 			key = strings.TrimSuffix(key, ext)
 		}
-	}
-
-	content, err := os.ReadFile(filename)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read file %s: %w", filename, err)
 	}
 
 	data := map[string]any{
@@ -234,6 +369,100 @@ func truncateString(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// showSecretDiff displays the differences between existing and new secret data
+func showSecretDiff(existing, new map[string]any, secretName string) {
+	fmt.Printf("\nDifferences for secret '%s':\n", secretName)
+	fmt.Println(strings.Repeat("=", 50))
+
+	// Track all keys from both maps
+	allKeys := make(map[string]bool)
+	for k := range existing {
+		allKeys[k] = true
+	}
+	for k := range new {
+		allKeys[k] = true
+	}
+
+	// Show changes for each key
+	hasChanges := false
+	for key := range allKeys {
+		existingValue, existsInExisting := existing[key]
+		newValue, existsInNew := new[key]
+
+		if !existsInExisting && existsInNew {
+			// New key being added
+			fmt.Printf("+ %s: %s\n", key, truncateString(fmt.Sprintf("%v", newValue), 100))
+			hasChanges = true
+		} else if existsInExisting && !existsInNew {
+			// Key being removed
+			fmt.Printf("- %s: %s\n", key, truncateString(fmt.Sprintf("%v", existingValue), 100))
+			hasChanges = true
+		} else if fmt.Sprintf("%v", existingValue) != fmt.Sprintf("%v", newValue) {
+			// Key value being changed
+			fmt.Printf("~ %s:\n", key)
+			fmt.Printf("  - %s\n", truncateString(fmt.Sprintf("%v", existingValue), 100))
+			fmt.Printf("  + %s\n", truncateString(fmt.Sprintf("%v", newValue), 100))
+			hasChanges = true
+		}
+	}
+
+	if !hasChanges {
+		fmt.Println("No changes detected.")
+	}
+	fmt.Println()
+}
+
+// showDryRunSummary displays what would be changed without executing
+func showDryRunSummary(existing, final map[string]any, secretName string, isReplace bool) {
+	fmt.Printf("\nDry run summary for secret '%s':\n", secretName)
+	fmt.Println(strings.Repeat("=", 50))
+
+	if existing == nil {
+		fmt.Printf("Operation: Create new secret\n")
+		fmt.Printf("Keys to be added: %d\n", len(final))
+		for key, value := range final {
+			fmt.Printf("  + %s: %s\n", key, truncateString(fmt.Sprintf("%v", value), 100))
+		}
+	} else {
+		if isReplace {
+			fmt.Printf("Operation: Replace entire secret\n")
+		} else {
+			fmt.Printf("Operation: Update existing secret (merge)\n")
+		}
+
+		addedKeys := 0
+		modifiedKeys := 0
+		removedKeys := 0
+
+		// Count changes
+		for key, newValue := range final {
+			if existingValue, exists := existing[key]; !exists {
+				addedKeys++
+			} else if fmt.Sprintf("%v", existingValue) != fmt.Sprintf("%v", newValue) {
+				modifiedKeys++
+			}
+		}
+
+		if isReplace {
+			for key := range existing {
+				if _, exists := final[key]; !exists {
+					removedKeys++
+				}
+			}
+		}
+
+		fmt.Printf("Keys to be added: %d\n", addedKeys)
+		fmt.Printf("Keys to be modified: %d\n", modifiedKeys)
+		if isReplace {
+			fmt.Printf("Keys to be removed: %d\n", removedKeys)
+		}
+
+		showSecretDiff(existing, final, secretName)
+	}
+
+	fmt.Println("Note: This is a dry run. No changes were made to the actual secret.")
 }
 
 // CompletionSecretNames provides bash completion for secret names

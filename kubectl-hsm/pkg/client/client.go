@@ -17,8 +17,10 @@ limitations under the License.
 package client
 
 import (
+	"maps"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -44,6 +46,25 @@ func NewClient(baseURL string) *Client {
 	}
 }
 
+// decodeBase64Data converts base64-encoded string values back to plain text
+// This is needed because the server returns []byte which gets JSON-marshaled as base64
+func decodeBase64Data(data map[string]any) map[string]any {
+	decoded := make(map[string]any)
+	for key, value := range data {
+		if strValue, ok := value.(string); ok {
+			// Try to decode as base64 - if it fails, keep original value
+			if decodedBytes, err := base64.StdEncoding.DecodeString(strValue); err == nil {
+				decoded[key] = string(decodedBytes)
+			} else {
+				decoded[key] = strValue
+			}
+		} else {
+			decoded[key] = value
+		}
+	}
+	return decoded
+}
+
 // CreateSecret creates a new secret in the HSM, merging with existing data if present
 func (c *Client) CreateSecret(ctx context.Context, name string, data map[string]any) error {
 	return c.CreateSecretWithOptions(ctx, name, data, false)
@@ -56,13 +77,14 @@ func (c *Client) CreateSecretWithOptions(ctx context.Context, name string, data 
 		// Try to read existing secret first for merge behavior
 		existing, err := c.GetSecret(ctx, name)
 		if err == nil && existing != nil {
-			// Merge existing data with new data (new data takes precedence)
+			// Decode existing base64-encoded data first to prevent double-encoding
+			decodedExisting := decodeBase64Data(existing.Data)
+
+			// Merge decoded existing data with new data (new data takes precedence)
 			mergedData := make(map[string]any)
 
-			// Start with existing data
-			for k, v := range existing.Data {
-				mergedData[k] = v
-			}
+			// Start with decoded existing data
+			maps.Copy(mergedData, decodedExisting)
 
 			// Override/add with new data
 			for k, v := range data {
@@ -81,13 +103,17 @@ func (c *Client) CreateSecretWithOptions(ctx context.Context, name string, data 
 	return c.doRequest(ctx, "POST", fmt.Sprintf("/api/v1/hsm/secrets/%s", name), req, nil)
 }
 
-// GetSecret retrieves a secret from the HSM
+// GetSecret retrieves a secret from the HSM and decodes base64-encoded data
 func (c *Client) GetSecret(ctx context.Context, name string) (*SecretData, error) {
 	var result SecretData
 	err := c.doRequest(ctx, "GET", fmt.Sprintf("/api/v1/hsm/secrets/%s", name), nil, &result)
 	if err != nil {
 		return nil, err
 	}
+
+	// Decode base64-encoded data to plain text for consistent handling
+	result.Data = decodeBase64Data(result.Data)
+
 	return &result, nil
 }
 

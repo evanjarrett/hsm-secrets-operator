@@ -53,6 +53,9 @@ Examples:
   # Create a secret with literal values
   kubectl hsm create api-config --from-literal api_key=abc123 --from-literal endpoint=https://api.example.com
 
+  # Update an existing secret (adds/modifies keys, preserves others)
+  kubectl hsm update api-config --from-literal timeout=30
+
   # List all secrets
   kubectl hsm list
 
@@ -75,7 +78,8 @@ https://github.com/evanjarrett/hsm-secrets-operator`,
 	cmd.AddCommand(newVersionCmd())
 
 	// Add core secret management commands
-	cmd.AddCommand(commands.NewCreateCmd())
+	cmd.AddCommand(commands.NewCreateCmd()) // includes "update" alias
+	cmd.AddCommand(commands.NewRenameKeyCmd())
 	cmd.AddCommand(commands.NewGetCmd())
 	cmd.AddCommand(commands.NewListCmd())
 	cmd.AddCommand(commands.NewDeleteCmd())
