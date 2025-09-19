@@ -22,7 +22,6 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -43,9 +42,9 @@ import (
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/api"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/config"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/controller"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/mirror"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/utils"
 )
 
 var (
@@ -56,32 +55,6 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(hsmv1alpha1.AddToScheme(scheme))
-}
-
-// getOperatorName returns the operator deployment name
-// This can be overridden via environment variable or falls back to default
-func getOperatorName() string {
-	// Check if operator name is provided via environment variable
-	if name := os.Getenv("OPERATOR_NAME"); name != "" {
-		return name
-	}
-
-	// Check if deployment name is provided via downward API
-	if hostname := os.Getenv("HOSTNAME"); hostname != "" {
-		// Kubernetes deployment pods have hostname like: deployment-name-replicaset-hash-pod-hash
-		// Extract the deployment name by removing the last two parts (replicaset-hash and pod-hash)
-		parts := strings.Split(hostname, "-")
-		if len(parts) >= 3 {
-			// Remove last two parts (replicaset hash and pod hash) to get deployment name
-			deploymentParts := parts[:len(parts)-2]
-			return strings.Join(deploymentParts, "-")
-		}
-		return hostname
-	}
-
-	// Fallback to default deployment name
-	setupLog.Info("Could not determine operator name, using 'controller-manager'")
-	return "controller-manager"
 }
 
 // Run starts the manager mode
@@ -98,6 +71,8 @@ func Run(args []string) error {
 	var enableHTTP2 bool
 	var enableAPI bool
 	var apiPort int
+	var agentImage string
+	var discoveryImage string
 
 	fs.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -120,6 +95,10 @@ func Run(args []string) error {
 		"Enable the REST API server for HSM secret management")
 	fs.IntVar(&apiPort, "api-port", 8090,
 		"Port for the REST API server")
+	fs.StringVar(&agentImage, "agent-image", "",
+		"Container image for HSM agent pods")
+	fs.StringVar(&discoveryImage, "discovery-image", "",
+		"Container image for HSM discovery DaemonSet")
 
 	// Parse manager-specific flags from the remaining unparsed arguments
 	if err := fs.Parse(args); err != nil {
@@ -242,18 +221,20 @@ func Run(args []string) error {
 	}
 
 	// Get current operator namespace and name
-	operatorNamespace, err := utils.GetCurrentNamespace()
+	operatorNamespace, err := config.GetCurrentNamespace()
 	if err != nil {
 		setupLog.Error(err, "unable to get the current namespace")
 		return err
 	}
-	operatorName := getOperatorName()
+	operatorName, _ := os.Hostname()
 	setupLog.Info("Detected operator details", "namespace", operatorNamespace, "name", operatorName)
 
+	// Create image resolver for fallback/auto-detection
+	imageResolver := config.NewImageResolver(mgr.GetClient())
+
 	// Agent manager will detect the current namespace automatically
-	imageResolver := controller.NewImageResolver(mgr.GetClient())
 	// TODO: Configure TLS for gRPC connections between manager and agents
-	agentManager := agent.NewManager(mgr.GetClient(), "", imageResolver, nil)
+	agentManager := agent.NewManager(mgr.GetClient(), "", agentImage, imageResolver, nil)
 
 	// Set up HSMPool controller to aggregate discovery reports from pod annotations
 	if err := (&controller.HSMPoolReconciler{
@@ -289,9 +270,10 @@ func Run(args []string) error {
 
 	// Set up discovery DaemonSet controller (manager-owned)
 	if err := (&controller.DiscoveryDaemonSetReconciler{
-		Client:        mgr.GetClient(),
-		Scheme:        mgr.GetScheme(),
-		ImageResolver: imageResolver,
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		ImageResolver:  imageResolver,
+		DiscoveryImage: discoveryImage,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DiscoveryDaemonSet")
 		return err

@@ -97,7 +97,7 @@ type Manager struct {
 
 // ImageResolver interface for dependency injection
 type ImageResolver interface {
-	GetImage(ctx context.Context, defaultImage string) string
+	GetImage(ctx context.Context, imageName string) string
 }
 
 // deviceWork represents work to be done for a specific device
@@ -109,12 +109,13 @@ type deviceWork struct {
 }
 
 // NewManager creates a new agent manager
-func NewManager(k8sClient client.Client, namespace string, imageResolver ImageResolver, tlsConfig *security.TLSConfig) *Manager {
+func NewManager(k8sClient client.Client, namespace string, agentImage string, imageResolver ImageResolver, tlsConfig *security.TLSConfig) *Manager {
 	// Create logger for the manager
 	logger := logr.FromContextOrDiscard(context.Background()).WithName("agent-manager")
 
 	m := &Manager{
 		Client:         k8sClient,
+		AgentImage:     agentImage,
 		AgentNamespace: namespace,
 		ImageResolver:  imageResolver,
 		TLSConfig:      tlsConfig,
@@ -129,13 +130,14 @@ func NewManager(k8sClient client.Client, namespace string, imageResolver ImageRe
 }
 
 // NewTestManager creates a new agent manager optimized for testing
-func NewTestManager(k8sClient client.Client, namespace string, imageResolver ImageResolver) *Manager {
+func NewTestManager(k8sClient client.Client, namespace string, agentImage string, imageResolver ImageResolver) *Manager {
 	// Create logger for the test manager
 	logger := logr.FromContextOrDiscard(context.Background()).WithName("agent-manager-test")
 
 	// For testing, use nil TLS config (insecure connections)
 	m := &Manager{
 		Client:         k8sClient,
+		AgentImage:     agentImage,
 		AgentNamespace: namespace,
 		ImageResolver:  imageResolver,
 		TLSConfig:      nil, // Insecure for testing
@@ -407,8 +409,14 @@ func (m *Manager) createAgentDeployment(ctx context.Context, hsmPool *hsmv1alpha
 	devicePath := specificDevice.DevicePath
 	deviceName := hsmPool.OwnerReferences[0].Name
 
-	// Get discovery image from environment, manager image, or use default
-	agentImage := m.ImageResolver.GetImage(ctx, "AGENT_IMAGE")
+	// Get agent image from config or fallback to auto-detection
+	var agentImage string
+	if m.AgentImage != "" {
+		agentImage = m.AgentImage
+	} else {
+		// Fallback to ImageResolver for backward compatibility or auto-detection
+		agentImage = m.ImageResolver.GetImage(ctx, "")
+	}
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -482,19 +490,8 @@ func (m *Manager) createAgentDeployment(ctx context.Context, hsmPool *hsmv1alpha
 								"/entrypoint.sh",
 								"agent",
 							},
-							Args: []string{
-								"--device-name=" + deviceName,
-								"--port=" + fmt.Sprintf("%d", AgentPort),
-								"--health-port=" + fmt.Sprintf("%d", AgentHealthPort),
-							},
-							Env: func() []corev1.EnvVar {
-								env, err := m.buildAgentEnv(ctx, hsmPool)
-								if err != nil {
-									// Log error but continue with empty env to avoid breaking deployment creation
-									return []corev1.EnvVar{}
-								}
-								return env
-							}(),
+							Args: m.buildAgentArgs(ctx, hsmPool, deviceName),
+							Env:  []corev1.EnvVar{},
 							Ports: []corev1.ContainerPort{
 								{
 									Name:          "grpc",
@@ -562,47 +559,34 @@ func (m *Manager) createAgentDeployment(ctx context.Context, hsmPool *hsmv1alpha
 	return m.Create(ctx, deployment)
 }
 
-// buildAgentEnv builds environment variables for the HSM agent
-func (m *Manager) buildAgentEnv(ctx context.Context, hsmPool *hsmv1alpha1.HSMPool) ([]corev1.EnvVar, error) {
+// buildAgentArgs builds CLI arguments for the HSM agent
+func (m *Manager) buildAgentArgs(ctx context.Context, hsmPool *hsmv1alpha1.HSMPool, deviceName string) []string {
+	args := []string{
+		"--device-name=" + deviceName,
+		"--port=" + fmt.Sprintf("%d", AgentPort),
+		"--health-port=" + fmt.Sprintf("%d", AgentHealthPort),
+	}
+
 	// Get HSMDevice from owner reference
-	deviceName := hsmPool.OwnerReferences[0].Name
 	var hsmDevice hsmv1alpha1.HSMDevice
 	if err := m.Get(ctx, types.NamespacedName{
 		Name:      deviceName,
 		Namespace: hsmPool.Namespace,
 	}, &hsmDevice); err != nil {
-		return nil, fmt.Errorf("failed to get HSMDevice %s: %w", deviceName, err)
-	}
-	env := []corev1.EnvVar{
-		{
-			Name:  "HSM_DEVICE_NAME",
-			Value: hsmDevice.Name,
-		},
-		{
-			Name:  "HSM_DEVICE_TYPE",
-			Value: string(hsmDevice.Spec.DeviceType),
-		},
+		// If we can't get the device, return basic args
+		return args
 	}
 
 	// Add PKCS#11 configuration if available
 	if hsmDevice.Spec.PKCS11 != nil {
-		env = append(env, []corev1.EnvVar{
-			{
-				Name:  "PKCS11_LIBRARY_PATH",
-				Value: hsmDevice.Spec.PKCS11.LibraryPath,
-			},
-			{
-				Name:  "PKCS11_SLOT_ID",
-				Value: fmt.Sprintf("%d", hsmDevice.Spec.PKCS11.SlotId),
-			},
-			{
-				Name:  "PKCS11_TOKEN_LABEL",
-				Value: hsmDevice.Spec.PKCS11.TokenLabel,
-			},
-		}...)
+		args = append(args,
+			"--pkcs11-library="+hsmDevice.Spec.PKCS11.LibraryPath,
+			"--slot-id="+fmt.Sprintf("%d", hsmDevice.Spec.PKCS11.SlotId),
+			"--token-label="+hsmDevice.Spec.PKCS11.TokenLabel,
+		)
 	}
 
-	return env, nil
+	return args
 }
 
 // buildAgentVolumeMounts builds volume mounts for the HSM agent
@@ -653,13 +637,18 @@ func (m *Manager) agentNeedsUpdate(ctx context.Context, deployment *appsv1.Deplo
 	container := deployment.Spec.Template.Spec.Containers[0]
 	currentImage := container.Image
 
-	// Check if image has changed (only if ImageResolver is available)
-	if m.ImageResolver != nil {
-		expectedImage := m.ImageResolver.GetImage(ctx, "AGENT_IMAGE")
-		if currentImage != expectedImage {
-			// Image has changed, need to update
-			return true, nil
-		}
+	// Check if image has changed
+	var expectedImage string
+	if m.AgentImage != "" {
+		expectedImage = m.AgentImage
+	} else if m.ImageResolver != nil {
+		// Fallback to auto-detection
+		expectedImage = m.ImageResolver.GetImage(ctx, "")
+	}
+
+	if expectedImage != "" && currentImage != expectedImage {
+		// Image has changed, need to update
+		return true, nil
 	}
 
 	// Extract current volume mounts from deployment

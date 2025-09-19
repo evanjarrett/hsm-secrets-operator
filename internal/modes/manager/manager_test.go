@@ -25,7 +25,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/utils"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/config"
 )
 
 func TestSchemeInitialization(t *testing.T) {
@@ -107,67 +107,10 @@ func TestGetCurrentNamespace(t *testing.T) {
 				assert.Equal(t, tt.expectedNS, ns)
 			} else {
 				// Test the error behavior when no namespace can be determined
-				ns, err := utils.GetCurrentNamespace()
+				ns, err := config.GetCurrentNamespace()
 				assert.Error(t, err)
 				assert.Empty(t, ns)
 			}
-		})
-	}
-}
-
-func TestGetOperatorName(t *testing.T) {
-	tests := []struct {
-		name         string
-		operatorName string
-		hostname     string
-		expected     string
-	}{
-		{
-			name:         "OPERATOR_NAME environment variable set",
-			operatorName: "custom-hsm-operator",
-			expected:     "custom-hsm-operator",
-		},
-		{
-			name:     "hostname with deployment format",
-			hostname: "hsm-operator-deployment-7b8c9d-xkz2p",
-			expected: "hsm-operator-deployment",
-		},
-		{
-			name:     "hostname with simple format",
-			hostname: "simple-hostname",
-			expected: "simple-hostname",
-		},
-		{
-			name:     "complex deployment name",
-			hostname: "hsm-secrets-operator-manager-5f7b8c-abc123",
-			expected: "hsm-secrets-operator-manager",
-		},
-		{
-			name:     "no environment variables set",
-			expected: "controller-manager", // fallback
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Clear environment variables
-			_ = os.Unsetenv("OPERATOR_NAME")
-			_ = os.Unsetenv("HOSTNAME")
-
-			// Set test environment variables
-			if tt.operatorName != "" {
-				_ = os.Setenv("OPERATOR_NAME", tt.operatorName)
-			}
-			if tt.hostname != "" {
-				_ = os.Setenv("HOSTNAME", tt.hostname)
-			}
-
-			result := getOperatorName()
-			assert.Equal(t, tt.expected, result)
-
-			// Clean up
-			_ = os.Unsetenv("OPERATOR_NAME")
-			_ = os.Unsetenv("HOSTNAME")
 		})
 	}
 }

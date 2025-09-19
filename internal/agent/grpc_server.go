@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -101,16 +100,10 @@ func NewGRPCServer(hsmClient hsm.Client, port, healthPort int, config GRPCServer
 // initializeTLS sets up certificate rotation for the server
 func (s *GRPCServer) initializeTLS() error {
 	if s.serviceName == "" {
-		s.serviceName = os.Getenv("POD_NAME")
-		if s.serviceName == "" {
-			s.serviceName = "hsm-agent"
-		}
+		s.serviceName = "hsm-agent"
 	}
 	if s.namespace == "" {
-		s.namespace = os.Getenv("POD_NAMESPACE")
-		if s.namespace == "" {
-			return fmt.Errorf("namespace not configured and POD_NAMESPACE environment variable not set")
-		}
+		return fmt.Errorf("namespace not configured in GRPCServerConfig")
 	}
 
 	// Create certificate rotator

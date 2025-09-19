@@ -36,6 +36,7 @@ import (
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/config"
 )
 
 var _ = Describe("HSMPoolAgentReconciler", func() {
@@ -141,8 +142,8 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 			}).WithTimeout(2 * time.Second).Should(Succeed())
 
 			// Create agent manager optimized for testing
-			imageResolver := NewImageResolver(k8sClient)
-			agentManager = agent.NewTestManager(k8sClient, hsmPoolNamespace, imageResolver)
+			imageResolver := config.NewImageResolver(k8sClient)
+			agentManager = agent.NewTestManager(k8sClient, hsmPoolNamespace, "test-agent:latest", imageResolver)
 		})
 
 		AfterEach(func() {
@@ -213,7 +214,7 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 
 			container := podSpec.Containers[0]
 			Expect(container.Name).To(Equal("agent"))
-			Expect(container.Image).To(Equal("ghcr.io/evanjarrett/hsm-secrets-operator:latest"))
+			Expect(container.Image).To(Equal("test-agent:latest"))
 			Expect(container.Command).To(Equal([]string{"/entrypoint.sh", "agent"}))
 			Expect(container.Args).To(ContainElement("--device-name=" + hsmDeviceName))
 

@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"os"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -39,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
+	discoveryconfig "github.com/evanjarrett/hsm-secrets-operator/internal/config"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/discovery"
 )
 
@@ -69,18 +69,18 @@ const (
 
 // Run starts the discovery mode
 func Run(args []string) error {
+	// Create configuration from environment variables (downward API only)
+	discoveryConfig, err := discoveryconfig.NewDiscoveryConfigFromEnv()
+	if err != nil {
+		return fmt.Errorf("failed to create discovery config: %w", err)
+	}
+
 	// Create a new flag set for discovery-specific flags
 	fs := flag.NewFlagSet("discovery", flag.ContinueOnError)
 
-	var nodeName string
-	var podName string
-	var podNamespace string
 	var syncInterval time.Duration
 	var detectionMethod string
 
-	fs.StringVar(&nodeName, "node-name", "", "The name of the node this discovery agent is running on")
-	fs.StringVar(&podName, "pod-name", "", "The name of this discovery pod")
-	fs.StringVar(&podNamespace, "pod-namespace", "", "The namespace of this discovery pod")
 	fs.DurationVar(&syncInterval, "sync-interval", 30*time.Second, "Interval for device discovery sync")
 	fs.StringVar(&detectionMethod, "detection-method", "auto",
 		"USB detection method: 'sysfs' (native), 'legacy' (privileged), or 'auto'")
@@ -90,39 +90,10 @@ func Run(args []string) error {
 		return err
 	}
 
-	// Get node name
-	if nodeName == "" {
-		if name := os.Getenv("NODE_NAME"); name != "" {
-			nodeName = name
-		} else if hostname, err := os.Hostname(); err == nil {
-			nodeName = hostname
-		} else {
-			return fmt.Errorf("node name must be provided via --node-name flag or NODE_NAME environment variable")
-		}
-	}
-
-	// Get pod name
-	if podName == "" {
-		if name := os.Getenv("POD_NAME"); name != "" {
-			podName = name
-		} else {
-			podName = nodeName + "-discovery"
-		}
-	}
-
-	// Get pod namespace
-	if podNamespace == "" {
-		if namespace := os.Getenv("POD_NAMESPACE"); namespace != "" {
-			podNamespace = namespace
-		} else {
-			podNamespace = "default"
-		}
-	}
-
 	setupLog.Info("Starting HSM device discovery agent",
-		"node", nodeName,
-		"pod", podName,
-		"namespace", podNamespace,
+		"node", discoveryConfig.NodeName,
+		"pod", discoveryConfig.PodName,
+		"namespace", discoveryConfig.PodNamespace,
 		"sync-interval", syncInterval,
 		"detection-method", detectionMethod)
 
@@ -144,9 +115,9 @@ func Run(args []string) error {
 	discoveryAgent := &DiscoveryAgent{
 		client:        k8sClient,
 		logger:        setupLog,
-		nodeName:      nodeName,
-		podName:       podName,
-		podNamespace:  podNamespace,
+		nodeName:      discoveryConfig.NodeName,
+		podName:       discoveryConfig.PodName,
+		podNamespace:  discoveryConfig.PodNamespace,
 		usbDiscoverer: usbDiscoverer,
 		syncInterval:  syncInterval,
 	}

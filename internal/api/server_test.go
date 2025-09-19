@@ -61,7 +61,7 @@ func TestGetAllAvailableAgents(t *testing.T) {
 			name: "valid agent manager with no devices",
 			agentManager: func() *agent.Manager {
 				fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-				return agent.NewManager(fakeClient, "test-namespace", nil, nil)
+				return agent.NewManager(fakeClient, "test-namespace", "test-agent:latest", nil, nil)
 			}(),
 			expectedDevices: nil,
 			expectError:     true, // GetAvailableDevices returns error when no devices found
@@ -96,7 +96,7 @@ func TestNewServer(t *testing.T) {
 
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 	mockImageResolver := &MockImageResolver{}
-	agentManager := agent.NewTestManager(client, "test-namespace", mockImageResolver)
+	agentManager := agent.NewTestManager(client, "test-namespace", "test-agent:latest", mockImageResolver)
 	k8sInterface := kubefake.NewSimpleClientset()
 	logger := logr.Discard()
 
@@ -116,7 +116,7 @@ func TestServerStart(t *testing.T) {
 
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 	mockImageResolver := &MockImageResolver{}
-	agentManager := agent.NewTestManager(client, "test-namespace", mockImageResolver)
+	agentManager := agent.NewTestManager(client, "test-namespace", "test-agent:latest", mockImageResolver)
 	k8sInterface := kubefake.NewSimpleClientset()
 	logger := logr.Discard()
 

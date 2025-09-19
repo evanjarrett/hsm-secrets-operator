@@ -116,22 +116,31 @@ type ConnectionPoolMetrics struct {
 
 // ConnectionPool manages a pool of gRPC connections to HSM agents
 type ConnectionPool struct {
-	clients   map[string]*PooledClient // endpoint -> client
-	mutex     sync.RWMutex
-	logger    logr.Logger
-	stopChan  chan struct{}
-	stopOnce  sync.Once
-	metrics   ConnectionPoolMetrics
-	tlsConfig *security.TLSConfig // Optional TLS configuration
+	clients      map[string]*PooledClient // endpoint -> client
+	mutex        sync.RWMutex
+	logger       logr.Logger
+	stopChan     chan struct{}
+	stopOnce     sync.Once
+	metrics      ConnectionPoolMetrics
+	tlsConfig    *security.TLSConfig // Optional TLS configuration
+	podName      string              // Pod name for TLS verification
+	podNamespace string              // Pod namespace for TLS verification
 }
 
 // NewConnectionPool creates a new connection pool
 func NewConnectionPool(logger logr.Logger, tlsConfig *security.TLSConfig) *ConnectionPool {
+	return NewConnectionPoolWithConfig(logger, tlsConfig, "", "")
+}
+
+// NewConnectionPoolWithConfig creates a new connection pool with pod metadata
+func NewConnectionPoolWithConfig(logger logr.Logger, tlsConfig *security.TLSConfig, podName, podNamespace string) *ConnectionPool {
 	pool := &ConnectionPool{
-		clients:   make(map[string]*PooledClient),
-		logger:    logger.WithName("connection-pool"),
-		tlsConfig: tlsConfig,
-		stopChan:  make(chan struct{}),
+		clients:      make(map[string]*PooledClient),
+		logger:       logger.WithName("connection-pool"),
+		tlsConfig:    tlsConfig,
+		stopChan:     make(chan struct{}),
+		podName:      podName,
+		podNamespace: podNamespace,
 	}
 
 	pool.logger.Info("Connection pool created - connections will be kept alive until pod termination")
@@ -225,12 +234,20 @@ func (cp *ConnectionPool) getClientAttempt(ctx context.Context, endpoint string,
 	serverName := ""
 	if cp.tlsConfig != nil {
 		// Use pod FQDN for TLS verification since gRPC connects directly to pod IPs
-		podName := os.Getenv("POD_NAME")
-		namespace := os.Getenv("POD_NAMESPACE")
+		podName := cp.podName
+		namespace := cp.podNamespace
+
+		// Fallback to hostname if podName not provided
+		if podName == "" {
+			if hostname, err := os.Hostname(); err == nil {
+				podName = hostname
+			}
+		}
+
 		if podName != "" && namespace != "" {
 			serverName = fmt.Sprintf("%s.%s.pod.cluster.local", podName, namespace)
 		} else {
-			// Fallback to generic name if environment variables not available
+			// Fallback to generic name if pod metadata not available
 			serverName = "hsm-agent.local"
 		}
 	}

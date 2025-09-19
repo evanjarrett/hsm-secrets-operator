@@ -110,7 +110,7 @@ func TestHSMSecretControllerGRPCIntegration(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Create agent manager and add fake agent info with correct port mapping
-	agentManager := agent.NewManager(nil, "default", nil, nil)
+	agentManager := agent.NewManager(nil, "default", "test-agent:latest", nil, nil)
 	agentManager.SetAgentInfo("test-hsm-device", &agent.AgentInfo{
 		PodIPs:    []string{"127.0.0.1"},
 		Status:    agent.AgentStatusReady,
@@ -407,7 +407,7 @@ func TestHSMSecretControllerGRPCErrors(t *testing.T) {
 		Build()
 
 	// Create agent manager with invalid endpoint
-	agentManager := agent.NewManager(nil, "default", nil, nil)
+	agentManager := agent.NewManager(nil, "default", "test-agent:latest", nil, nil)
 	agentManager.SetAgentInfo("test-hsm-device", &agent.AgentInfo{
 		PodIPs:    []string{"127.0.0.1:99999"}, // Non-existent port
 		Status:    agent.AgentStatusReady,

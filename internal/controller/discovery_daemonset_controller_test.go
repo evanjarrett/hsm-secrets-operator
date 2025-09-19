@@ -19,7 +19,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"os"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -32,6 +31,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/config"
 )
 
 var _ = Describe("DiscoveryDaemonSetReconciler", func() {
@@ -74,13 +74,9 @@ var _ = Describe("DiscoveryDaemonSetReconciler", func() {
 					},
 				},
 			}
-			// Set discovery image environment variable
-			_ = os.Setenv("DISCOVERY_IMAGE", discoveryImage)
 		})
 
 		AfterEach(func() {
-			// Clean up
-			_ = os.Unsetenv("DISCOVERY_IMAGE")
 			// Clean up HSMDevice if it exists
 			if hsmDevice != nil {
 				_ = k8sClient.Delete(ctx, hsmDevice)
@@ -93,9 +89,10 @@ var _ = Describe("DiscoveryDaemonSetReconciler", func() {
 
 			By("Reconciling the HSMDevice")
 			reconciler := &DiscoveryDaemonSetReconciler{
-				Client:        k8sClient,
-				Scheme:        k8sClient.Scheme(),
-				ImageResolver: NewImageResolver(k8sClient),
+				Client:         k8sClient,
+				Scheme:         k8sClient.Scheme(),
+				ImageResolver:  config.NewImageResolver(k8sClient),
+				DiscoveryImage: discoveryImage,
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -194,7 +191,7 @@ var _ = Describe("DiscoveryDaemonSetReconciler", func() {
 			reconciler := &DiscoveryDaemonSetReconciler{
 				Client:        k8sClient,
 				Scheme:        k8sClient.Scheme(),
-				ImageResolver: NewImageResolver(k8sClient),
+				ImageResolver: config.NewImageResolver(k8sClient),
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -254,7 +251,7 @@ var _ = Describe("DiscoveryDaemonSetReconciler", func() {
 			reconciler := &DiscoveryDaemonSetReconciler{
 				Client:        k8sClient,
 				Scheme:        k8sClient.Scheme(),
-				ImageResolver: NewImageResolver(k8sClient),
+				ImageResolver: config.NewImageResolver(k8sClient),
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -299,18 +296,16 @@ var _ = Describe("DiscoveryDaemonSetReconciler", func() {
 			}).Should(BeTrue())
 		})
 
-		It("Should handle missing DISCOVERY_IMAGE environment variable", func() {
-			By("Unsetting DISCOVERY_IMAGE")
-			_ = os.Unsetenv("DISCOVERY_IMAGE")
-
+		It("Should fall back to auto-detection when no discovery image is specified", func() {
 			By("Creating the HSMDevice")
 			Expect(k8sClient.Create(ctx, hsmDevice)).To(Succeed())
 
-			By("Reconciling the HSMDevice")
+			By("Reconciling the HSMDevice without DiscoveryImage set")
 			reconciler := &DiscoveryDaemonSetReconciler{
 				Client:        k8sClient,
 				Scheme:        k8sClient.Scheme(),
-				ImageResolver: NewImageResolver(k8sClient),
+				ImageResolver: config.NewImageResolver(k8sClient),
+				// DiscoveryImage intentionally not set to test fallback
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -321,7 +316,7 @@ var _ = Describe("DiscoveryDaemonSetReconciler", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Checking that DaemonSet uses default image")
+			By("Checking that DaemonSet uses default image from auto-detection")
 			daemonSetName := fmt.Sprintf("%s-discovery", hsmDeviceName)
 			daemonSet := &appsv1.DaemonSet{}
 			Eventually(func() string {

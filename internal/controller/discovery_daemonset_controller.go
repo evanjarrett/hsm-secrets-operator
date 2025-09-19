@@ -36,13 +36,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/config"
 )
 
 // DiscoveryDaemonSetReconciler manages discovery DaemonSets for HSMDevice resources
 type DiscoveryDaemonSetReconciler struct {
 	client.Client
-	Scheme        *runtime.Scheme
-	ImageResolver *ImageResolver
+	Scheme         *runtime.Scheme
+	ImageResolver  *config.ImageResolver
+	DiscoveryImage string
 }
 
 // +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch;create;update;patch;delete
@@ -153,7 +155,13 @@ func (r *DiscoveryDaemonSetReconciler) ensureDiscoveryDaemonSet(ctx context.Cont
 	daemonSetName := fmt.Sprintf("%s-discovery", hsmDevice.Name)
 
 	// Get discovery image from environment, manager image, or use default
-	discoveryImage := r.ImageResolver.GetImage(ctx, "DISCOVERY_IMAGE")
+	var discoveryImage string
+	if r.DiscoveryImage != "" {
+		discoveryImage = r.DiscoveryImage
+	} else {
+		// Fallback to ImageResolver for backward compatibility or auto-detection
+		discoveryImage = r.ImageResolver.GetImage(ctx, "")
+	}
 
 	// Define the desired DaemonSet
 	desired := &appsv1.DaemonSet{

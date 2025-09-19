@@ -45,7 +45,7 @@ func TestJWTAuthenticationIntegration(t *testing.T) {
 	fakeClient := fakeclient.NewClientBuilder().WithScheme(scheme).Build()
 
 	// Create agent manager
-	agentManager := agent.NewManager(fakeClient, "test-namespace", nil, nil)
+	agentManager := agent.NewManager(fakeClient, "test-namespace", "test-agent:latest", nil, nil)
 
 	// Create API server
 	logger := log.Log.WithName("test")
@@ -174,7 +174,7 @@ func TestWebUIJWTWorkflow(t *testing.T) {
 
 		k8sInterface := fake.NewSimpleClientset()
 		fakeClient := fakeclient.NewClientBuilder().WithScheme(scheme).Build()
-		agentManager := agent.NewManager(fakeClient, "test-namespace", nil, nil)
+		agentManager := agent.NewManager(fakeClient, "test-namespace", "test-agent:latest", nil, nil)
 		logger := log.Log.WithName("test-webui")
 		server := NewServer(fakeClient, agentManager, "test-namespace", k8sInterface, logger)
 
@@ -197,7 +197,7 @@ func TestWebUIJWTWorkflow(t *testing.T) {
 
 		k8sInterface := fake.NewSimpleClientset()
 		fakeClient := fakeclient.NewClientBuilder().WithScheme(scheme).Build()
-		agentManager := agent.NewManager(fakeClient, "test-namespace", nil, nil)
+		agentManager := agent.NewManager(fakeClient, "test-namespace", "test-agent:latest", nil, nil)
 		logger := log.Log.WithName("test-auth-structure")
 		server := NewServer(fakeClient, agentManager, "test-namespace", k8sInterface, logger)
 

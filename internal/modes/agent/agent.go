@@ -36,6 +36,7 @@ import (
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
+	agentconfig "github.com/evanjarrett/hsm-secrets-operator/internal/config"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
 )
 
@@ -74,20 +75,15 @@ func Run(args []string) error {
 		return err
 	}
 
-	// Validate required parameters
+	// Validate required parameters - all must be provided via CLI args now
 	if deviceName == "" {
-		deviceName = os.Getenv("HSM_DEVICE_NAME")
-		if deviceName == "" {
-			return fmt.Errorf("device name required: must be provided via --device-name or HSM_DEVICE_NAME environment variable")
-		}
+		return fmt.Errorf("device name is required via --device-name")
 	}
-
-	// Get configuration from environment variables if not provided via flags
 	if pkcs11LibraryPath == "" {
-		pkcs11LibraryPath = os.Getenv("PKCS11_LIBRARY_PATH")
+		return fmt.Errorf("PKCS11 library path is required via --pkcs11-library")
 	}
 	if tokenLabel == "" {
-		tokenLabel = os.Getenv("PKCS11_TOKEN_LABEL")
+		return fmt.Errorf("token label is required via --token-label")
 	}
 
 	setupLog.Info("Starting HSM agent",
@@ -120,23 +116,34 @@ func Run(args []string) error {
 		return err
 	}
 
+	// Create configuration from environment variables (downward API only)
+	agentConfig, err := agentconfig.NewAgentConfigFromEnv()
+	if err != nil {
+		return fmt.Errorf("failed to create agent config: %w", err)
+	}
+
+	// Set CLI args into config
+	agentConfig.DeviceName = deviceName
+	agentConfig.PKCS11LibraryPath = pkcs11LibraryPath
+	agentConfig.TokenLabel = tokenLabel
+
+	// Validate complete configuration
+	if err := agentConfig.Validate(); err != nil {
+		return fmt.Errorf("invalid agent configuration: %w", err)
+	}
+
 	// Create HSM client
 	var hsmClient hsm.Client
 
-	namespace := os.Getenv("POD_NAMESPACE") // Should be set by downward API
-	if namespace == "" {
-		return fmt.Errorf("POD_NAMESPACE environment variable is required but not set")
-	}
-
-	if pkcs11LibraryPath != "" {
+	if agentConfig.PKCS11LibraryPath != "" {
 		// Create PIN provider for Kubernetes Secret access
-		pinProvider := hsm.NewKubernetesPINProvider(k8sClient, k8sTypedClient, deviceName, namespace)
+		pinProvider := hsm.NewKubernetesPINProvider(k8sClient, k8sTypedClient, agentConfig.DeviceName, agentConfig.PodNamespace)
 
 		// Create PKCS#11 client for production use
 		hsmConfig := hsm.Config{
-			PKCS11LibraryPath: pkcs11LibraryPath,
+			PKCS11LibraryPath: agentConfig.PKCS11LibraryPath,
 			SlotID:            uint(slotID),
-			TokenLabel:        tokenLabel,
+			TokenLabel:        agentConfig.TokenLabel,
 			ConnectionTimeout: 30 * time.Second,
 			RetryAttempts:     3,
 			RetryDelay:        2 * time.Second,
@@ -184,12 +191,12 @@ func Run(args []string) error {
 
 	// Configure gRPC server
 	serverConfig := agent.GRPCServerConfig{
-		ServiceName: fmt.Sprintf("hsm-agent-%s", deviceName),
-		Namespace:   namespace,
+		ServiceName: fmt.Sprintf("hsm-agent-%s", agentConfig.DeviceName),
+		Namespace:   agentConfig.PodNamespace,
 		K8sClient:   k8sClient,
 		EnableTLS:   enableTLS,
 		DNSNames: []string{
-			fmt.Sprintf("hsm-agent-%s", deviceName),
+			fmt.Sprintf("hsm-agent-%s", agentConfig.DeviceName),
 		},
 		IPs: []net.IP{
 			net.ParseIP("127.0.0.1"),
@@ -197,7 +204,7 @@ func Run(args []string) error {
 	}
 
 	// Start gRPC server
-	setupLog.Info("HSM agent ready", "device", deviceName, "tls_enabled", enableTLS)
+	setupLog.Info("HSM agent ready", "device", agentConfig.DeviceName, "tls_enabled", enableTLS)
 
 	grpcServer := agent.NewGRPCServer(hsmClient, port, healthPort, serverConfig, setupLog)
 	if err := grpcServer.Start(ctx); err != nil {
