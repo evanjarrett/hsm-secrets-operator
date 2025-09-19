@@ -31,7 +31,6 @@ import (
 func TestNewGRPCServer(t *testing.T) {
 	mockClient := hsm.NewMockClient()
 	logger := logr.Discard()
-
 	server := NewGRPCServer(mockClient, 9090, 8080, logger)
 
 	assert.NotNil(t, server)

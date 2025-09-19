@@ -301,11 +301,14 @@ kubectl get pods -l app.kubernetes.io/component=discovery \
 # Get agent pod
 AGENT_POD=$(kubectl get pods -l app.kubernetes.io/name=hsm-agent -o jsonpath='{.items[0].metadata.name}')
 
-# List all secrets (requires PIN authentication) 
-kubectl exec $AGENT_POD -- pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" --login --pin="$PKCS11_PIN" --list-objects --type=data
+# Get PIN from the HSM PIN secret
+HSM_PIN=$(kubectl get secret hsm-pin -o jsonpath='{.data.pin}' | base64 -d)
+
+# List all secrets (requires PIN authentication)
+kubectl exec $AGENT_POD -- pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" --login --pin="$HSM_PIN" --list-objects --type=data
 
 # Read specific secret component
-kubectl exec $AGENT_POD -- pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" --login --pin="$PKCS11_PIN" --read-object --type=data --label="my-secret/api_key"
+kubectl exec $AGENT_POD -- pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" --login --pin="$HSM_PIN" --read-object --type=data --label="my-secret/api_key"
 
 # HSM device info
 kubectl exec $AGENT_POD -- pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" -I
@@ -347,3 +350,4 @@ kubectl exec $AGENT_POD -- pkcs11-tool --module="/usr/lib/opensc-pkcs11.so" -I
 4. Update client calls in controller or agent code
 
 This operator provides secure, hardware-backed secret management that integrates seamlessly with Kubernetes while maintaining the security benefits of HSM-based storage.
+- do not try and deploy to the kubernetes cluster

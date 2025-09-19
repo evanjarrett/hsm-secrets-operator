@@ -67,7 +67,7 @@ type HSMPoolReconciler struct {
 // +kubebuilder:rbac:groups=hsm.j5t.io,resources=hsmpools/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=hsm.j5t.io,resources=hsmpools/finalizers,verbs=update
 // +kubebuilder:rbac:groups=hsm.j5t.io,resources=hsmdevices,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch
 
 // Reconcile handles HSMPool reconciliation - aggregates device discovery from pod annotations

@@ -14,11 +14,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package config
 
 import (
 	"context"
-	"os"
 
 	appsv1 "k8s.io/api/apps/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -47,8 +46,8 @@ func (r *ImageResolver) GetManagerImage(ctx context.Context) string {
 	deployments := &appsv1.DeploymentList{}
 	listOpts := []client.ListOption{
 		client.MatchingLabels{
-			"app.kubernetes.io/name":      "hsm-secrets-operator",
-			"app.kubernetes.io/component": "manager",
+			"app.kubernetes.io/name": "hsm-secrets-operator",
+			"control-plane":          "controller-manager",
 		},
 	}
 
@@ -71,10 +70,10 @@ func (r *ImageResolver) GetManagerImage(ctx context.Context) string {
 	return ""
 }
 
-func (r *ImageResolver) GetImage(ctx context.Context, env string) string {
-	// Try environment variable first
-	if discoveryImage := os.Getenv(env); discoveryImage != "" {
-		return discoveryImage
+func (r *ImageResolver) GetImage(ctx context.Context, imageName string) string {
+	// Use provided image name if specified
+	if imageName != "" {
+		return imageName
 	}
 
 	// Try to detect the manager's running image as fallback

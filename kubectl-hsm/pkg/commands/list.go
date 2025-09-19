@@ -113,7 +113,7 @@ func (opts *ListOptions) Run(ctx context.Context) error {
 	switch opts.Output {
 	case "json":
 		// Create clean output without pagination fields
-		cleanOutput := map[string]interface{}{
+		cleanOutput := map[string]any{
 			"count":   secretList.Count,
 			"secrets": secretList.Secrets,
 		}
@@ -127,7 +127,7 @@ func (opts *ListOptions) Run(ctx context.Context) error {
 		fmt.Println(string(jsonBytes))
 	case "yaml":
 		// Create clean output without pagination fields
-		cleanOutput := map[string]interface{}{
+		cleanOutput := map[string]any{
 			"count":   secretList.Count,
 			"secrets": secretList.Secrets,
 		}

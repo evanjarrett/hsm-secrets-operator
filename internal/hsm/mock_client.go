@@ -242,6 +242,36 @@ func (m *MockClient) AddSecret(path string, data SecretData) {
 	m.secrets[path] = stored
 }
 
+// ChangePIN simulates PIN change for testing
+func (m *MockClient) ChangePIN(ctx context.Context, oldPIN, newPIN string) error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	if !m.connected {
+		return fmt.Errorf("HSM not connected")
+	}
+
+	// Validate PIN parameters
+	if oldPIN == "" {
+		return fmt.Errorf("old PIN cannot be empty")
+	}
+	if newPIN == "" {
+		return fmt.Errorf("new PIN cannot be empty")
+	}
+	if oldPIN == newPIN {
+		return fmt.Errorf("new PIN must be different from old PIN")
+	}
+
+	// Simulate PIN validation - use "123456" as the current PIN for testing
+	currentPIN := "123456"
+	if oldPIN != currentPIN {
+		return fmt.Errorf("old PIN is incorrect")
+	}
+
+	m.logger.Info("Mock HSM PIN changed successfully")
+	return nil
+}
+
 // GetAllSecrets returns all secrets in mock storage for testing
 func (m *MockClient) GetAllSecrets() map[string]SecretData {
 	m.mutex.RLock()

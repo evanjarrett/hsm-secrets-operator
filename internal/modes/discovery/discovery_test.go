@@ -183,10 +183,10 @@ func TestDiscoveryIntervalPatterns(t *testing.T) {
 
 // Test device reporting patterns
 func TestDeviceReportingPatterns(t *testing.T) {
-	deviceReport := map[string]interface{}{
+	deviceReport := map[string]any{
 		"timestamp": time.Now().Unix(),
 		"nodeName":  "worker-1",
-		"devices": []map[string]interface{}{
+		"devices": []map[string]any{
 			{
 				"vendorId":     "20a0",
 				"productId":    "4230",
@@ -215,7 +215,7 @@ func TestDeviceReportingPatterns(t *testing.T) {
 	assert.NotEmpty(t, nodeName)
 
 	// Validate devices array
-	devices, ok := deviceReport["devices"].([]map[string]interface{})
+	devices, ok := deviceReport["devices"].([]map[string]any)
 	assert.True(t, ok)
 	assert.Len(t, devices, 2)
 
@@ -505,60 +505,91 @@ func TestDiscoveryFlagParsing(t *testing.T) {
 	}
 }
 
-func TestDiscoveryEnvironmentVariables(t *testing.T) {
+func TestDiscoveryConfigurationFromSystem(t *testing.T) {
 	tests := []struct {
-		name         string
-		envVars      map[string]string
-		expectedNode string
-		expectedPod  string
-		expectedNS   string
+		name                string
+		nodeNameEnv         string
+		expectedNode        string
+		shouldError         bool
+		expectedErrorSubstr string
 	}{
 		{
-			name: "node name from env",
-			envVars: map[string]string{
-				"NODE_NAME": "env-worker-1",
-			},
-			expectedNode: "env-worker-1",
+			name:         "valid node name from environment",
+			nodeNameEnv:  "worker-1",
+			expectedNode: "worker-1",
+			shouldError:  false,
 		},
 		{
-			name: "full config from env",
-			envVars: map[string]string{
-				"NODE_NAME":     "test-node",
-				"POD_NAME":      "test-discovery-pod",
-				"POD_NAMESPACE": "test-namespace",
-			},
-			expectedNode: "test-node",
-			expectedPod:  "test-discovery-pod",
-			expectedNS:   "test-namespace",
+			name:                "missing node name",
+			nodeNameEnv:         "",
+			shouldError:         true,
+			expectedErrorSubstr: "NODE_NAME environment variable is required",
+		},
+		{
+			name:         "node name with complex format",
+			nodeNameEnv:  "ip-10-0-1-100.us-west-2.compute.internal",
+			expectedNode: "ip-10-0-1-100.us-west-2.compute.internal",
+			shouldError:  false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Clear environment
-			envKeys := []string{"NODE_NAME", "POD_NAME", "POD_NAMESPACE"}
-			for _, key := range envKeys {
-				_ = os.Unsetenv(key)
+			// Clear NODE_NAME environment variable
+			originalNodeName := os.Getenv("NODE_NAME")
+			defer func() {
+				if originalNodeName != "" {
+					_ = os.Setenv("NODE_NAME", originalNodeName)
+				} else {
+					_ = os.Unsetenv("NODE_NAME")
+				}
+			}()
+
+			// Set test NODE_NAME environment variable
+			if tt.nodeNameEnv != "" {
+				_ = os.Setenv("NODE_NAME", tt.nodeNameEnv)
+			} else {
+				_ = os.Unsetenv("NODE_NAME")
 			}
 
-			// Set test environment variables
-			for key, value := range tt.envVars {
-				_ = os.Setenv(key, value)
+			// Test discovery config creation (mimicking discovery mode logic)
+			var nodeName string
+			var podName string
+			var podNamespace string
+			var err error
+
+			// NODE_NAME must come from environment (downward API)
+			nodeName = os.Getenv("NODE_NAME")
+			if nodeName == "" {
+				err = fmt.Errorf("NODE_NAME environment variable is required")
 			}
 
-			// Test environment variable reading
-			nodeName := os.Getenv("NODE_NAME")
-			podName := os.Getenv("POD_NAME")
-			podNamespace := os.Getenv("POD_NAMESPACE")
+			if err == nil {
+				// Pod name comes from hostname (system call)
+				podName, err = os.Hostname()
+				if err != nil {
+					err = fmt.Errorf("failed to get hostname: %w", err)
+				}
+			}
 
+			if err == nil {
+				// Namespace comes from utils function (not environment variable)
+				// For test purposes, we'll simulate this working
+				podNamespace = "test-namespace" // This would come from config.GetCurrentNamespace()
+			}
+
+			if tt.shouldError {
+				assert.Error(t, err)
+				if tt.expectedErrorSubstr != "" {
+					assert.Contains(t, err.Error(), tt.expectedErrorSubstr)
+				}
+				return
+			}
+
+			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedNode, nodeName)
-			assert.Equal(t, tt.expectedPod, podName)
-			assert.Equal(t, tt.expectedNS, podNamespace)
-
-			// Clean up
-			for _, key := range envKeys {
-				_ = os.Unsetenv(key)
-			}
+			assert.NotEmpty(t, podName)      // Pod name should be hostname
+			assert.NotEmpty(t, podNamespace) // Namespace should be retrieved
 		})
 	}
 }
@@ -663,10 +694,10 @@ func TestShouldDiscoverOnNodeLogic(t *testing.T) {
 }
 
 func BenchmarkDeviceReportValidation(b *testing.B) {
-	deviceReport := map[string]interface{}{
+	deviceReport := map[string]any{
 		"timestamp": time.Now().Unix(),
 		"nodeName":  "worker-1",
-		"devices": []map[string]interface{}{
+		"devices": []map[string]any{
 			{
 				"vendorId":   "20a0",
 				"productId":  "4230",

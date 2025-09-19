@@ -3,7 +3,7 @@
 # To re-generate a bundle for another specific version without changing the standard setup, you can:
 # - use the VERSION as arg of the bundle target (e.g make bundle VERSION=0.0.2)
 # - use environment variables to overwrite this value (e.g export VERSION=0.0.2)
-VERSION ?= 0.5.30
+VERSION ?= 0.5.41
 
 # CHANNELS define the bundle channels used in the bundle.
 # Add a new line here if you would like to change its default config. (E.g CHANNELS = "candidate,fast,stable")
@@ -144,6 +144,7 @@ helm-sync: manifests ## Sync generated CRDs from config/ to helm/crds/
 	@echo "Syncing CRDs from config/crd/bases/ to helm/hsm-secrets-operator/crds/"
 	cp config/crd/bases/*.yaml helm/hsm-secrets-operator/crds/
 	@echo "✅ CRDs synced successfully"
+	@echo "⚠️  RBAC sync: Please manually verify helm/hsm-secrets-operator/templates/rbac/role.yaml matches config/rbac/role.yaml"
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
@@ -180,6 +181,8 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 			echo "Creating Kind cluster '$(KIND_CLUSTER)'..."; \
 			$(KIND) create cluster --name $(KIND_CLUSTER) ;; \
 	esac
+	@echo "Setting kubectl context to kind-$(KIND_CLUSTER)"
+	@kubectl config use-context kind-$(KIND_CLUSTER)
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.

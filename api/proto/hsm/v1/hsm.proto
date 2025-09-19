@@ -8,30 +8,33 @@ option go_package = "github.com/evanjarrett/hsm-secrets-operator/api/proto/hsm/v
 service HSMAgent {
   // GetInfo returns information about the HSM device
   rpc GetInfo(GetInfoRequest) returns (GetInfoResponse);
-  
+
   // ReadSecret reads secret data from the specified HSM path
   rpc ReadSecret(ReadSecretRequest) returns (ReadSecretResponse);
-  
+
   // WriteSecret writes secret data and metadata to the specified HSM path
   rpc WriteSecret(WriteSecretRequest) returns (WriteSecretResponse);
-  
+
   // ReadMetadata reads metadata for a secret at the given path
   rpc ReadMetadata(ReadMetadataRequest) returns (ReadMetadataResponse);
-  
+
   // DeleteSecret removes secret data from the specified HSM path
   rpc DeleteSecret(DeleteSecretRequest) returns (DeleteSecretResponse);
-  
+
   // ListSecrets returns a list of secret paths
   rpc ListSecrets(ListSecretsRequest) returns (ListSecretsResponse);
-  
+
   // GetChecksum returns the SHA256 checksum of the secret data at the given path
   rpc GetChecksum(GetChecksumRequest) returns (GetChecksumResponse);
-  
+
   // IsConnected returns true if the HSM is connected and responsive
   rpc IsConnected(IsConnectedRequest) returns (IsConnectedResponse);
-  
+
   // Health check for gRPC health protocol
   rpc Health(HealthRequest) returns (HealthResponse);
+
+  // ChangePIN changes the HSM device PIN from old to new PIN
+  rpc ChangePIN(ChangePINRequest) returns (ChangePINResponse);
 }
 
 // Common types
@@ -121,3 +124,10 @@ message HealthResponse {
   string status = 1;
   string message = 2;
 }
+
+message ChangePINRequest {
+  string old_pin = 1;
+  string new_pin = 2;
+}
+
+message ChangePINResponse {}

@@ -27,6 +27,7 @@ rules:
   - ""
   resources:
   - secrets
+  - serviceaccounts
   verbs:
   - create
   - delete
@@ -145,6 +146,7 @@ rules:
   - hsm.j5t.io
   resources:
   - hsmpools/status
+  - hsmsecrets/status
   verbs:
   - get
   - patch

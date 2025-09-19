@@ -31,6 +31,7 @@ import (
 
 	hsmv1 "github.com/evanjarrett/hsm-secrets-operator/api/proto/hsm/v1"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/security"
 )
 
 const (
@@ -41,22 +42,29 @@ const (
 // GRPCServer represents the HSM agent gRPC server
 type GRPCServer struct {
 	hsmv1.UnimplementedHSMAgentServer
-	hsmClient  hsm.Client
-	logger     logr.Logger
-	port       int
-	healthPort int
-	startTime  time.Time
+	hsmClient   hsm.Client
+	logger      logr.Logger
+	port        int
+	healthPort  int
+	startTime   time.Time
+	rateLimiter *security.RateLimiter
+	validator   *security.InputValidator
+	grpcServer  *grpc.Server
 }
 
 // NewGRPCServer creates a new HSM agent gRPC server
 func NewGRPCServer(hsmClient hsm.Client, port, healthPort int, logger logr.Logger) *GRPCServer {
-	return &GRPCServer{
-		hsmClient:  hsmClient,
-		logger:     logger.WithName("grpc-server"),
-		port:       port,
-		healthPort: healthPort,
-		startTime:  time.Now(),
+	server := &GRPCServer{
+		hsmClient:   hsmClient,
+		logger:      logger.WithName("grpc-server"),
+		port:        port,
+		healthPort:  healthPort,
+		startTime:   time.Now(),
+		rateLimiter: security.NewRateLimiter(),
+		validator:   security.NewInputValidator(),
 	}
+
+	return server
 }
 
 // Start starts both the gRPC server and health server
@@ -70,9 +78,15 @@ func (s *GRPCServer) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to listen on port %d: %w", s.port, err)
 	}
 
-	// Configure server with lenient keepalive policy to prevent "too_many_pings" errors
-	grpcServer := grpc.NewServer(
-		grpc.UnaryInterceptor(s.loggingInterceptor),
+	// Configure server with security interceptors
+	var serverOptions []grpc.ServerOption
+
+	// Add security interceptors
+	serverOptions = append(serverOptions,
+		grpc.ChainUnaryInterceptor(
+			security.SecurityInterceptor(s.rateLimiter, s.validator),
+			s.loggingInterceptor,
+		),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             15 * time.Second, // Allow pings every 15s minimum
 			PermitWithoutStream: true,             // Allow pings without active streams
@@ -83,18 +97,20 @@ func (s *GRPCServer) Start(ctx context.Context) error {
 		}),
 	)
 
+	s.grpcServer = grpc.NewServer(serverOptions...)
+
 	// Register the HSM agent service
-	hsmv1.RegisterHSMAgentServer(grpcServer, s)
+	hsmv1.RegisterHSMAgentServer(s.grpcServer, s)
 
 	// Graceful shutdown
 	go func() {
 		<-ctx.Done()
 		s.logger.Info("Shutting down gRPC server")
-		grpcServer.GracefulStop()
+		s.grpcServer.GracefulStop()
 	}()
 
 	s.logger.Info("Starting HSM agent gRPC server", "port", s.port)
-	return grpcServer.Serve(lis)
+	return s.grpcServer.Serve(lis)
 }
 
 // startHealthServer starts the HTTP health server
@@ -316,6 +332,39 @@ func (s *GRPCServer) IsConnected(ctx context.Context, req *hsmv1.IsConnectedRequ
 	}, nil
 }
 
+// ChangePIN changes the HSM PIN from old PIN to new PIN
+func (s *GRPCServer) ChangePIN(ctx context.Context, req *hsmv1.ChangePINRequest) (*hsmv1.ChangePINResponse, error) {
+	s.logger.Info("Received ChangePIN request")
+
+	if s.hsmClient == nil {
+		return nil, status.Error(codes.Internal, "HSM client not initialized")
+	}
+
+	if !s.hsmClient.IsConnected() {
+		return nil, status.Error(codes.Unavailable, "HSM not connected")
+	}
+
+	// Validate request
+	if req.OldPin == "" {
+		return nil, status.Error(codes.InvalidArgument, "old PIN cannot be empty")
+	}
+	if req.NewPin == "" {
+		return nil, status.Error(codes.InvalidArgument, "new PIN cannot be empty")
+	}
+	if req.OldPin == req.NewPin {
+		return nil, status.Error(codes.InvalidArgument, "new PIN must be different from old PIN")
+	}
+
+	// Change PIN using HSM client
+	if err := s.hsmClient.ChangePIN(ctx, req.OldPin, req.NewPin); err != nil {
+		s.logger.Error(err, "Failed to change HSM PIN")
+		return nil, status.Errorf(codes.Internal, "failed to change PIN: %v", err)
+	}
+
+	s.logger.Info("Successfully changed HSM PIN")
+	return &hsmv1.ChangePINResponse{}, nil
+}
+
 // Health check for gRPC health protocol
 func (s *GRPCServer) Health(ctx context.Context, req *hsmv1.HealthRequest) (*hsmv1.HealthResponse, error) {
 	healthStatus := healthyStatus
@@ -371,11 +420,11 @@ func (s *GRPCServer) handleReadyz(w http.ResponseWriter, r *http.Request) {
 }
 
 // loggingInterceptor provides gRPC request logging
-func (s *GRPCServer) loggingInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+func (s *GRPCServer) loggingInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 	start := time.Now()
 
 	// Extract request-specific details
-	logFields := []interface{}{
+	logFields := []any{
 		"method", info.FullMethod,
 	}
 
@@ -396,6 +445,9 @@ func (s *GRPCServer) loggingInterceptor(ctx context.Context, req interface{}, in
 		logFields = append(logFields, "path", r.Path)
 	case *hsmv1.ReadMetadataRequest:
 		logFields = append(logFields, "path", r.Path)
+	case *hsmv1.ChangePINRequest:
+		// Don't log PIN values for security
+		logFields = append(logFields, "operation", "change_pin")
 	}
 
 	s.logger.Info("gRPC request started", logFields...)

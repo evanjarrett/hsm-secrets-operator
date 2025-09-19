@@ -9,8 +9,16 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🔐 HSM Secrets Manager</h1>
-            <p>Manage your Hardware Security Module secrets through a simple web interface</p>
+            <div class="header-content">
+                <div class="header-text">
+                    <h1>🔐 HSM Secrets Manager</h1>
+                    <p>Manage your Hardware Security Module secrets through a simple web interface</p>
+                </div>
+                <div class="header-auth">
+                    <div id="authStatus" class="auth-status not-authenticated">❌ Not Authenticated</div>
+                    <button class="btn btn-secondary btn-small" onclick="logout()" title="Clear authentication token">🚪 Logout</button>
+                </div>
+            </div>
         </div>
 
         <div class="stats" id="stats">

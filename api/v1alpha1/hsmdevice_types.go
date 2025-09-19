@@ -171,11 +171,6 @@ type HSMDeviceSpec struct {
 	// Mirroring configures cross-node device mirroring for high availability
 	// +optional
 	Mirroring *MirroringSpec `json:"mirroring,omitempty"`
-
-	// PKCS11LibraryPath is the path to the PKCS#11 library for this device
-	// +optional
-	// Deprecated: Use PKCS11.LibraryPath instead
-	PKCS11LibraryPath string `json:"pkcs11LibraryPath,omitempty"`
 }
 
 // DeviceRole defines the role of a device in a mirrored setup

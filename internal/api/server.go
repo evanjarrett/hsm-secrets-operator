@@ -25,11 +25,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-logr/logr"
 	"github.com/go-playground/validator/v10"
+	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/security"
 )
 
 // Server represents the HSM REST API server that proxies requests to agent pods
@@ -41,16 +43,29 @@ type Server struct {
 	router            *gin.Engine
 	proxyClient       *ProxyClient
 	operatorNamespace string
+	authenticator     *security.APIAuthenticator
+	port              int // Port to run the API server on
 }
 
 // NewServer creates a new API server instance that proxies to agents
-func NewServer(k8sClient client.Client, agentManager *agent.Manager, operatorNamespace string, logger logr.Logger) *Server {
+func NewServer(k8sClient client.Client, agentManager *agent.Manager, operatorNamespace string, k8sInterface kubernetes.Interface, port int, logger logr.Logger) *Server {
 	s := &Server{
 		client:            k8sClient,
 		agentManager:      agentManager,
 		validator:         validator.New(),
 		logger:            logger.WithName("api-server"),
 		operatorNamespace: operatorNamespace,
+		port:              port,
+	}
+
+	// Initialize JWT authenticator
+	authenticator, err := security.NewAPIAuthenticator(k8sInterface, logger)
+	if err != nil {
+		s.logger.Error(err, "Failed to create API authenticator, authentication disabled")
+		s.authenticator = nil
+	} else {
+		s.authenticator = authenticator
+		s.logger.Info("JWT API authentication enabled")
 	}
 
 	// Create ProxyClient instance
@@ -72,15 +87,43 @@ func (s *Server) setupRouter() {
 	s.router.Use(s.loggingMiddleware())
 	s.router.Use(s.corsMiddleware())
 
+	// Add JWT authentication middleware if authenticator is available
+	if s.authenticator != nil {
+		s.router.Use(s.authenticator.AuthMiddleware())
+	} else {
+		s.logger.Info("Running API server without authentication (development mode)")
+	}
+
 	// Set up proxy routes
 	s.setupProxyRoutes()
 }
 
-// Start starts the API server on the specified port
-func (s *Server) Start(port int) error {
-	addr := fmt.Sprintf(":%d", port)
+// Start starts the API server and implements manager.Runnable interface
+func (s *Server) Start(ctx context.Context) error {
+	addr := fmt.Sprintf(":%d", s.port)
 	s.logger.Info("Starting API server", "addr", addr)
-	return s.router.Run(addr)
+
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: s.router,
+	}
+
+	// Start server in a goroutine
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			s.logger.Error(err, "API server error")
+		}
+	}()
+
+	// Wait for context cancellation
+	<-ctx.Done()
+
+	// Graceful shutdown
+	s.logger.Info("Shutting down API server")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	return srv.Shutdown(shutdownCtx)
 }
 
 // handleHealth handles health check requests

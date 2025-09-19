@@ -84,9 +84,15 @@ https://github.com/evanjarrett/hsm-secrets-operator`,
 	cmd.AddCommand(commands.NewListCmd())
 	cmd.AddCommand(commands.NewDeleteCmd())
 
+	// Add PIN management commands
+	cmd.AddCommand(commands.NewRotatePinCmd())
+
 	// Add operational commands
 	cmd.AddCommand(commands.NewHealthCmd())
 	cmd.AddCommand(commands.NewDevicesCmd())
+
+	// Add authentication command
+	cmd.AddCommand(commands.NewAuthCmd())
 
 	// Add completion command
 	cmd.AddCommand(newCompletionCmd())

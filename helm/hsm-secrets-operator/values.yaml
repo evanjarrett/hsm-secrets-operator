@@ -6,21 +6,21 @@
 image:
   repository: ghcr.io/evanjarrett/hsm-secrets-operator
   pullPolicy: IfNotPresent
-  tag: ""  # Defaults to the chart appVersion
+  tag: "" # Defaults to the chart appVersion
 
 # Discovery image configuration
 # Uses same unified image as manager and discoveryc
 discoveryImage:
   repository: ghcr.io/evanjarrett/hsm-secrets-operator
   pullPolicy: IfNotPresent
-  tag: ""  # Defaults to the chart appVersion
+  tag: "" # Defaults to the chart appVersion
 
 # Agent image configuration (for HSM agent pods)
 # Uses same unified image as manager and discoveryc
 agentImage:
   repository: ghcr.io/evanjarrett/hsm-secrets-operator
   pullPolicy: IfNotPresent
-  tag: ""  # Defaults to the chart appVersion (uses same unified image)
+  tag: "" # Defaults to the chart appVersion (uses same unified image)
 
 imagePullSecrets: []
 nameOverride: ""
@@ -45,7 +45,7 @@ controllerManager:
     allowPrivilegeEscalation: false
     capabilities:
       drop:
-      - "ALL"
+        - "ALL"
 
   # Pod security context
   podSecurityContext:
@@ -93,14 +93,14 @@ hsm:
 discovery:
   # Discovery DaemonSets are now managed dynamically per HSMDevice
   # The following settings apply to all discovery pods created by the manager
-  
+
   # Sync interval for device discovery (e.g., "30s", "1m", "5m")
   syncInterval: "30s"
 
   # Security context for discovery pods (non-privileged in new architecture)
   podSecurityContext:
     runAsUser: 65534
-    runAsGroup: 65534  
+    runAsGroup: 65534
     runAsNonRoot: true
 
   # Container security context for discovery pods
@@ -251,13 +251,13 @@ hsmsecret:
   # Note: parentRef is automatically added by the Helm chart to associate with this operator instance
   secrets:
     - name: "database-credentials"
-      namespace: "production" 
+      namespace: "production"
       secretName: "db-secrets"
       syncInterval: 300
       autoSync: true
     - name: "api-keys"
       namespace: "development"
-      secretName: "third-party-keys"  
+      secretName: "third-party-keys"
       syncInterval: 60
       autoSync: true
   # Example of additional secrets:

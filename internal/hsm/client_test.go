@@ -38,11 +38,12 @@ func TestDefaultConfig(t *testing.T) {
 }
 
 func TestConfigFromHSMDevice(t *testing.T) {
+	testPINProvider := NewStaticPINProvider("test-pin")
+
 	tests := []struct {
-		name      string
-		hsmDevice HSMDeviceSpec
-		pin       string
-		expected  Config
+		name        string
+		hsmDevice   HSMDeviceSpec
+		pinProvider PINProvider
 	}{
 		{
 			name: "complete PKCS11 config",
@@ -53,37 +54,31 @@ func TestConfigFromHSMDevice(t *testing.T) {
 					TokenLabel:  "MyToken",
 				},
 			},
-			pin: "test-pin",
-			expected: Config{
-				PKCS11LibraryPath: "/usr/lib/pkcs11.so",
-				SlotID:            2,
-				TokenLabel:        "MyToken",
-				PIN:               "test-pin",
-				ConnectionTimeout: 30 * time.Second,
-				RetryAttempts:     3,
-				RetryDelay:        2 * time.Second,
-			},
+			pinProvider: testPINProvider,
 		},
 		{
-			name:      "nil PKCS11 config",
-			hsmDevice: HSMDeviceSpec{},
-			pin:       "test-pin",
-			expected: Config{
-				PKCS11LibraryPath: "",
-				SlotID:            0,
-				TokenLabel:        "",
-				PIN:               "test-pin",
-				ConnectionTimeout: 30 * time.Second,
-				RetryAttempts:     3,
-				RetryDelay:        2 * time.Second,
-			},
+			name:        "nil PKCS11 config",
+			hsmDevice:   HSMDeviceSpec{},
+			pinProvider: testPINProvider,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config := ConfigFromHSMDevice(tt.hsmDevice, tt.pin)
-			assert.Equal(t, tt.expected, config)
+			config := ConfigFromHSMDevice(tt.hsmDevice, tt.pinProvider)
+
+			// Test that basic fields are set correctly
+			if tt.hsmDevice.PKCS11 != nil {
+				assert.Equal(t, tt.hsmDevice.PKCS11.LibraryPath, config.PKCS11LibraryPath)
+				assert.Equal(t, uint(tt.hsmDevice.PKCS11.SlotId), config.SlotID)
+				assert.Equal(t, tt.hsmDevice.PKCS11.TokenLabel, config.TokenLabel)
+			}
+			assert.Equal(t, tt.pinProvider, config.PINProvider)
+
+			// Test default values
+			assert.Equal(t, 30*time.Second, config.ConnectionTimeout)
+			assert.Equal(t, 3, config.RetryAttempts)
+			assert.Equal(t, 2*time.Second, config.RetryDelay)
 		})
 	}
 }
@@ -221,53 +216,53 @@ func TestConfig_Validation(t *testing.T) {
 			config: Config{
 				PKCS11LibraryPath: "/usr/lib/libpkcs11.so",
 				SlotID:            1,
-				PIN:               "test-pin",
 				TokenLabel:        "TestToken",
 				ConnectionTimeout: 30 * time.Second,
 				RetryAttempts:     3,
 				RetryDelay:        2 * time.Second,
 				UseSlotID:         true,
+				PINProvider:       NewStaticPINProvider("test-pin"),
 			},
 			expectedValid:  true,
-			expectedFields: []string{"PKCS11LibraryPath", "PIN", "SlotID", "TokenLabel"},
+			expectedFields: []string{"PKCS11LibraryPath", "PINProvider", "SlotID", "TokenLabel"},
 		},
 		{
 			name: "minimal valid config",
 			config: Config{
 				PKCS11LibraryPath: "/usr/lib/pkcs11.so",
-				PIN:               "pin",
 				ConnectionTimeout: 10 * time.Second,
 				RetryAttempts:     1,
 				RetryDelay:        1 * time.Second,
+				PINProvider:       NewStaticPINProvider("pin"),
 			},
 			expectedValid:  true,
-			expectedFields: []string{"PKCS11LibraryPath", "PIN"},
+			expectedFields: []string{"PKCS11LibraryPath", "PINProvider"},
 		},
 		{
 			name: "config with zero timeouts",
 			config: Config{
 				PKCS11LibraryPath: "/usr/lib/pkcs11.so",
-				PIN:               "pin",
 				ConnectionTimeout: 0,
 				RetryAttempts:     0,
 				RetryDelay:        0,
+				PINProvider:       NewStaticPINProvider("pin"),
 			},
 			expectedValid:  true, // Zero values should be allowed
-			expectedFields: []string{"PKCS11LibraryPath", "PIN"},
+			expectedFields: []string{"PKCS11LibraryPath", "PINProvider"},
 		},
 		{
 			name: "config with high slot ID",
 			config: Config{
 				PKCS11LibraryPath: "/usr/lib/pkcs11.so",
-				PIN:               "pin",
 				SlotID:            999999,
 				UseSlotID:         true,
 				ConnectionTimeout: 30 * time.Second,
 				RetryAttempts:     3,
 				RetryDelay:        2 * time.Second,
+				PINProvider:       NewStaticPINProvider("pin"),
 			},
 			expectedValid:  true,
-			expectedFields: []string{"PKCS11LibraryPath", "PIN", "SlotID"},
+			expectedFields: []string{"PKCS11LibraryPath", "PINProvider", "SlotID"},
 		},
 	}
 
@@ -279,8 +274,8 @@ func TestConfig_Validation(t *testing.T) {
 					switch field {
 					case "PKCS11LibraryPath":
 						assert.NotEmpty(t, tt.config.PKCS11LibraryPath, "PKCS11LibraryPath should not be empty")
-					case "PIN":
-						assert.NotEmpty(t, tt.config.PIN, "PIN should not be empty")
+					case "PINProvider":
+						assert.NotNil(t, tt.config.PINProvider, "PINProvider should not be nil")
 					case "SlotID":
 						assert.GreaterOrEqual(t, tt.config.SlotID, uint(0), "SlotID should be >= 0")
 					case "TokenLabel":
@@ -300,13 +295,13 @@ func TestConfig_Validation(t *testing.T) {
 // Test ConfigFromHSMDevice with edge cases
 func TestConfigFromHSMDevice_EdgeCases(t *testing.T) {
 	tests := []struct {
-		name      string
-		hsmDevice HSMDeviceSpec
-		pin       string
-		validate  func(t *testing.T, config Config)
+		name        string
+		hsmDevice   HSMDeviceSpec
+		pinProvider PINProvider
+		validate    func(t *testing.T, config Config)
 	}{
 		{
-			name: "empty PIN should be preserved",
+			name: "empty PIN provider should be preserved",
 			hsmDevice: HSMDeviceSpec{
 				PKCS11: &PKCS11Config{
 					LibraryPath: "/usr/lib/pkcs11.so",
@@ -314,9 +309,9 @@ func TestConfigFromHSMDevice_EdgeCases(t *testing.T) {
 					TokenLabel:  "Token",
 				},
 			},
-			pin: "", // Empty PIN
+			pinProvider: NewStaticPINProvider(""), // Empty PIN
 			validate: func(t *testing.T, config Config) {
-				assert.Empty(t, config.PIN, "Empty PIN should be preserved")
+				assert.NotNil(t, config.PINProvider, "PINProvider should not be nil")
 				assert.Equal(t, "/usr/lib/pkcs11.so", config.PKCS11LibraryPath)
 			},
 		},
@@ -329,7 +324,7 @@ func TestConfigFromHSMDevice_EdgeCases(t *testing.T) {
 					TokenLabel:  "Token",
 				},
 			},
-			pin: "pin",
+			pinProvider: NewStaticPINProvider("pin"),
 			validate: func(t *testing.T, config Config) {
 				// Note: int32(-1) cast to uint becomes a large positive number
 				// This tests the type conversion behavior
@@ -345,11 +340,11 @@ func TestConfigFromHSMDevice_EdgeCases(t *testing.T) {
 					TokenLabel:  "AVeryLongTokenLabelThatMightBeUsedInProductionEnvironmentsWithDescriptiveNames",
 				},
 			},
-			pin: "a-very-long-pin-that-someone-might-use-for-security-reasons",
+			pinProvider: NewStaticPINProvider("a-very-long-pin-that-someone-might-use-for-security-reasons"),
 			validate: func(t *testing.T, config Config) {
 				assert.True(t, len(config.PKCS11LibraryPath) > 50, "Long library path should be preserved")
 				assert.True(t, len(config.TokenLabel) > 50, "Long token label should be preserved")
-				assert.True(t, len(config.PIN) > 20, "Long PIN should be preserved")
+				assert.NotNil(t, config.PINProvider, "PINProvider should not be nil")
 			},
 		},
 		{
@@ -360,7 +355,7 @@ func TestConfigFromHSMDevice_EdgeCases(t *testing.T) {
 					// No SlotId or TokenLabel provided
 				},
 			},
-			pin: "test-pin",
+			pinProvider: NewStaticPINProvider("test-pin"),
 			validate: func(t *testing.T, config Config) {
 				defaultConfig := DefaultConfig()
 				assert.Equal(t, defaultConfig.ConnectionTimeout, config.ConnectionTimeout)
@@ -374,7 +369,7 @@ func TestConfigFromHSMDevice_EdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config := ConfigFromHSMDevice(tt.hsmDevice, tt.pin)
+			config := ConfigFromHSMDevice(tt.hsmDevice, tt.pinProvider)
 			tt.validate(t, config)
 		})
 	}
@@ -394,7 +389,7 @@ func TestDefaultConfig_Properties(t *testing.T) {
 
 		// Test empty values that must be configured
 		assert.Empty(t, config.PKCS11LibraryPath, "Library path should be empty by default")
-		assert.Empty(t, config.PIN, "PIN should be empty by default")
+		assert.Nil(t, config.PINProvider, "PINProvider should be nil by default")
 		assert.Empty(t, config.TokenLabel, "Token label should be empty by default")
 	})
 
@@ -410,12 +405,12 @@ func TestDefaultConfig_Properties(t *testing.T) {
 	t.Run("modifications don't affect subsequent calls", func(t *testing.T) {
 		// Get a config and modify it
 		config1 := DefaultConfig()
-		config1.PIN = "modified-pin"
+		config1.PINProvider = NewStaticPINProvider("modified-pin")
 		config1.RetryAttempts = 99
 
 		// Get another config - should be unaffected
 		config2 := DefaultConfig()
-		assert.Empty(t, config2.PIN)
+		assert.Nil(t, config2.PINProvider)
 		assert.Equal(t, 3, config2.RetryAttempts)
 	})
 }
@@ -851,11 +846,11 @@ func TestPKCS11Config_TypeConversions(t *testing.T) {
 					},
 				}
 
-				config := ConfigFromHSMDevice(hsmDevice, "test-pin")
+				config := ConfigFromHSMDevice(hsmDevice, NewStaticPINProvider("test-pin"))
 				assert.Equal(t, tt.expected, config.SlotID)
 				assert.Equal(t, "/test/lib.so", config.PKCS11LibraryPath)
 				assert.Equal(t, "TestToken", config.TokenLabel)
-				assert.Equal(t, "test-pin", config.PIN)
+				assert.NotNil(t, config.PINProvider, "PINProvider should not be nil")
 			})
 		}
 	})
@@ -865,13 +860,13 @@ func TestPKCS11Config_TypeConversions(t *testing.T) {
 			PKCS11: nil,
 		}
 
-		config := ConfigFromHSMDevice(hsmDevice, "test-pin")
+		config := ConfigFromHSMDevice(hsmDevice, NewStaticPINProvider("test-pin"))
 
 		// Should use defaults from DefaultConfig
 		defaultConfig := DefaultConfig()
 		assert.Equal(t, defaultConfig.PKCS11LibraryPath, config.PKCS11LibraryPath)
 		assert.Equal(t, defaultConfig.SlotID, config.SlotID)
 		assert.Equal(t, defaultConfig.TokenLabel, config.TokenLabel)
-		assert.Equal(t, "test-pin", config.PIN)
+		assert.NotNil(t, config.PINProvider, "PINProvider should not be nil")
 	})
 }

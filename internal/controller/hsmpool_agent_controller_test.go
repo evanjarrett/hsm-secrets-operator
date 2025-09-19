@@ -36,6 +36,7 @@ import (
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/config"
 )
 
 var _ = Describe("HSMPoolAgentReconciler", func() {
@@ -141,8 +142,8 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 			}).WithTimeout(2 * time.Second).Should(Succeed())
 
 			// Create agent manager optimized for testing
-			imageResolver := NewImageResolver(k8sClient)
-			agentManager = agent.NewTestManager(k8sClient, hsmPoolNamespace, imageResolver)
+			imageResolver := config.NewImageResolver(k8sClient)
+			agentManager = agent.NewTestManager(k8sClient, hsmPoolNamespace, "test-agent:latest", imageResolver)
 		})
 
 		AfterEach(func() {
@@ -179,6 +180,7 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 				Client:       k8sClient,
 				Scheme:       k8sClient.Scheme(),
 				AgentManager: agentManager,
+				AgentImage:   "test-agent:latest",
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -213,7 +215,7 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 
 			container := podSpec.Containers[0]
 			Expect(container.Name).To(Equal("agent"))
-			Expect(container.Image).To(Equal("ghcr.io/evanjarrett/hsm-secrets-operator:latest"))
+			Expect(container.Image).To(Equal("test-agent:latest"))
 			Expect(container.Command).To(Equal([]string{"/entrypoint.sh", "agent"}))
 			Expect(container.Args).To(ContainElement("--device-name=" + hsmDeviceName))
 
@@ -391,7 +393,8 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 			reconciler := &HSMPoolAgentReconciler{
 				Client:       k8sClient,
 				Scheme:       k8sClient.Scheme(),
-				AgentManager: nil, // This will cause an error
+				AgentManager: nil, // This will not prevent deployment creation
+				AgentImage:   "test-agent:latest",
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -403,23 +406,24 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 			// Should not return error (errors are logged but don't fail reconciliation)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Checking that no agent deployment was created")
+			By("Checking that agent deployment was created despite nil agent manager")
 			agentName := fmt.Sprintf("hsm-agent-%s-0", hsmDeviceName)
 			deployment := &appsv1.Deployment{}
-			Consistently(func() error {
+			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
 					Name:      agentName,
 					Namespace: hsmPoolNamespace,
 				}, deployment)
-			}).Should(MatchError(ContainSubstring("not found")))
+			}).Should(Succeed())
 		})
 
 		It("Should idempotently handle existing agent deployments", func() {
 			By("First reconciliation to create agent")
 			reconciler := &HSMPoolAgentReconciler{
-				Client:       k8sClient,
-				Scheme:       k8sClient.Scheme(),
-				AgentManager: agentManager,
+				Client:        k8sClient,
+				Scheme:        k8sClient.Scheme(),
+				ImageResolver: config.NewImageResolver(k8sClient),
+				AgentManager:  agentManager,
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -502,7 +506,7 @@ func TestCleanupStaleAgents(t *testing.T) {
 			name: "cleanup device absent for too long",
 			hsmPool: &hsmv1alpha1.HSMPool{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-pool",
+					Name:      "absent-device-pool",
 					Namespace: "default",
 					OwnerReferences: []metav1.OwnerReference{
 						{
@@ -542,7 +546,7 @@ func TestCleanupStaleAgents(t *testing.T) {
 			name: "no cleanup for recently seen device",
 			hsmPool: &hsmv1alpha1.HSMPool{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-pool",
+					Name:      "recent-device-pool",
 					Namespace: "default",
 					OwnerReferences: []metav1.OwnerReference{
 						{
@@ -582,7 +586,7 @@ func TestCleanupStaleAgents(t *testing.T) {
 			name: "no cleanup for available device",
 			hsmPool: &hsmv1alpha1.HSMPool{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-pool",
+					Name:      "available-device-pool",
 					Namespace: "default",
 					OwnerReferences: []metav1.OwnerReference{
 						{
@@ -622,7 +626,7 @@ func TestCleanupStaleAgents(t *testing.T) {
 			name: "cleanup device never seen after pool timeout",
 			hsmPool: &hsmv1alpha1.HSMPool{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:              "test-pool",
+					Name:              "never-seen-device-pool",
 					Namespace:         "default",
 					CreationTimestamp: metav1.NewTime(tenMinutesAgo), // Pool created 10 minutes ago
 					OwnerReferences: []metav1.OwnerReference{
@@ -708,7 +712,7 @@ func TestDefaultAbsenceTimeout(t *testing.T) {
 	// Pool with custom grace period but no explicit absence timeout
 	hsmPool := &hsmv1alpha1.HSMPool{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-pool",
+			Name:      "test-device-pool",
 			Namespace: "default",
 			OwnerReferences: []metav1.OwnerReference{
 				{
@@ -760,4 +764,203 @@ func TestDefaultAbsenceTimeout(t *testing.T) {
 	// Should cleanup because device was last seen 11 minutes ago, and default timeout is 2x3=6 minutes
 	assert.Equal(t, []string{"test-device"}, mockAgentManager.CleanupCalls,
 		"Should cleanup device when using default timeout (2x grace period)")
+}
+
+func TestAgentNeedsUpdate(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, hsmv1alpha1.AddToScheme(scheme))
+	require.NoError(t, appsv1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	tests := []struct {
+		name           string
+		deployment     *appsv1.Deployment
+		hsmDevice      *hsmv1alpha1.HSMDevice
+		hsmPool        *hsmv1alpha1.HSMPool
+		expectedUpdate bool
+		expectError    bool
+	}{
+		{
+			name: "no update needed - same device path",
+			deployment: &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-agent",
+					Namespace: "default",
+				},
+				Spec: appsv1.DeploymentSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  "agent",
+									Image: "test-image", // Add image to match reconciler's AgentImage
+									VolumeMounts: []corev1.VolumeMount{
+										{
+											Name:      "hsm-device",
+											MountPath: "/dev/hsm",
+										},
+									},
+								},
+							},
+							Volumes: []corev1.Volume{
+								{
+									Name: "hsm-device",
+									VolumeSource: corev1.VolumeSource{
+										HostPath: &corev1.HostPathVolumeSource{
+											Path: "/dev/bus/usb/001/015",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			hsmDevice: &hsmv1alpha1.HSMDevice{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-device",
+					Namespace: "default",
+				},
+			},
+			hsmPool: &hsmv1alpha1.HSMPool{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-device-pool",
+					Namespace: "default",
+				},
+				Status: hsmv1alpha1.HSMPoolStatus{
+					AggregatedDevices: []hsmv1alpha1.DiscoveredDevice{
+						{
+							DevicePath: "/dev/bus/usb/001/015",
+							Available:  true,
+						},
+					},
+				},
+			},
+			expectedUpdate: false,
+			expectError:    false,
+		},
+		{
+			name: "no update needed - device path changes handled by deploymentNeedsUpdateForDevice",
+			deployment: &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-agent",
+					Namespace: "default",
+				},
+				Spec: appsv1.DeploymentSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  "agent",
+									Image: "test-image", // Add image to match reconciler's AgentImage
+									VolumeMounts: []corev1.VolumeMount{
+										{
+											Name:      "hsm-device",
+											MountPath: "/dev/hsm",
+										},
+									},
+								},
+							},
+							Volumes: []corev1.Volume{
+								{
+									Name: "hsm-device",
+									VolumeSource: corev1.VolumeSource{
+										HostPath: &corev1.HostPathVolumeSource{
+											Path: "/dev/bus/usb/001/015", // Old path
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			hsmDevice: &hsmv1alpha1.HSMDevice{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-device",
+					Namespace: "default",
+				},
+			},
+			hsmPool: &hsmv1alpha1.HSMPool{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-device-pool",
+					Namespace: "default",
+				},
+				Status: hsmv1alpha1.HSMPoolStatus{
+					AggregatedDevices: []hsmv1alpha1.DiscoveredDevice{
+						{
+							DevicePath: "/dev/bus/usb/001/016", // New path
+							Available:  true,
+						},
+					},
+				},
+			},
+			expectedUpdate: false,
+			expectError:    false,
+		},
+		{
+			name: "no update needed - pool not found",
+			deployment: &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-agent",
+					Namespace: "default",
+				},
+				Spec: appsv1.DeploymentSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  "agent",
+									Image: "test-image", // Add image to match reconciler's AgentImage
+								},
+							},
+						},
+					},
+				},
+			},
+			hsmDevice: &hsmv1alpha1.HSMDevice{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-device",
+					Namespace: "default",
+				},
+			},
+			// No HSMPool object created (testing nil pool case)
+			hsmPool:        nil,
+			expectedUpdate: false,
+			expectError:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			// Create fake client with objects
+			objs := []runtime.Object{tt.hsmDevice}
+			if tt.hsmPool != nil {
+				objs = append(objs, tt.hsmPool)
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithRuntimeObjects(objs...).
+				Build()
+
+			reconciler := &HSMPoolAgentReconciler{
+				Client:        fakeClient,
+				Scheme:        scheme,
+				ImageResolver: &config.ImageResolver{},
+				AgentImage:    "test-image",
+			}
+
+			needsUpdate, err := reconciler.agentNeedsUpdate(ctx, tt.deployment, tt.hsmPool)
+
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expectedUpdate, needsUpdate)
+			}
+		})
+	}
 }

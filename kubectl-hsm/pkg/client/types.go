@@ -107,3 +107,17 @@ type HSMInfo struct {
 type DeviceInfoResponse struct {
 	DeviceInfos map[string]*HSMInfo `json:"deviceInfos"` // deviceName -> HSMInfo
 }
+
+// ChangePINRequest represents a request to change HSM PIN
+type ChangePINRequest struct {
+	OldPIN string `json:"old_pin"`
+	NewPIN string `json:"new_pin"`
+}
+
+// ChangePINResponse represents the response for PIN change operation
+type ChangePINResponse struct {
+	SuccessCount int      `json:"success_count"`
+	TotalCount   int      `json:"total_count"`
+	Errors       []string `json:"errors,omitempty"`
+	Message      string   `json:"message"`
+}

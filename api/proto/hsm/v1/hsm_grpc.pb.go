@@ -28,6 +28,7 @@ const (
 	HSMAgent_GetChecksum_FullMethodName  = "/hsm.v1.HSMAgent/GetChecksum"
 	HSMAgent_IsConnected_FullMethodName  = "/hsm.v1.HSMAgent/IsConnected"
 	HSMAgent_Health_FullMethodName       = "/hsm.v1.HSMAgent/Health"
+	HSMAgent_ChangePIN_FullMethodName    = "/hsm.v1.HSMAgent/ChangePIN"
 )
 
 // HSMAgentClient is the client API for HSMAgent service.
@@ -54,6 +55,8 @@ type HSMAgentClient interface {
 	IsConnected(ctx context.Context, in *IsConnectedRequest, opts ...grpc.CallOption) (*IsConnectedResponse, error)
 	// Health check for gRPC health protocol
 	Health(ctx context.Context, in *HealthRequest, opts ...grpc.CallOption) (*HealthResponse, error)
+	// ChangePIN changes the HSM device PIN from old to new PIN
+	ChangePIN(ctx context.Context, in *ChangePINRequest, opts ...grpc.CallOption) (*ChangePINResponse, error)
 }
 
 type hSMAgentClient struct {
@@ -154,6 +157,16 @@ func (c *hSMAgentClient) Health(ctx context.Context, in *HealthRequest, opts ...
 	return out, nil
 }
 
+func (c *hSMAgentClient) ChangePIN(ctx context.Context, in *ChangePINRequest, opts ...grpc.CallOption) (*ChangePINResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ChangePINResponse)
+	err := c.cc.Invoke(ctx, HSMAgent_ChangePIN_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // HSMAgentServer is the server API for HSMAgent service.
 // All implementations must embed UnimplementedHSMAgentServer
 // for forward compatibility.
@@ -178,6 +191,8 @@ type HSMAgentServer interface {
 	IsConnected(context.Context, *IsConnectedRequest) (*IsConnectedResponse, error)
 	// Health check for gRPC health protocol
 	Health(context.Context, *HealthRequest) (*HealthResponse, error)
+	// ChangePIN changes the HSM device PIN from old to new PIN
+	ChangePIN(context.Context, *ChangePINRequest) (*ChangePINResponse, error)
 	mustEmbedUnimplementedHSMAgentServer()
 }
 
@@ -214,6 +229,9 @@ func (UnimplementedHSMAgentServer) IsConnected(context.Context, *IsConnectedRequ
 }
 func (UnimplementedHSMAgentServer) Health(context.Context, *HealthRequest) (*HealthResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Health not implemented")
+}
+func (UnimplementedHSMAgentServer) ChangePIN(context.Context, *ChangePINRequest) (*ChangePINResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ChangePIN not implemented")
 }
 func (UnimplementedHSMAgentServer) mustEmbedUnimplementedHSMAgentServer() {}
 func (UnimplementedHSMAgentServer) testEmbeddedByValue()                  {}
@@ -398,6 +416,24 @@ func _HSMAgent_Health_Handler(srv interface{}, ctx context.Context, dec func(int
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HSMAgent_ChangePIN_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ChangePINRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HSMAgentServer).ChangePIN(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HSMAgent_ChangePIN_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HSMAgentServer).ChangePIN(ctx, req.(*ChangePINRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // HSMAgent_ServiceDesc is the grpc.ServiceDesc for HSMAgent service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -440,6 +476,10 @@ var HSMAgent_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Health",
 			Handler:    _HSMAgent_Health_Handler,
+		},
+		{
+			MethodName: "ChangePIN",
+			Handler:    _HSMAgent_ChangePIN_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

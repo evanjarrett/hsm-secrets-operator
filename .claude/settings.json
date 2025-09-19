@@ -1,6 +1,7 @@
 {
   "permissions": {
     "allow": [
+      "WebSearch",
       "Write(*)",
       "Edit(*)",
       "Bash(find:*)",
@@ -22,7 +23,8 @@
       "Bash(kubectl describe:*)",
       "Bash(kubectl exec:*)",
       "Bash(kubectl logs:*)",
-      "Bash(make:*)"
+      "Bash(make:*)",
+      "Bash(./bin/kubectl-hsm:*)"
     ],
     "deny": [],
     "ask": []

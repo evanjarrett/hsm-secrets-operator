@@ -111,7 +111,7 @@ func TestHSMSecretReconciler_Reconcile(t *testing.T) {
 			hsmSecret: nil, // No HSMSecret in fake client
 			agentManager: func() *agent.Manager {
 				fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-				return agent.NewManager(fakeClient, "test-namespace", nil)
+				return agent.NewManager(fakeClient, "test-namespace", "test-agent:latest", nil)
 			}(),
 			expectRequeue: false,
 			expectError:   false,
@@ -134,7 +134,7 @@ func TestHSMSecretReconciler_Reconcile(t *testing.T) {
 			},
 			agentManager: func() *agent.Manager {
 				fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-				return agent.NewManager(fakeClient, "test-namespace", nil)
+				return agent.NewManager(fakeClient, "test-namespace", "test-agent:latest", nil)
 			}(),
 			expectRequeue: true,
 			expectError:   false,
@@ -218,7 +218,7 @@ func TestHSMSecretReconciler_ReconcileWithAgentManager(t *testing.T) {
 			WithRuntimeObjects(hsmSecret).
 			Build()
 
-		agentManager := agent.NewManager(fakeClient, "test-namespace", nil)
+		agentManager := agent.NewManager(fakeClient, "test-namespace", "test-agent:latest", nil)
 
 		reconciler := &HSMSecretReconciler{
 			Client:            fakeClient,

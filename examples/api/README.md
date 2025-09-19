@@ -21,7 +21,7 @@ When deployed in cluster: `http://hsm-secrets-operator-api:8090`
 The API currently supports:
 - No authentication (development/testing)
 - Kubernetes ServiceAccount tokens (when deployed in cluster)
-- Future: OAuth2, API keys, mTLS
+- Future: OAuth2, API keys
 
 ## kubectl-hsm Plugin (Recommended)
 

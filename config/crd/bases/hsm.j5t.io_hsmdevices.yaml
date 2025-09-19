@@ -178,11 +178,6 @@ spec:
                       match
                     type: string
                 type: object
-              pkcs11LibraryPath:
-                description: |-
-                  PKCS11LibraryPath is the path to the PKCS#11 library for this device
-                  Deprecated: Use PKCS11.LibraryPath instead
-                type: string
             required:
             - deviceType
             type: object

@@ -1,27 +1,239 @@
+class HSMTokenManager {
+    constructor(baseUrl = '') {
+        this.baseUrl = baseUrl;
+        this.apiPath = '/api/v1';
+        this.storageKey = 'hsm-token';
+        this.expiryKey = 'hsm-token-expiry';
+        this.cachedToken = null;
+        this.tokenExpiry = null;
+        this.refreshPromise = null;
+        this.loadCachedToken();
+    }
+
+    loadCachedToken() {
+        const token = localStorage.getItem(this.storageKey);
+        const expiry = localStorage.getItem(this.expiryKey);
+
+        if (token && expiry) {
+            this.cachedToken = token;
+            this.tokenExpiry = new Date(expiry);
+        }
+    }
+
+    isTokenValid() {
+        if (!this.cachedToken || !this.tokenExpiry) {
+            return false;
+        }
+
+        // Consider token invalid if it expires within 5 minutes
+        const bufferTime = 5 * 60 * 1000; // 5 minutes in milliseconds
+        return new Date() < (new Date(this.tokenExpiry.getTime() - bufferTime));
+    }
+
+    async getValidToken() {
+        // Return cached token if still valid
+        if (this.isTokenValid()) {
+            return this.cachedToken;
+        }
+
+        // If already refreshing, wait for that promise
+        if (this.refreshPromise) {
+            return await this.refreshPromise;
+        }
+
+        // Start token refresh
+        this.refreshPromise = this.refreshToken();
+
+        try {
+            const token = await this.refreshPromise;
+            return token;
+        } finally {
+            this.refreshPromise = null;
+        }
+    }
+
+    async refreshToken() {
+        try {
+            // First try to get a K8s token automatically (if kubectl is configured)
+            let k8sToken = await this.getK8sToken();
+
+            if (!k8sToken) {
+                // Prompt user for token
+                k8sToken = await this.promptForK8sToken();
+            }
+
+            // Exchange K8s token for HSM JWT
+            const response = await fetch(`${this.baseUrl}${this.apiPath}/auth/token`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ k8s_token: k8sToken })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || `HTTP ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            // Cache the new token
+            this.cachedToken = data.token;
+            this.tokenExpiry = new Date(data.expires_at);
+
+            localStorage.setItem(this.storageKey, this.cachedToken);
+            localStorage.setItem(this.expiryKey, this.tokenExpiry.toISOString());
+
+            return this.cachedToken;
+        } catch (error) {
+            console.error('Token refresh failed:', error);
+            this.clearToken();
+            throw error;
+        }
+    }
+
+    async getK8sToken() {
+        // This would work if the web UI had access to kubectl context
+        // For now, we'll return null to trigger user prompt
+        return null;
+    }
+
+    async promptForK8sToken() {
+        return new Promise((resolve, reject) => {
+            // Create modal dialog
+            const modal = this.createTokenModal();
+            document.body.appendChild(modal);
+
+            // Focus on input
+            const input = modal.querySelector('#tokenInput');
+            const submitBtn = modal.querySelector('#submitToken');
+            const cancelBtn = modal.querySelector('#cancelToken');
+
+            input.focus();
+
+            const cleanup = () => {
+                document.body.removeChild(modal);
+            };
+
+            submitBtn.onclick = () => {
+                const token = input.value.trim();
+                if (token) {
+                    cleanup();
+                    resolve(token);
+                } else {
+                    alert('Please enter a valid token');
+                }
+            };
+
+            cancelBtn.onclick = () => {
+                cleanup();
+                reject(new Error('Authentication cancelled by user'));
+            };
+
+            // Submit on Enter
+            input.onkeydown = (e) => {
+                if (e.key === 'Enter') {
+                    submitBtn.click();
+                }
+            };
+        });
+    }
+
+    createTokenModal() {
+        const modal = document.createElement('div');
+        modal.className = 'auth-modal';
+        modal.innerHTML = `
+            <div class="auth-modal-content">
+                <h2>🔐 Authentication Required</h2>
+                <p>The HSM Secrets API requires authentication. Please provide a Kubernetes service account token.</p>
+
+                <div class="auth-instructions">
+                    <p><strong>To get a token, run this command:</strong></p>
+                    <code>kubectl create token hsm-web-ui-sa --duration=8h</code>
+                    <p><small>Replace <code>hsm-web-ui-sa</code> with your service account name</small></p>
+                </div>
+
+                <div class="form-group">
+                    <label for="tokenInput">Service Account Token:</label>
+                    <textarea id="tokenInput" placeholder="Paste your Kubernetes service account token here..." rows="4"></textarea>
+                </div>
+
+                <div class="auth-actions">
+                    <button id="submitToken" class="btn">Login</button>
+                    <button id="cancelToken" class="btn btn-secondary">Cancel</button>
+                </div>
+            </div>
+        `;
+        return modal;
+    }
+
+    clearToken() {
+        this.cachedToken = null;
+        this.tokenExpiry = null;
+        localStorage.removeItem(this.storageKey);
+        localStorage.removeItem(this.expiryKey);
+    }
+
+    getTokenInfo() {
+        if (!this.cachedToken || !this.tokenExpiry) {
+            return { authenticated: false };
+        }
+
+        return {
+            authenticated: true,
+            expiresAt: this.tokenExpiry,
+            valid: this.isTokenValid()
+        };
+    }
+}
+
 class HSMSecretsAPI {
     constructor(baseUrl = '') {
         this.baseUrl = baseUrl;
         this.apiPath = '/api/v1';
+        this.tokenManager = new HSMTokenManager(baseUrl);
     }
 
     async request(path, options = {}) {
         const url = `${this.baseUrl}${this.apiPath}${path}`;
+
+        // Skip authentication for health and auth endpoints
+        const skipAuth = path.includes('/health') || path.includes('/auth/token');
+
+        const headers = {
+            'Content-Type': 'application/json',
+            ...options.headers
+        };
+
+        // Add authentication header if not skipping auth
+        if (!skipAuth) {
+            try {
+                const token = await this.tokenManager.getValidToken();
+                headers['Authorization'] = `Bearer ${token}`;
+            } catch (error) {
+                throw new Error(`Authentication failed: ${error.message}`);
+            }
+        }
+
         const config = {
-            headers: {
-                'Content-Type': 'application/json',
-                ...options.headers
-            },
+            headers,
             ...options
         };
 
         try {
             const response = await fetch(url, config);
             const data = await response.json();
-            
+
             if (!response.ok) {
+                // Handle authentication errors specifically
+                if (response.status === 401) {
+                    this.tokenManager.clearToken();
+                    throw new Error('Authentication failed. Please login again.');
+                }
                 throw new Error(data.error?.message || `HTTP ${response.status}`);
             }
-            
+
             return data;
         } catch (error) {
             console.error('API Request failed:', error);
@@ -80,6 +292,10 @@ class HSMSecretsUI {
         this.setupEventListeners();
         this.loadInitialData();
         this.initializeCreateForm();
+        this.updateAuthStatus();
+
+        // Update auth status every 30 seconds
+        setInterval(() => this.updateAuthStatus(), 30000);
     }
 
     initializeCreateForm() {
@@ -557,6 +773,34 @@ class HSMSecretsUI {
 
     async refreshAll() {
         await this.loadInitialData();
+        this.updateAuthStatus();
+    }
+
+    updateAuthStatus() {
+        const authInfo = this.api.tokenManager.getTokenInfo();
+        const authElement = document.getElementById('authStatus');
+
+        if (authElement) {
+            if (authInfo.authenticated && authInfo.valid) {
+                const expiresIn = Math.floor((authInfo.expiresAt - new Date()) / (1000 * 60)); // minutes
+                authElement.innerHTML = `✅ Authenticated (expires in ${expiresIn}m)`;
+                authElement.className = 'auth-status authenticated';
+            } else if (authInfo.authenticated && !authInfo.valid) {
+                authElement.innerHTML = `⚠️ Token Expired`;
+                authElement.className = 'auth-status expired';
+            } else {
+                authElement.innerHTML = `❌ Not Authenticated`;
+                authElement.className = 'auth-status not-authenticated';
+            }
+        }
+    }
+
+    logout() {
+        if (confirm('Are you sure you want to logout? You will need to provide a new token to continue using the HSM API.')) {
+            this.api.tokenManager.clearToken();
+            this.updateAuthStatus();
+            this.showSuccess(null, 'Logged out successfully. You will be prompted for authentication on your next API request.');
+        }
     }
 
     showError(element, message) {
@@ -627,4 +871,5 @@ window.refreshAll = () => ui.refreshAll();
 window.showCreateForm = () => ui.showCreateForm();
 window.hideCreateForm = () => ui.hideCreateForm();
 window.hideViewSection = () => ui.hideViewSection();
+window.logout = () => ui.logout();
 

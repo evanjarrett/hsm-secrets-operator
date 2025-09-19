@@ -111,7 +111,7 @@ func (opts *DevicesOptions) Run(ctx context.Context) error {
 	// Handle output formatting
 	switch opts.Output {
 	case "json":
-		combinedOutput := map[string]interface{}{
+		combinedOutput := map[string]any{
 			"devices":      statusResponse.Devices,
 			"totalDevices": statusResponse.TotalDevices,
 		}
@@ -124,7 +124,7 @@ func (opts *DevicesOptions) Run(ctx context.Context) error {
 		}
 		fmt.Println(string(jsonBytes))
 	case "yaml":
-		combinedOutput := map[string]interface{}{
+		combinedOutput := map[string]any{
 			"devices":      statusResponse.Devices,
 			"totalDevices": statusResponse.TotalDevices,
 		}

@@ -72,6 +72,10 @@ func (cw *ClientWrapper) IsConnected() bool {
 	return cw.client.IsConnected()
 }
 
+func (cw *ClientWrapper) ChangePIN(ctx context.Context, oldPIN, newPIN string) error {
+	return cw.client.ChangePIN(ctx, oldPIN, newPIN)
+}
+
 func (cw *ClientWrapper) Close() error {
 	// Decrease reference count when closed
 	cw.pool.mutex.Lock()
@@ -281,18 +285,18 @@ func (cp *ConnectionPool) Close() {
 }
 
 // GetStats returns pool statistics
-func (cp *ConnectionPool) GetStats() map[string]interface{} {
+func (cp *ConnectionPool) GetStats() map[string]any {
 	cp.mutex.RLock()
 	defer cp.mutex.RUnlock()
 
 	now := time.Now()
-	stats := make(map[string]interface{})
+	stats := make(map[string]any)
 	stats["active_connections"] = len(cp.clients)
 	stats["connection_lifetime"] = "permanent"
 
 	var totalUsage int64
 	inUseCount := 0
-	clientDetails := make([]map[string]interface{}, 0, len(cp.clients))
+	clientDetails := make([]map[string]any, 0, len(cp.clients))
 
 	for endpoint, pooled := range cp.clients {
 		totalUsage += pooled.UsageCount
@@ -300,7 +304,7 @@ func (cp *ConnectionPool) GetStats() map[string]interface{} {
 			inUseCount++
 		}
 
-		clientDetails = append(clientDetails, map[string]interface{}{
+		clientDetails = append(clientDetails, map[string]any{
 			"endpoint":              endpoint,
 			"age_seconds":           now.Sub(pooled.CreatedAt).Seconds(),
 			"last_used_seconds_ago": now.Sub(pooled.LastUsed).Seconds(),
@@ -314,7 +318,7 @@ func (cp *ConnectionPool) GetStats() map[string]interface{} {
 	stats["client_details"] = clientDetails
 
 	// Add connection pool metrics
-	stats["metrics"] = map[string]interface{}{
+	stats["metrics"] = map[string]any{
 		"total_connections":      cp.metrics.TotalConnections,
 		"successful_connections": cp.metrics.SuccessfulConnections,
 		"failed_connections":     cp.metrics.FailedConnections,

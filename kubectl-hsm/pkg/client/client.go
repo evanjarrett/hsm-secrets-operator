@@ -17,33 +17,68 @@ limitations under the License.
 package client
 
 import (
-	"maps"
 	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
+
+	"github.com/evanjarrett/hsm-secrets-operator/kubectl-hsm/pkg/auth"
 )
 
 // Client provides methods for interacting with the HSM operator API
 type Client struct {
-	baseURL    string
-	httpClient *http.Client
+	baseURL      string
+	httpClient   *http.Client
+	tokenManager *auth.TokenManager
 }
 
 // NewClient creates a new HSM API client
 func NewClient(baseURL string) *Client {
-	return &Client{
+	client := &Client{
 		baseURL: baseURL,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 	}
+
+	// Initialize JWT token manager (best effort)
+	if tokenManager, err := auth.NewTokenManager(baseURL); err == nil {
+		client.tokenManager = tokenManager
+	}
+	// If token manager fails to initialize, continue without authentication
+	// This provides backwards compatibility for development environments
+
+	return client
+}
+
+// SetServiceAccount sets the service account to use for authentication
+func (c *Client) SetServiceAccount(serviceAccount string) {
+	if c.tokenManager != nil {
+		c.tokenManager.SetServiceAccount(serviceAccount)
+	}
+}
+
+// SetNamespace sets the namespace for authentication
+func (c *Client) SetNamespace(namespace string) {
+	if c.tokenManager != nil {
+		c.tokenManager.SetNamespace(namespace)
+	}
+}
+
+// ClearAuthCache clears the cached authentication token
+func (c *Client) ClearAuthCache() error {
+	if c.tokenManager != nil {
+		return c.tokenManager.ClearCache()
+	}
+	return nil
 }
 
 // decodeBase64Data converts base64-encoded string values back to plain text
@@ -178,6 +213,21 @@ func (c *Client) GetDeviceInfo(ctx context.Context) (*DeviceInfoResponse, error)
 	return &result, nil
 }
 
+// ChangePIN changes the HSM PIN from old PIN to new PIN
+func (c *Client) ChangePIN(ctx context.Context, oldPIN, newPIN string) (*ChangePINResponse, error) {
+	req := ChangePINRequest{
+		OldPIN: oldPIN,
+		NewPIN: newPIN,
+	}
+
+	var result ChangePINResponse
+	err := c.doRequest(ctx, "POST", "/api/v1/hsm/change-pin", req, &result)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // doRequest performs an HTTP request and handles the standard API response format
 func (c *Client) doRequest(ctx context.Context, method, path string, requestBody any, responseData any) error {
 	url := c.baseURL + path
@@ -198,6 +248,15 @@ func (c *Client) doRequest(ctx context.Context, method, path string, requestBody
 
 	if requestBody != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+
+	// Add JWT authentication if available
+	if c.tokenManager != nil && !strings.HasSuffix(path, "/health") && !strings.HasSuffix(path, "/healthz") {
+		token, err := c.tokenManager.GetValidToken(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get authentication token: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	resp, err := c.httpClient.Do(req)

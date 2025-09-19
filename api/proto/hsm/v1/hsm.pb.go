@@ -1003,6 +1003,94 @@ func (x *HealthResponse) GetMessage() string {
 	return ""
 }
 
+type ChangePINRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	OldPin        string                 `protobuf:"bytes,1,opt,name=old_pin,json=oldPin,proto3" json:"old_pin,omitempty"`
+	NewPin        string                 `protobuf:"bytes,2,opt,name=new_pin,json=newPin,proto3" json:"new_pin,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChangePINRequest) Reset() {
+	*x = ChangePINRequest{}
+	mi := &file_hsm_v1_hsm_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChangePINRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChangePINRequest) ProtoMessage() {}
+
+func (x *ChangePINRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_hsm_v1_hsm_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChangePINRequest.ProtoReflect.Descriptor instead.
+func (*ChangePINRequest) Descriptor() ([]byte, []int) {
+	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *ChangePINRequest) GetOldPin() string {
+	if x != nil {
+		return x.OldPin
+	}
+	return ""
+}
+
+func (x *ChangePINRequest) GetNewPin() string {
+	if x != nil {
+		return x.NewPin
+	}
+	return ""
+}
+
+type ChangePINResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChangePINResponse) Reset() {
+	*x = ChangePINResponse{}
+	mi := &file_hsm_v1_hsm_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChangePINResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChangePINResponse) ProtoMessage() {}
+
+func (x *ChangePINResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_hsm_v1_hsm_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChangePINResponse.ProtoReflect.Descriptor instead.
+func (*ChangePINResponse) Descriptor() ([]byte, []int) {
+	return file_hsm_v1_hsm_proto_rawDescGZIP(), []int{22}
+}
+
 var File_hsm_v1_hsm_proto protoreflect.FileDescriptor
 
 const file_hsm_v1_hsm_proto_rawDesc = "" +
@@ -1066,7 +1154,11 @@ const file_hsm_v1_hsm_proto_rawDesc = "" +
 	"\rHealthRequest\"B\n" +
 	"\x0eHealthResponse\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage2\xfa\x04\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"D\n" +
+	"\x10ChangePINRequest\x12\x17\n" +
+	"\aold_pin\x18\x01 \x01(\tR\x06oldPin\x12\x17\n" +
+	"\anew_pin\x18\x02 \x01(\tR\x06newPin\"\x13\n" +
+	"\x11ChangePINResponse2\xbc\x05\n" +
 	"\bHSMAgent\x12:\n" +
 	"\aGetInfo\x12\x16.hsm.v1.GetInfoRequest\x1a\x17.hsm.v1.GetInfoResponse\x12C\n" +
 	"\n" +
@@ -1077,7 +1169,8 @@ const file_hsm_v1_hsm_proto_rawDesc = "" +
 	"\vListSecrets\x12\x1a.hsm.v1.ListSecretsRequest\x1a\x1b.hsm.v1.ListSecretsResponse\x12F\n" +
 	"\vGetChecksum\x12\x1a.hsm.v1.GetChecksumRequest\x1a\x1b.hsm.v1.GetChecksumResponse\x12F\n" +
 	"\vIsConnected\x12\x1a.hsm.v1.IsConnectedRequest\x1a\x1b.hsm.v1.IsConnectedResponse\x127\n" +
-	"\x06Health\x12\x15.hsm.v1.HealthRequest\x1a\x16.hsm.v1.HealthResponseB>Z<github.com/evanjarrett/hsm-secrets-operator/api/proto/hsm/v1b\x06proto3"
+	"\x06Health\x12\x15.hsm.v1.HealthRequest\x1a\x16.hsm.v1.HealthResponse\x12@\n" +
+	"\tChangePIN\x12\x18.hsm.v1.ChangePINRequest\x1a\x19.hsm.v1.ChangePINResponseB>Z<github.com/evanjarrett/hsm-secrets-operator/api/proto/hsm/v1b\x06proto3"
 
 var (
 	file_hsm_v1_hsm_proto_rawDescOnce sync.Once
@@ -1091,7 +1184,7 @@ func file_hsm_v1_hsm_proto_rawDescGZIP() []byte {
 	return file_hsm_v1_hsm_proto_rawDescData
 }
 
-var file_hsm_v1_hsm_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
+var file_hsm_v1_hsm_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
 var file_hsm_v1_hsm_proto_goTypes = []any{
 	(*HSMInfo)(nil),              // 0: hsm.v1.HSMInfo
 	(*SecretData)(nil),           // 1: hsm.v1.SecretData
@@ -1114,12 +1207,14 @@ var file_hsm_v1_hsm_proto_goTypes = []any{
 	(*IsConnectedResponse)(nil),  // 18: hsm.v1.IsConnectedResponse
 	(*HealthRequest)(nil),        // 19: hsm.v1.HealthRequest
 	(*HealthResponse)(nil),       // 20: hsm.v1.HealthResponse
-	nil,                          // 21: hsm.v1.SecretData.DataEntry
-	nil,                          // 22: hsm.v1.SecretMetadata.LabelsEntry
+	(*ChangePINRequest)(nil),     // 21: hsm.v1.ChangePINRequest
+	(*ChangePINResponse)(nil),    // 22: hsm.v1.ChangePINResponse
+	nil,                          // 23: hsm.v1.SecretData.DataEntry
+	nil,                          // 24: hsm.v1.SecretMetadata.LabelsEntry
 }
 var file_hsm_v1_hsm_proto_depIdxs = []int32{
-	21, // 0: hsm.v1.SecretData.data:type_name -> hsm.v1.SecretData.DataEntry
-	22, // 1: hsm.v1.SecretMetadata.labels:type_name -> hsm.v1.SecretMetadata.LabelsEntry
+	23, // 0: hsm.v1.SecretData.data:type_name -> hsm.v1.SecretData.DataEntry
+	24, // 1: hsm.v1.SecretMetadata.labels:type_name -> hsm.v1.SecretMetadata.LabelsEntry
 	0,  // 2: hsm.v1.GetInfoResponse.hsm_info:type_name -> hsm.v1.HSMInfo
 	1,  // 3: hsm.v1.ReadSecretResponse.secret_data:type_name -> hsm.v1.SecretData
 	1,  // 4: hsm.v1.WriteSecretRequest.secret_data:type_name -> hsm.v1.SecretData
@@ -1134,17 +1229,19 @@ var file_hsm_v1_hsm_proto_depIdxs = []int32{
 	15, // 13: hsm.v1.HSMAgent.GetChecksum:input_type -> hsm.v1.GetChecksumRequest
 	17, // 14: hsm.v1.HSMAgent.IsConnected:input_type -> hsm.v1.IsConnectedRequest
 	19, // 15: hsm.v1.HSMAgent.Health:input_type -> hsm.v1.HealthRequest
-	4,  // 16: hsm.v1.HSMAgent.GetInfo:output_type -> hsm.v1.GetInfoResponse
-	6,  // 17: hsm.v1.HSMAgent.ReadSecret:output_type -> hsm.v1.ReadSecretResponse
-	8,  // 18: hsm.v1.HSMAgent.WriteSecret:output_type -> hsm.v1.WriteSecretResponse
-	10, // 19: hsm.v1.HSMAgent.ReadMetadata:output_type -> hsm.v1.ReadMetadataResponse
-	12, // 20: hsm.v1.HSMAgent.DeleteSecret:output_type -> hsm.v1.DeleteSecretResponse
-	14, // 21: hsm.v1.HSMAgent.ListSecrets:output_type -> hsm.v1.ListSecretsResponse
-	16, // 22: hsm.v1.HSMAgent.GetChecksum:output_type -> hsm.v1.GetChecksumResponse
-	18, // 23: hsm.v1.HSMAgent.IsConnected:output_type -> hsm.v1.IsConnectedResponse
-	20, // 24: hsm.v1.HSMAgent.Health:output_type -> hsm.v1.HealthResponse
-	16, // [16:25] is the sub-list for method output_type
-	7,  // [7:16] is the sub-list for method input_type
+	21, // 16: hsm.v1.HSMAgent.ChangePIN:input_type -> hsm.v1.ChangePINRequest
+	4,  // 17: hsm.v1.HSMAgent.GetInfo:output_type -> hsm.v1.GetInfoResponse
+	6,  // 18: hsm.v1.HSMAgent.ReadSecret:output_type -> hsm.v1.ReadSecretResponse
+	8,  // 19: hsm.v1.HSMAgent.WriteSecret:output_type -> hsm.v1.WriteSecretResponse
+	10, // 20: hsm.v1.HSMAgent.ReadMetadata:output_type -> hsm.v1.ReadMetadataResponse
+	12, // 21: hsm.v1.HSMAgent.DeleteSecret:output_type -> hsm.v1.DeleteSecretResponse
+	14, // 22: hsm.v1.HSMAgent.ListSecrets:output_type -> hsm.v1.ListSecretsResponse
+	16, // 23: hsm.v1.HSMAgent.GetChecksum:output_type -> hsm.v1.GetChecksumResponse
+	18, // 24: hsm.v1.HSMAgent.IsConnected:output_type -> hsm.v1.IsConnectedResponse
+	20, // 25: hsm.v1.HSMAgent.Health:output_type -> hsm.v1.HealthResponse
+	22, // 26: hsm.v1.HSMAgent.ChangePIN:output_type -> hsm.v1.ChangePINResponse
+	17, // [17:27] is the sub-list for method output_type
+	7,  // [7:17] is the sub-list for method input_type
 	7,  // [7:7] is the sub-list for extension type_name
 	7,  // [7:7] is the sub-list for extension extendee
 	0,  // [0:7] is the sub-list for field type_name
@@ -1161,7 +1258,7 @@ func file_hsm_v1_hsm_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_hsm_v1_hsm_proto_rawDesc), len(file_hsm_v1_hsm_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   23,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

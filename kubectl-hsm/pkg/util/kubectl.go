@@ -31,6 +31,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
+
+	"github.com/evanjarrett/hsm-secrets-operator/kubectl-hsm/pkg/client"
 )
 
 const (
@@ -262,4 +264,47 @@ func getCurrentNamespace() (string, error) {
 	}
 
 	return namespace, nil
+}
+
+// CreateClient creates an HSM API client with automatic authentication
+func CreateClient() (*client.Client, error) {
+	// For direct API access, try to detect if the API is available locally
+	// If not, set up port forwarding automatically
+
+	baseURL := "http://localhost:8090"
+
+	// Test if API is directly accessible
+	testClient := client.NewClient(baseURL)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if _, err := testClient.GetHealth(ctx); err == nil {
+		// API is directly accessible
+		return testClient, nil
+	}
+
+	// API not directly accessible, try to set up port forwarding
+	kubectlUtil, err := NewKubectlUtil("")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kubectl util for port forwarding: %w", err)
+	}
+
+	// Try to find the operator service
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel2()
+
+	if err := kubectlUtil.FindOperatorService(ctx2); err != nil {
+		return nil, fmt.Errorf("HSM operator not found: %w", err)
+	}
+
+	// Create port forward (this might fail silently if port is already in use)
+	pf, err := kubectlUtil.CreatePortForward(ctx2, 8090, false)
+	if err == nil {
+		// Port forward successful, defer cleanup is handled by the calling command
+		_ = pf // Use the port forward
+	}
+
+	// Return client regardless of port forward success
+	// The client will handle authentication errors gracefully
+	return client.NewClient(baseURL), nil
 }

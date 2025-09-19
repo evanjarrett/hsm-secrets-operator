@@ -24,6 +24,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -36,17 +37,24 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/config"
 )
 
 // DiscoveryDaemonSetReconciler manages discovery DaemonSets for HSMDevice resources
 type DiscoveryDaemonSetReconciler struct {
 	client.Client
-	Scheme        *runtime.Scheme
-	ImageResolver *ImageResolver
+	Scheme             *runtime.Scheme
+	ImageResolver      *config.ImageResolver
+	DiscoveryImage     string
+	ServiceAccountName string
 }
 
+const (
+	trueValue = "true"
+)
+
 // +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups=hsm.j5t.io,resources=hsmpools,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=hsm.j5t.io,resources=hsmpools/status,verbs=get;update;patch
 
@@ -153,7 +161,16 @@ func (r *DiscoveryDaemonSetReconciler) ensureDiscoveryDaemonSet(ctx context.Cont
 	daemonSetName := fmt.Sprintf("%s-discovery", hsmDevice.Name)
 
 	// Get discovery image from environment, manager image, or use default
-	discoveryImage := r.ImageResolver.GetImage(ctx, "DISCOVERY_IMAGE")
+	var discoveryImage string
+	if r.DiscoveryImage != "" {
+		discoveryImage = r.DiscoveryImage
+	} else {
+		// Fallback to ImageResolver for backward compatibility or auto-detection
+		discoveryImage = r.ImageResolver.GetImage(ctx, "")
+	}
+
+	// Determine if we're in a test environment (check HSMDevice annotation)
+	isTestEnvironment := r.isTestEnvironment(ctx, hsmDevice)
 
 	// Define the desired DaemonSet
 	desired := &appsv1.DaemonSet{
@@ -183,7 +200,7 @@ func (r *DiscoveryDaemonSetReconciler) ensureDiscoveryDaemonSet(ctx context.Cont
 					},
 				},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: "hsm-secrets-operator", // Use same SA as manager
+					ServiceAccountName: r.ServiceAccountName,
 					Containers: []corev1.Container{
 						{
 							Name:    "discovery",
@@ -227,36 +244,20 @@ func (r *DiscoveryDaemonSetReconciler) ensureDiscoveryDaemonSet(ctx context.Cont
 									ReadOnly:  true,
 								},
 							},
-							SecurityContext: &corev1.SecurityContext{
-								RunAsNonRoot:             &[]bool{true}[0],
-								AllowPrivilegeEscalation: &[]bool{false}[0],
-								ReadOnlyRootFilesystem:   &[]bool{true}[0],
-								Capabilities: &corev1.Capabilities{
-									Drop: []corev1.Capability{"ALL"},
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("50m"),
+									corev1.ResourceMemory: resource.MustParse("64Mi"),
+								},
+								Limits: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("100m"),
+									corev1.ResourceMemory: resource.MustParse("128Mi"),
 								},
 							},
+							SecurityContext: r.getSecurityContext(isTestEnvironment),
 						},
 					},
-					Volumes: []corev1.Volume{
-						{
-							Name: "dev",
-							VolumeSource: corev1.VolumeSource{
-								HostPath: &corev1.HostPathVolumeSource{
-									Path: "/dev",
-									Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
-								},
-							},
-						},
-						{
-							Name: "sys",
-							VolumeSource: corev1.VolumeSource{
-								HostPath: &corev1.HostPathVolumeSource{
-									Path: "/sys",
-									Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
-								},
-							},
-						},
-					},
+					Volumes: r.getVolumes(isTestEnvironment),
 					// Apply node selector from HSMDevice spec if specified
 					NodeSelector: hsmDevice.Spec.NodeSelector,
 					// Apply tolerations if needed for HSM nodes
@@ -413,4 +414,87 @@ func (r *DiscoveryDaemonSetReconciler) SetupWithManager(mgr ctrl.Manager) error 
 		).
 		Named("discovery-daemonset").
 		Complete(r)
+}
+
+// isTestEnvironment determines if we're running in a test environment
+// by checking the HSMDevice annotation
+func (r *DiscoveryDaemonSetReconciler) isTestEnvironment(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice) bool {
+	logger := log.FromContext(ctx)
+
+	// Check for test mode annotation on HSMDevice
+	if hsmDevice.Annotations != nil {
+		if testMode := hsmDevice.Annotations["hsm.j5t.io/test-mode"]; testMode == trueValue {
+			logger.V(1).Info("Detected test environment via HSMDevice annotation", "device", hsmDevice.Name)
+			return true
+		}
+	}
+	return false
+}
+
+// getVolumes returns the appropriate volumes based on environment
+func (r *DiscoveryDaemonSetReconciler) getVolumes(isTestEnvironment bool) []corev1.Volume {
+	volumes := []corev1.Volume{}
+
+	if isTestEnvironment {
+		// In test environment, use emptyDir volumes for testing
+		volumes = append(volumes,
+			corev1.Volume{
+				Name: "dev",
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				},
+			},
+			corev1.Volume{
+				Name: "sys",
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				},
+			},
+		)
+	} else {
+		// In production, add hostPath volumes for device discovery
+		volumes = append(volumes,
+			corev1.Volume{
+				Name: "dev",
+				VolumeSource: corev1.VolumeSource{
+					HostPath: &corev1.HostPathVolumeSource{
+						Path: "/dev",
+						Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
+					},
+				},
+			},
+			corev1.Volume{
+				Name: "sys",
+				VolumeSource: corev1.VolumeSource{
+					HostPath: &corev1.HostPathVolumeSource{
+						Path: "/sys",
+						Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
+					},
+				},
+			},
+		)
+	}
+
+	return volumes
+}
+
+// getSecurityContext returns the appropriate security context based on environment
+func (r *DiscoveryDaemonSetReconciler) getSecurityContext(isTestEnvironment bool) *corev1.SecurityContext {
+	securityContext := &corev1.SecurityContext{
+		RunAsNonRoot:             &[]bool{true}[0],
+		AllowPrivilegeEscalation: &[]bool{false}[0],
+		ReadOnlyRootFilesystem:   &[]bool{false}[0], // Need write access for termination log
+		Capabilities: &corev1.Capabilities{
+			Drop: []corev1.Capability{"ALL"},
+		},
+	}
+
+	// Add seccomp profile for test environments to pass restricted pod security policy
+	if isTestEnvironment {
+		securityContext.SeccompProfile = &corev1.SeccompProfile{
+			Type: corev1.SeccompProfileTypeRuntimeDefault,
+		}
+	}
+
+	return securityContext
 }

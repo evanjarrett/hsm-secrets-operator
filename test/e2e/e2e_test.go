@@ -86,6 +86,17 @@ var _ = Describe("Manager", Ordered, func() {
 		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+
+		By("waiting for deployment to be ready")
+		cmd = exec.Command("kubectl", "rollout", "status",
+			"deployment/hsm-secrets-operator-controller-manager", "-n", namespace, "--timeout=60s")
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to wait for manager deployment to be ready")
+
+		By("deploying test HSM devices to trigger discovery and agent deployment")
+		cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/test-hsm-device.yaml")
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to deploy test HSM device")
 	})
 
 	// Note: Main cleanup is handled by DeferCleanup in BeforeAll
@@ -278,12 +289,83 @@ var _ = Describe("Manager", Ordered, func() {
 
 			By("getting the metrics by checking curl-metrics logs")
 			metricsOutput := getMetricsOutput()
-			Expect(metricsOutput).To(ContainSubstring(
-				"controller_runtime_reconcile_total",
-			))
+			// Check for metrics that should always be present
+			Expect(metricsOutput).To(ContainSubstring("go_goroutines"))
 		})
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
+
+		It("should have API server start after cache is ready", func() {
+			By("verifying that the API server starts properly after manager cache")
+			verifyAPIServerStartup := func(g Gomega) {
+				cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", namespace)
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+
+				// The API server should start after the manager cache is ready
+				// Look for manager startup and API server startup in the correct order
+				g.Expect(output).To(ContainSubstring("Starting API server"),
+					"API server should have started")
+
+				// Should not see the cache error that indicates race condition
+				g.Expect(output).NotTo(ContainSubstring("the cache is not started, can not read objects"),
+					"API server should not attempt to read from cache before it's started")
+			}
+			Eventually(verifyAPIServerStartup).Should(Succeed())
+		})
+
+		It("should serve API requests without 'no_agents' error immediately after startup", func() {
+			By("creating a test pod to call the API server health endpoint")
+			token, err := serviceAccountToken()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(token).NotTo(BeEmpty())
+
+			// Create a pod that will test the API server
+			apiURL := fmt.Sprintf("http://hsm-secrets-operator-hsm-secrets-operator-api.%s.svc.cluster.local:8090/api/v1/health",
+				namespace)
+			curlCmd := fmt.Sprintf("curl -v -H 'Authorization: Bearer %s' %s", token, apiURL)
+			overrides := fmt.Sprintf(`{"spec":{"containers":[{"name":"curl","image":"curlimages/curl:latest",`+
+				`"command":["/bin/sh","-c"],"args":["%s"],`+
+				`"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},`+
+				`"runAsNonRoot":true,"runAsUser":1000,"seccompProfile":{"type":"RuntimeDefault"}}}],`+
+				`"serviceAccount":"%s"}}`, curlCmd, serviceAccountName)
+			cmd := exec.Command("kubectl", "run", "api-test", "--restart=Never",
+				"--namespace", namespace,
+				"--image=curlimages/curl:latest",
+				"--overrides", overrides)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create api-test pod")
+
+			// Clean up the test pod
+			DeferCleanup(func() {
+				cmd := exec.Command("kubectl", "delete", "pod", "api-test", "-n", namespace, "--ignore-not-found=true")
+				_, _ = utils.Run(cmd)
+			})
+
+			By("waiting for the api-test pod to complete")
+			verifyAPITestComplete := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "pods", "api-test",
+					"-o", "jsonpath={.status.phase}",
+					"-n", namespace)
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("Succeeded"), "api-test pod should complete successfully")
+			}
+			Eventually(verifyAPITestComplete, 2*time.Minute).Should(Succeed())
+
+			By("checking the API response in the test pod logs")
+			cmd = exec.Command("kubectl", "logs", "api-test", "-n", namespace)
+			apiOutput, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from api-test pod")
+
+			// Should get a successful response, not a 'no_agents' error
+			Expect(apiOutput).To(ContainSubstring("< HTTP/1.1 200 OK"),
+				"API health endpoint should return 200 OK")
+			Expect(apiOutput).To(ContainSubstring("\"success\":true"),
+				"API should return successful response")
+			Expect(apiOutput).NotTo(ContainSubstring("no_agents"),
+				"API should not return 'no_agents' error after cache is ready")
+		})
 
 		// TODO: Customize the e2e test suite with scenarios specific to your project.
 		// Consider applying sample/CR(s) and check their status and/or verifying

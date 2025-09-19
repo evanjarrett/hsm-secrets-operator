@@ -853,5 +853,108 @@ func (p *ProxyClient) tombstoneDeleteFromAllDevices(ctx context.Context, clients
 	return results
 }
 
+// ChangePIN handles PIN rotation requests by proxying to all available HSM agents
+func (p *ProxyClient) ChangePIN(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	// Parse request body
+	var req ChangePINRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		p.server.sendError(c, http.StatusBadRequest, "invalid_request", "Invalid request format", map[string]any{"error": err.Error()})
+		return
+	}
+
+	// Validate request
+	if req.OldPIN == "" {
+		p.server.sendError(c, http.StatusBadRequest, "missing_old_pin", "Missing old PIN", map[string]any{"error": "old_pin is required"})
+		return
+	}
+	if req.NewPIN == "" {
+		p.server.sendError(c, http.StatusBadRequest, "missing_new_pin", "Missing new PIN", map[string]any{"error": "new_pin is required"})
+		return
+	}
+	if req.OldPIN == req.NewPIN {
+		p.server.sendError(c, http.StatusBadRequest, "invalid_pin_change", "Invalid PIN change", map[string]any{"error": "new PIN must be different from old PIN"})
+		return
+	}
+
+	// Get all available HSM clients for multi-device PIN change
+	clients, ok := p.getAllAvailableGRPCClients(c)
+	if !ok {
+		return // Error already sent to client
+	}
+
+	p.logger.Info("Changing PIN on all HSM devices", "deviceCount", len(clients))
+
+	// Perform PIN change on all devices in parallel (atomic operation)
+	results := p.changePINOnAllDevices(ctx, clients, req.OldPIN, req.NewPIN)
+
+	// Analyze results
+	var errors []string
+	successCount := 0
+	for deviceName, result := range results {
+		if result.Error != nil {
+			errors = append(errors, fmt.Sprintf("%s: %v", deviceName, result.Error))
+			p.logger.Error(result.Error, "PIN change failed", "device", deviceName)
+		} else {
+			successCount++
+		}
+	}
+
+	// If any device failed, report as partial failure
+	if len(errors) > 0 {
+		if successCount == 0 {
+			// All devices failed
+			p.server.sendError(c, http.StatusInternalServerError, "pin_change_failed", "PIN change failed on all devices", map[string]any{"errors": errors})
+		} else {
+			// Some devices succeeded, some failed
+			response := map[string]any{
+				"success_count": successCount,
+				"total_count":   len(clients),
+				"errors":        errors,
+				"message":       "PIN changed successfully on some devices, but failed on others. Manual intervention may be required.",
+			}
+			p.server.sendResponse(c, http.StatusPartialContent, "Partial PIN change success", response)
+		}
+		return
+	}
+
+	// All devices succeeded
+	response := map[string]any{
+		"success_count": successCount,
+		"total_count":   len(clients),
+		"message":       "PIN changed successfully on all HSM devices",
+	}
+
+	p.logger.Info("PIN change completed successfully on all devices", "deviceCount", successCount)
+	p.server.sendResponse(c, http.StatusOK, "PIN changed successfully", response)
+}
+
+// changePINOnAllDevices performs PIN change on all devices in parallel
+func (p *ProxyClient) changePINOnAllDevices(ctx context.Context, clients map[string]hsm.Client, oldPIN, newPIN string) map[string]WriteResult {
+	results := make(map[string]WriteResult)
+	resultsMutex := sync.Mutex{}
+	wg := sync.WaitGroup{}
+
+	for deviceName, client := range clients {
+		wg.Add(1)
+		go func(deviceName string, client hsm.Client) {
+			defer wg.Done()
+
+			err := client.ChangePIN(ctx, oldPIN, newPIN)
+
+			resultsMutex.Lock()
+			results[deviceName] = WriteResult{
+				DeviceName: deviceName,
+				Error:      err,
+			}
+			resultsMutex.Unlock()
+		}(deviceName, client)
+	}
+
+	wg.Wait()
+	return results
+}
+
 // Interface compliance methods (unused in HTTP mode but required for hsm.Client interface)
 func (p *ProxyClient) Initialize(ctx context.Context, config hsm.Config) error { return nil }

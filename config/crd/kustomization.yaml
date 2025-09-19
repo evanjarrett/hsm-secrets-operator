@@ -4,6 +4,7 @@
 resources:
 - bases/hsm.j5t.io_hsmsecrets.yaml
 - bases/hsm.j5t.io_hsmdevices.yaml
+- bases/hsm.j5t.io_hsmpools.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

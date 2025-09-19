@@ -243,3 +243,9 @@ type IsConnectedResponse struct {
 type GetInfoResponse struct {
 	DeviceInfos map[string]*hsm.HSMInfo `json:"deviceInfos"` // deviceName -> HSMInfo
 }
+
+// ChangePINRequest represents a request to change HSM PIN
+type ChangePINRequest struct {
+	OldPIN string `json:"old_pin" validate:"required"`
+	NewPIN string `json:"new_pin" validate:"required"`
+}

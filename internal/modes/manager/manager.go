@@ -17,16 +17,14 @@ limitations under the License.
 package manager
 
 import (
-	"context"
 	"crypto/tls"
 	"flag"
 	"os"
 	"path/filepath"
-	"strings"
-	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
+	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -36,14 +34,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
-	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/api"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/config"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/controller"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/mirror"
 )
 
 var (
@@ -56,86 +52,64 @@ func init() {
 	utilruntime.Must(hsmv1alpha1.AddToScheme(scheme))
 }
 
-// getCurrentNamespace returns the namespace the operator is running in
-func getCurrentNamespace() string {
-	// Try to read namespace from service account mount
-	if ns, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
-		return strings.TrimSpace(string(ns))
-	}
-
-	// Fallback to default namespace if we can't determine it
-	setupLog.Info("Could not determine current namespace, using 'default'")
-	return "default"
+// managerConfig holds all the configuration for the manager
+type managerConfig struct {
+	metricsAddr          string
+	metricsCertPath      string
+	metricsCertName      string
+	metricsCertKey       string
+	webhookCertPath      string
+	webhookCertName      string
+	webhookCertKey       string
+	enableLeaderElection bool
+	probeAddr            string
+	secureMetrics        bool
+	enableHTTP2          bool
+	enableAPI            bool
+	apiPort              int
+	agentImage           string
+	discoveryImage       string
 }
 
-// getOperatorName returns the operator deployment name
-// This can be overridden via environment variable or falls back to default
-func getOperatorName() string {
-	// Check if operator name is provided via environment variable
-	if name := os.Getenv("OPERATOR_NAME"); name != "" {
-		return name
-	}
-
-	// Check if deployment name is provided via downward API
-	if hostname := os.Getenv("HOSTNAME"); hostname != "" {
-		// Kubernetes deployment pods have hostname like: deployment-name-replicaset-hash-pod-hash
-		// Extract the deployment name by removing the last two parts (replicaset-hash and pod-hash)
-		parts := strings.Split(hostname, "-")
-		if len(parts) >= 3 {
-			// Remove last two parts (replicaset hash and pod hash) to get deployment name
-			deploymentParts := parts[:len(parts)-2]
-			return strings.Join(deploymentParts, "-")
-		}
-		return hostname
-	}
-
-	// Fallback to default deployment name
-	setupLog.Info("Could not determine operator name, using 'controller-manager'")
-	return "controller-manager"
-}
-
-// Run starts the manager mode
-func Run(args []string) error {
-	// Create a new flag set for manager-specific flags
+// parseFlags parses command line arguments and returns the configuration
+func parseFlags(args []string) (*managerConfig, error) {
 	fs := flag.NewFlagSet("manager", flag.ContinueOnError)
+	cfg := &managerConfig{}
 
-	var metricsAddr string
-	var metricsCertPath, metricsCertName, metricsCertKey string
-	var webhookCertPath, webhookCertName, webhookCertKey string
-	var enableLeaderElection bool
-	var probeAddr string
-	var secureMetrics bool
-	var enableHTTP2 bool
-	var enableAPI bool
-	var apiPort int
-
-	fs.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
+	fs.StringVar(&cfg.metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
-	fs.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
-	fs.BoolVar(&enableLeaderElection, "leader-elect", false,
+	fs.StringVar(&cfg.probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
+	fs.BoolVar(&cfg.enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
-	fs.BoolVar(&secureMetrics, "metrics-secure", true,
+	fs.BoolVar(&cfg.secureMetrics, "metrics-secure", true,
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
-	fs.StringVar(&webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")
-	fs.StringVar(&webhookCertName, "webhook-cert-name", "tls.crt", "The name of the webhook certificate file.")
-	fs.StringVar(&webhookCertKey, "webhook-cert-key", "tls.key", "The name of the webhook key file.")
-	fs.StringVar(&metricsCertPath, "metrics-cert-path", "",
+	fs.StringVar(&cfg.webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")
+	fs.StringVar(&cfg.webhookCertName, "webhook-cert-name", "tls.crt", "The name of the webhook certificate file.")
+	fs.StringVar(&cfg.webhookCertKey, "webhook-cert-key", "tls.key", "The name of the webhook key file.")
+	fs.StringVar(&cfg.metricsCertPath, "metrics-cert-path", "",
 		"The directory that contains the metrics server certificate.")
-	fs.StringVar(&metricsCertName, "metrics-cert-name", "tls.crt", "The name of the metrics server certificate file.")
-	fs.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
-	fs.BoolVar(&enableHTTP2, "enable-http2", false,
+	fs.StringVar(&cfg.metricsCertName, "metrics-cert-name", "tls.crt", "The name of the metrics server certificate file.")
+	fs.StringVar(&cfg.metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
+	fs.BoolVar(&cfg.enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
-	fs.BoolVar(&enableAPI, "enable-api", true,
+	fs.BoolVar(&cfg.enableAPI, "enable-api", true,
 		"Enable the REST API server for HSM secret management")
-	fs.IntVar(&apiPort, "api-port", 8090,
+	fs.IntVar(&cfg.apiPort, "api-port", 8090,
 		"Port for the REST API server")
+	fs.StringVar(&cfg.agentImage, "agent-image", "",
+		"Container image for HSM agent pods")
+	fs.StringVar(&cfg.discoveryImage, "discovery-image", "",
+		"Container image for HSM discovery DaemonSet")
 
-	// Parse manager-specific flags from the remaining unparsed arguments
 	if err := fs.Parse(args); err != nil {
-		return err
+		return nil, err
 	}
+	return cfg, nil
+}
 
+// setupManager creates and configures the controller-runtime manager
+func setupManager(cfg *managerConfig) (ctrl.Manager, *certwatcher.CertWatcher, *certwatcher.CertWatcher, error) {
 	var tlsOpts []func(*tls.Config)
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
@@ -149,7 +123,7 @@ func Run(args []string) error {
 		c.NextProtos = []string{"http/1.1"}
 	}
 
-	if !enableHTTP2 {
+	if !cfg.enableHTTP2 {
 		tlsOpts = append(tlsOpts, disableHTTP2)
 	}
 
@@ -159,18 +133,18 @@ func Run(args []string) error {
 	// Initial webhook TLS options
 	webhookTLSOpts := tlsOpts
 
-	if len(webhookCertPath) > 0 {
+	if len(cfg.webhookCertPath) > 0 {
 		setupLog.Info("Initializing webhook certificate watcher using provided certificates",
-			"webhook-cert-path", webhookCertPath, "webhook-cert-name", webhookCertName, "webhook-cert-key", webhookCertKey)
+			"webhook-cert-path", cfg.webhookCertPath, "webhook-cert-name", cfg.webhookCertName, "webhook-cert-key", cfg.webhookCertKey)
 
 		var err error
 		webhookCertWatcher, err = certwatcher.New(
-			filepath.Join(webhookCertPath, webhookCertName),
-			filepath.Join(webhookCertPath, webhookCertKey),
+			filepath.Join(cfg.webhookCertPath, cfg.webhookCertName),
+			filepath.Join(cfg.webhookCertPath, cfg.webhookCertKey),
 		)
 		if err != nil {
 			setupLog.Error(err, "Failed to initialize webhook certificate watcher")
-			return err
+			return nil, nil, nil, err
 		}
 
 		webhookTLSOpts = append(webhookTLSOpts, func(config *tls.Config) {
@@ -186,13 +160,13 @@ func Run(args []string) error {
 	// More info:
 	// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.21.0/pkg/metrics/server
 	// - https://book.kubebuilder.io/reference/metrics.html
-	metricsServerOptions := metricsserver.Options{
-		BindAddress:   metricsAddr,
-		SecureServing: secureMetrics,
+	metricsServerOptions := server.Options{
+		BindAddress:   cfg.metricsAddr,
+		SecureServing: cfg.secureMetrics,
 		TLSOpts:       tlsOpts,
 	}
 
-	if secureMetrics {
+	if cfg.secureMetrics {
 		// FilterProvider is used to protect the metrics endpoint with authn/authz.
 		// These configurations ensure that only authorized users and service accounts
 		// can access the metrics endpoint. The RBAC are configured in 'config/rbac/kustomization.yaml'. More info:
@@ -208,18 +182,18 @@ func Run(args []string) error {
 	// - [METRICS-WITH-CERTS] at config/default/kustomization.yaml to generate and use certificates
 	// managed by cert-manager for the metrics server.
 	// - [PROMETHEUS-WITH-CERTS] at config/prometheus/kustomization.yaml for TLS certification.
-	if len(metricsCertPath) > 0 {
+	if len(cfg.metricsCertPath) > 0 {
 		setupLog.Info("Initializing metrics certificate watcher using provided certificates",
-			"metrics-cert-path", metricsCertPath, "metrics-cert-name", metricsCertName, "metrics-cert-key", metricsCertKey)
+			"metrics-cert-path", cfg.metricsCertPath, "metrics-cert-name", cfg.metricsCertName, "metrics-cert-key", cfg.metricsCertKey)
 
 		var err error
 		metricsCertWatcher, err = certwatcher.New(
-			filepath.Join(metricsCertPath, metricsCertName),
-			filepath.Join(metricsCertPath, metricsCertKey),
+			filepath.Join(cfg.metricsCertPath, cfg.metricsCertName),
+			filepath.Join(cfg.metricsCertPath, cfg.metricsCertKey),
 		)
 		if err != nil {
 			setupLog.Error(err, "to initialize metrics certificate watcher", "error", err)
-			return err
+			return nil, nil, nil, err
 		}
 
 		metricsServerOptions.TLSOpts = append(metricsServerOptions.TLSOpts, func(config *tls.Config) {
@@ -231,8 +205,8 @@ func Run(args []string) error {
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
-		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         enableLeaderElection,
+		HealthProbeBindAddress: cfg.probeAddr,
+		LeaderElection:         cfg.enableLeaderElection,
 		LeaderElectionID:       "64b68d60.j5t.io",
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
@@ -248,17 +222,30 @@ func Run(args []string) error {
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
-		return err
+		return nil, nil, nil, err
 	}
 
+	return mgr, metricsCertWatcher, webhookCertWatcher, nil
+}
+
+// setupOperatorComponents sets up operator namespace, name, TLS manager, and agent manager
+func setupOperatorComponents() (string, string, error) {
 	// Get current operator namespace and name
-	operatorNamespace := getCurrentNamespace()
-	operatorName := getOperatorName()
+	operatorNamespace, err := config.GetCurrentNamespace()
+	if err != nil {
+		setupLog.Error(err, "unable to get the current namespace")
+		return "", "", err
+	}
+	operatorName, _ := os.Hostname()
 	setupLog.Info("Detected operator details", "namespace", operatorNamespace, "name", operatorName)
 
-	// Agent manager will detect the current namespace automatically
-	imageResolver := controller.NewImageResolver(mgr.GetClient())
-	agentManager := agent.NewManager(mgr.GetClient(), "", imageResolver)
+	return operatorNamespace, operatorName, nil
+}
+
+// setupBaseControllers sets up controllers that don't depend on the agent manager
+func setupBaseControllers(mgr ctrl.Manager, cfg *managerConfig) error {
+	// Create image resolver
+	imageResolver := config.NewImageResolver(mgr.GetClient())
 
 	// Set up HSMPool controller to aggregate discovery reports from pod annotations
 	if err := (&controller.HSMPoolReconciler{
@@ -269,36 +256,96 @@ func Run(args []string) error {
 		return err
 	}
 
-	// Set up HSMPool agent controller to deploy agents when pools are ready
-	if err := (&controller.HSMPoolAgentReconciler{
-		Client:               mgr.GetClient(),
-		Scheme:               mgr.GetScheme(),
-		AgentManager:         agentManager,
-		DeviceAbsenceTimeout: 10 * time.Minute, // Default: cleanup agents after 10 minutes of device absence
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "HSMPoolAgent")
-		return err
-	}
-
-	if err := (&controller.HSMSecretReconciler{
-		Client:            mgr.GetClient(),
-		Scheme:            mgr.GetScheme(),
-		AgentManager:      agentManager,
-		OperatorNamespace: operatorNamespace,
-		OperatorName:      operatorName,
-		StartupTime:       time.Now(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "HSMSecret")
-		return err
-	}
-
 	// Set up discovery DaemonSet controller (manager-owned)
 	if err := (&controller.DiscoveryDaemonSetReconciler{
-		Client:        mgr.GetClient(),
-		Scheme:        mgr.GetScheme(),
-		ImageResolver: imageResolver,
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		ImageResolver:  imageResolver,
+		DiscoveryImage: cfg.discoveryImage,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DiscoveryDaemonSet")
+		return err
+	}
+
+	return nil
+}
+
+// startServices starts the API server, mirroring service, and manager
+func startServices(mgr ctrl.Manager, agentManagerRunnable *AgentManagerRunnable, operatorNamespace string, cfg *managerConfig) error {
+	// Start API server if enabled (will wait for agent manager to be ready)
+	if cfg.enableAPI {
+		// Create Kubernetes clientset for JWT authentication
+		k8sInterface, err := kubernetes.NewForConfig(mgr.GetConfig())
+		if err != nil {
+			setupLog.Error(err, "unable to create Kubernetes clientset for API authentication")
+			return err
+		}
+
+		// Create API server runnable that waits for agent manager
+		apiServerRunnable := NewAPIServerRunnable(mgr.GetClient(), agentManagerRunnable, operatorNamespace, k8sInterface, cfg.apiPort, ctrl.Log.WithName("api"))
+
+		// Add API server as a Runnable to ensure it starts after the cache is ready
+		if err := mgr.Add(apiServerRunnable); err != nil {
+			setupLog.Error(err, "unable to add API server to manager")
+			return err
+		}
+		setupLog.Info("API server will start after agent manager is ready", "port", cfg.apiPort)
+	}
+
+	// Start device-scoped HSM mirroring in background (will wait for agent manager to be ready)
+	mirrorManagerRunnable := NewMirrorManagerRunnable(mgr.GetClient(), agentManagerRunnable, operatorNamespace, ctrl.Log.WithName("device-mirror"))
+	if err := mgr.Add(mirrorManagerRunnable); err != nil {
+		setupLog.Error(err, "unable to add mirror manager to manager")
+		return err
+	}
+	setupLog.Info("Mirror manager will start after agent manager is ready")
+
+	setupLog.Info("starting manager")
+	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+		setupLog.Error(err, "problem running manager")
+		return err
+	}
+
+	return nil
+}
+
+// Run starts the manager mode
+func Run(args []string) error {
+	cfg, err := parseFlags(args)
+	if err != nil {
+		return err
+	}
+
+	mgr, metricsCertWatcher, webhookCertWatcher, err := setupManager(cfg)
+	if err != nil {
+		return err
+	}
+
+	operatorNamespace, operatorName, err := setupOperatorComponents()
+	if err != nil {
+		return err
+	}
+
+	// Create agent manager runnable that will create the agent manager after TLS is ready
+	agentManagerRunnable := NewAgentManagerRunnable(mgr.GetClient(), cfg.agentImage, operatorNamespace, setupLog)
+
+	// Add agent manager as a runnable to start after TLS is ready
+	setupLog.Info("Adding agent manager to manager")
+	if err := mgr.Add(agentManagerRunnable); err != nil {
+		setupLog.Error(err, "unable to add agent manager to manager")
+		return err
+	}
+
+	// Setup controllers that don't need the agent manager immediately
+	if err := setupBaseControllers(mgr, cfg); err != nil {
+		return err
+	}
+
+	// Create a runnable to setup agent-dependent controllers after agent manager is ready
+	agentControllerSetup := NewAgentControllerSetupRunnable(agentManagerRunnable, mgr, operatorNamespace, operatorName, setupLog)
+	setupLog.Info("Adding agent controller setup to manager")
+	if err := mgr.Add(agentControllerSetup); err != nil {
+		setupLog.Error(err, "unable to add agent controller setup to manager")
 		return err
 	}
 
@@ -327,69 +374,5 @@ func Run(args []string) error {
 		return err
 	}
 
-	// Start API server if enabled
-	if enableAPI {
-		apiServer := api.NewServer(mgr.GetClient(), agentManager, operatorNamespace, ctrl.Log.WithName("api"))
-
-		// Start API server in a separate goroutine
-		go func() {
-			setupLog.Info("starting API server", "port", apiPort)
-			if err := apiServer.Start(apiPort); err != nil {
-				setupLog.Error(err, "problem running API server")
-			}
-		}()
-	}
-
-	// Start device-scoped HSM mirroring in background
-	mirrorManager := mirror.NewMirrorManager(mgr.GetClient(), agentManager, ctrl.Log.WithName("device-mirror"), operatorNamespace)
-	go func() {
-		mirrorTicker := time.NewTicker(30 * time.Second) // Mirror every 30 seconds
-		defer mirrorTicker.Stop()
-
-		setupLog.Info("starting device-scoped HSM mirroring", "interval", "30s")
-
-		// Wait for agents to be ready before starting mirroring
-		setupLog.Info("waiting for HSM agents to be ready before starting mirroring")
-		ctx := context.Background()
-		ready, err := mirrorManager.WaitForAgentsReady(ctx, 5*time.Minute)
-		if err != nil {
-			setupLog.Error(err, "failed to wait for agents to be ready")
-			return
-		}
-		if !ready {
-			setupLog.Info("no agents became ready within timeout, disabling mirroring")
-			return
-		}
-		setupLog.Info("HSM agents are ready, starting mirroring cycle")
-
-		for range mirrorTicker.C {
-			setupLog.Info("starting device-scoped mirroring cycle")
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			result, err := mirrorManager.MirrorAllSecrets(ctx)
-			cancel()
-
-			if err != nil {
-				setupLog.Error(err, "device-scoped mirroring failed")
-			} else {
-				setupLog.Info("device-scoped mirroring completed",
-					"secretsProcessed", result.SecretsProcessed,
-					"secretsUpdated", result.SecretsUpdated,
-					"secretsCreated", result.SecretsCreated,
-					"metadataRestored", result.MetadataRestored,
-					"errors", len(result.Errors),
-					"success", result.Success)
-				if len(result.Errors) > 0 {
-					setupLog.Info("mirroring errors details", "errors", result.Errors)
-				}
-			}
-		}
-	}()
-
-	setupLog.Info("starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
-		setupLog.Error(err, "problem running manager")
-		return err
-	}
-
-	return nil
+	return startServices(mgr, agentManagerRunnable, operatorNamespace, cfg)
 }

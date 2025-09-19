@@ -280,3 +280,24 @@ func (c *GRPCClient) SetTimeout(timeout time.Duration) {
 func (c *GRPCClient) GetEndpoint() string {
 	return c.endpoint
 }
+
+// ChangePIN changes the HSM PIN from old PIN to new PIN
+func (c *GRPCClient) ChangePIN(ctx context.Context, oldPIN, newPIN string) error {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	req := &hsmv1.ChangePINRequest{
+		OldPin: oldPIN,
+		NewPin: newPIN,
+	}
+
+	c.logger.V(1).Info("Changing HSM PIN via gRPC")
+	_, err := c.client.ChangePIN(ctx, req)
+	if err != nil {
+		c.logger.Error(err, "Failed to change PIN via gRPC")
+		return fmt.Errorf("gRPC ChangePIN failed: %w", err)
+	}
+
+	c.logger.Info("Successfully changed HSM PIN via gRPC")
+	return nil
+}

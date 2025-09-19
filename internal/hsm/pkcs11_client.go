@@ -78,8 +78,8 @@ func (c *PKCS11Client) Initialize(ctx context.Context, config Config) error {
 		return fmt.Errorf("PKCS11LibraryPath is required")
 	}
 
-	if config.PIN == "" {
-		return fmt.Errorf("PIN is required for HSM authentication")
+	if config.PINProvider == nil {
+		return fmt.Errorf("PINProvider is required for HSM authentication")
 	}
 
 	// Initialize PKCS#11 context
@@ -171,8 +171,21 @@ func (c *PKCS11Client) Initialize(ctx context.Context, config Config) error {
 	}
 	c.session = session
 
+	// Get PIN from provider
+	pin, err := config.PINProvider.GetPIN(ctx)
+	if err != nil {
+		if closeErr := c.ctx.CloseSession(session); closeErr != nil {
+			c.logger.V(1).Info("Failed to close session", "error", closeErr)
+		}
+		if finErr := c.ctx.Finalize(); finErr != nil {
+			c.logger.V(1).Info("Failed to finalize PKCS#11 context", "error", finErr)
+		}
+		c.ctx.Destroy()
+		return fmt.Errorf("failed to get PIN from provider: %w", err)
+	}
+
 	// Login with PIN
-	if err := c.ctx.Login(session, pkcs11.CKU_USER, config.PIN); err != nil {
+	if err := c.ctx.Login(session, pkcs11.CKU_USER, pin); err != nil {
 		if closeErr := c.ctx.CloseSession(session); closeErr != nil {
 			c.logger.V(1).Info("Failed to close session", "error", closeErr)
 		}
@@ -737,6 +750,47 @@ func (c *PKCS11Client) IsConnected() bool {
 	defer c.mutex.RUnlock()
 
 	return c.connected
+}
+
+// ChangePIN changes the HSM PIN from old PIN to new PIN
+func (c *PKCS11Client) ChangePIN(ctx context.Context, oldPIN, newPIN string) error {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	if !c.connected {
+		return fmt.Errorf("HSM not connected")
+	}
+
+	c.logger.Info("Changing HSM PIN")
+
+	// Validate PIN parameters
+	if oldPIN == "" {
+		return fmt.Errorf("old PIN cannot be empty")
+	}
+	if newPIN == "" {
+		return fmt.Errorf("new PIN cannot be empty")
+	}
+	if oldPIN == newPIN {
+		return fmt.Errorf("new PIN must be different from old PIN")
+	}
+
+	// Use PKCS#11 SetPIN function to change the PIN
+	// Note: This changes the user PIN (not SO PIN)
+	if err := c.ctx.SetPIN(c.session, oldPIN, newPIN); err != nil {
+		c.logger.Error(err, "Failed to change HSM PIN")
+		return fmt.Errorf("failed to change HSM PIN: %w", err)
+	}
+
+	// Invalidate PIN cache after successful PIN change
+	if c.config.PINProvider != nil {
+		if kubePINProvider, ok := c.config.PINProvider.(*KubernetesPINProvider); ok {
+			kubePINProvider.InvalidateCacheAfterPINChange()
+			c.logger.V(1).Info("Invalidated PIN cache after successful PIN change")
+		}
+	}
+
+	c.logger.Info("Successfully changed HSM PIN")
+	return nil
 }
 
 // WithRetry wraps an operation with retry logic

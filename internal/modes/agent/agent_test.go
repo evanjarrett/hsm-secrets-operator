@@ -18,7 +18,7 @@ package agent
 
 import (
 	"flag"
-	"os"
+	"fmt"
 	"testing"
 	"time"
 
@@ -193,7 +193,7 @@ func TestPKCS11ConfigurationPatterns(t *testing.T) {
 
 // Test agent startup configuration patterns
 func TestAgentStartupPatterns(t *testing.T) {
-	config := map[string]interface{}{
+	config := map[string]any{
 		"deviceName":        "pico-hsm-1",
 		"grpcPort":          9090,
 		"healthPort":        8093,
@@ -269,7 +269,6 @@ func TestEnvironmentVariablePatterns(t *testing.T) {
 		"PKCS11_LIBRARY_PATH": "/usr/lib/opensc-pkcs11.so",
 		"PKCS11_SLOT_ID":      "0",
 		"PKCS11_TOKEN_LABEL":  "PicoHSM",
-		"PKCS11_PIN":          "123456",
 	}
 
 	for key, value := range envVars {
@@ -438,72 +437,118 @@ func TestAgentFlagParsing(t *testing.T) {
 	}
 }
 
-func TestAgentEnvironmentVariables(t *testing.T) {
+func TestAgentConfigurationFromCLI(t *testing.T) {
 	tests := []struct {
-		name           string
-		envVars        map[string]string
-		expectedDevice string
-		expectedLib    string
-		expectedToken  string
-		expectedPIN    string
+		name                string
+		cliArgs             []string
+		expectedDevice      string
+		expectedLib         string
+		expectedToken       string
+		expectedPort        int
+		expectedHealthPort  int
+		shouldError         bool
+		expectedErrorSubstr string
 	}{
 		{
-			name: "device name from env",
-			envVars: map[string]string{
-				"HSM_DEVICE_NAME": "env-device",
+			name: "valid complete configuration",
+			cliArgs: []string{
+				"--device-name=test-device",
+				"--pkcs11-library=/usr/lib/opensc-pkcs11.so",
+				"--token-label=TestToken",
+				"--port=9090",
+				"--health-port=8093",
 			},
-			expectedDevice: "env-device",
+			expectedDevice:     "test-device",
+			expectedLib:        "/usr/lib/opensc-pkcs11.so",
+			expectedToken:      "TestToken",
+			expectedPort:       9090,
+			expectedHealthPort: 8093,
+			shouldError:        false,
 		},
 		{
-			name: "pkcs11 config from env",
-			envVars: map[string]string{
-				"HSM_DEVICE_NAME":     "test-device",
-				"PKCS11_LIBRARY_PATH": "/usr/lib/test-pkcs11.so",
-				"PKCS11_TOKEN_LABEL":  "TestToken",
-				"PKCS11_PIN":          "123456",
+			name: "missing device name",
+			cliArgs: []string{
+				"--pkcs11-library=/usr/lib/opensc-pkcs11.so",
+				"--token-label=TestToken",
 			},
-			expectedDevice: "test-device",
-			expectedLib:    "/usr/lib/test-pkcs11.so",
-			expectedToken:  "TestToken",
-			expectedPIN:    "123456",
+			shouldError:         true,
+			expectedErrorSubstr: "device name is required",
+		},
+		{
+			name: "missing pkcs11 library",
+			cliArgs: []string{
+				"--device-name=test-device",
+				"--token-label=TestToken",
+			},
+			shouldError:         true,
+			expectedErrorSubstr: "PKCS11 library path is required",
+		},
+		{
+			name: "missing token label",
+			cliArgs: []string{
+				"--device-name=test-device",
+				"--pkcs11-library=/usr/lib/opensc-pkcs11.so",
+			},
+			shouldError:         true,
+			expectedErrorSubstr: "token label is required",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Clear environment
-			envKeys := []string{"HSM_DEVICE_NAME", "PKCS11_LIBRARY_PATH", "PKCS11_TOKEN_LABEL", "PKCS11_PIN"}
-			for _, key := range envKeys {
-				_ = os.Unsetenv(key)
+			// Test flag parsing and validation logic
+			fs := flag.NewFlagSet("test-agent", flag.ContinueOnError)
+
+			var deviceName string
+			var port int
+			var healthPort int
+			var pkcs11LibraryPath string
+			var tokenLabel string
+			var pin string
+
+			fs.StringVar(&deviceName, "device-name", "", "Name of the HSM device this agent serves")
+			fs.IntVar(&port, "port", 9090, "Port for the HSM agent gRPC API")
+			fs.IntVar(&healthPort, "health-port", 8093, "Port for health checks")
+			fs.StringVar(&pkcs11LibraryPath, "pkcs11-library", "", "Path to PKCS#11 library")
+			fs.StringVar(&tokenLabel, "token-label", "", "PKCS#11 token label")
+			fs.StringVar(&pin, "pin", "", "PKCS#11 PIN")
+
+			// Parse the test arguments
+			err := fs.Parse(tt.cliArgs)
+			if err != nil && !tt.shouldError {
+				t.Fatalf("unexpected flag parsing error: %v", err)
 			}
 
-			// Set test environment variables
-			for key, value := range tt.envVars {
-				_ = os.Setenv(key, value)
+			// Validate required parameters (mimicking agent validation logic)
+			if deviceName == "" {
+				err = fmt.Errorf("device name is required via --device-name")
+			} else if pkcs11LibraryPath == "" {
+				err = fmt.Errorf("PKCS11 library path is required via --pkcs11-library")
+			} else if tokenLabel == "" {
+				err = fmt.Errorf("token label is required via --token-label")
 			}
 
-			// Test environment variable reading
-			deviceName := os.Getenv("HSM_DEVICE_NAME")
-			libraryPath := os.Getenv("PKCS11_LIBRARY_PATH")
-			tokenLabel := os.Getenv("PKCS11_TOKEN_LABEL")
-			pin := os.Getenv("PKCS11_PIN")
+			if tt.shouldError {
+				assert.Error(t, err)
+				if tt.expectedErrorSubstr != "" {
+					assert.Contains(t, err.Error(), tt.expectedErrorSubstr)
+				}
+				return
+			}
 
+			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedDevice, deviceName)
-			assert.Equal(t, tt.expectedLib, libraryPath)
+			assert.Equal(t, tt.expectedLib, pkcs11LibraryPath)
 			assert.Equal(t, tt.expectedToken, tokenLabel)
-			assert.Equal(t, tt.expectedPIN, pin)
-
-			// Clean up
-			for _, key := range envKeys {
-				_ = os.Unsetenv(key)
-			}
+			assert.Equal(t, tt.expectedPort, port)
+			assert.Equal(t, tt.expectedHealthPort, healthPort)
 		})
 	}
 }
 
 // Benchmark tests
 func BenchmarkConfigurationValidation(b *testing.B) {
-	config := map[string]interface{}{
+	config := map[string]any{
 		"deviceName": "pico-hsm-1",
 		"port":       9090,
 		"healthPort": 8093,

@@ -64,11 +64,9 @@ spec:
           - --mode=manager
           - --leader-elect
           - --health-probe-bind-address=:8081
-        image: controller:latest
+        image: controller
         name: manager
-        env:
-        - name: AGENT_IMAGE
-          value: controller:latest
+        env: []
         ports: []
         securityContext:
           allowPrivilegeEscalation: false

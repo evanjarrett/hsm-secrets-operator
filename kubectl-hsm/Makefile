@@ -59,9 +59,9 @@ install: build
 # Install to system-wide location (requires sudo)
 .PHONY: install-system
 install-system: build
-	@echo "Installing kubectl-hsm to /usr/local/bin/..."
-	@sudo cp $(BUILD_DIR)/$(PLUGIN_NAME) /usr/local/bin/
-	@echo "✅ Installed to /usr/local/bin/$(PLUGIN_NAME)"
+	@echo "Installing kubectl-hsm to /usr/local/sbin/..."
+	@sudo cp $(BUILD_DIR)/$(PLUGIN_NAME) /usr/local/sbin/
+	@echo "✅ Installed to /usr/local/sbin/$(PLUGIN_NAME)"
 	@echo ""
 	@echo "Plugin is now available system-wide:"
 	@echo "  kubectl hsm --help"

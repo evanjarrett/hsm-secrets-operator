@@ -25,6 +25,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/config"
 )
 
 func TestSchemeInitialization(t *testing.T) {
@@ -105,67 +106,11 @@ func TestGetCurrentNamespace(t *testing.T) {
 				ns := strings.TrimSpace(tt.fileContent)
 				assert.Equal(t, tt.expectedNS, ns)
 			} else {
-				// Test the fallback behavior by checking default namespace
-				ns := getCurrentNamespace()
-				assert.NotEmpty(t, ns)
+				// Test the error behavior when no namespace can be determined
+				ns, err := config.GetCurrentNamespace()
+				assert.Error(t, err)
+				assert.Empty(t, ns)
 			}
-		})
-	}
-}
-
-func TestGetOperatorName(t *testing.T) {
-	tests := []struct {
-		name         string
-		operatorName string
-		hostname     string
-		expected     string
-	}{
-		{
-			name:         "OPERATOR_NAME environment variable set",
-			operatorName: "custom-hsm-operator",
-			expected:     "custom-hsm-operator",
-		},
-		{
-			name:     "hostname with deployment format",
-			hostname: "hsm-operator-deployment-7b8c9d-xkz2p",
-			expected: "hsm-operator-deployment",
-		},
-		{
-			name:     "hostname with simple format",
-			hostname: "simple-hostname",
-			expected: "simple-hostname",
-		},
-		{
-			name:     "complex deployment name",
-			hostname: "hsm-secrets-operator-manager-5f7b8c-abc123",
-			expected: "hsm-secrets-operator-manager",
-		},
-		{
-			name:     "no environment variables set",
-			expected: "controller-manager", // fallback
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Clear environment variables
-			_ = os.Unsetenv("OPERATOR_NAME")
-			_ = os.Unsetenv("HOSTNAME")
-
-			// Set test environment variables
-			if tt.operatorName != "" {
-				_ = os.Setenv("OPERATOR_NAME", tt.operatorName)
-			}
-			if tt.hostname != "" {
-				_ = os.Setenv("HOSTNAME", tt.hostname)
-			}
-
-			result := getOperatorName()
-			assert.Equal(t, tt.expected, result)
-
-			// Clean up
-			_ = os.Unsetenv("OPERATOR_NAME")
-			_ = os.Unsetenv("HOSTNAME")
 		})
 	}
 }
@@ -174,12 +119,12 @@ func TestGetOperatorName(t *testing.T) {
 func TestConfigurationValidation(t *testing.T) {
 	tests := []struct {
 		name    string
-		config  map[string]interface{}
+		config  map[string]any
 		wantErr bool
 	}{
 		{
 			name: "valid basic config",
-			config: map[string]interface{}{
+			config: map[string]any{
 				"metrics-bind-address": ":8080",
 				"health-probe-address": ":8081",
 				"leader-elect":         true,
@@ -188,7 +133,7 @@ func TestConfigurationValidation(t *testing.T) {
 		},
 		{
 			name: "valid webhook config",
-			config: map[string]interface{}{
+			config: map[string]any{
 				"webhook-port":      9443,
 				"webhook-cert-dir":  "/tmp/k8s-webhook-server/serving-certs",
 				"webhook-cert-name": "tls.crt",
@@ -287,7 +232,7 @@ func TestTLSConfigPatterns(t *testing.T) {
 // Test manager options patterns
 func TestManagerOptionsPatterns(t *testing.T) {
 	// Test manager configuration patterns that would be used in Run()
-	options := map[string]interface{}{
+	options := map[string]any{
 		"scheme":             scheme,
 		"metricsBindAddress": ":8080",
 		"port":               9443,
@@ -326,7 +271,7 @@ func TestManagerOptionsPatterns(t *testing.T) {
 
 // Test webhook configuration patterns
 func TestWebhookConfigurationPatterns(t *testing.T) {
-	webhookConfig := map[string]interface{}{
+	webhookConfig := map[string]any{
 		"port":     9443,
 		"certDir":  "/tmp/k8s-webhook-server/serving-certs",
 		"certName": "tls.crt",
@@ -356,7 +301,7 @@ func TestWebhookConfigurationPatterns(t *testing.T) {
 
 // Test metrics configuration patterns
 func TestMetricsConfigurationPatterns(t *testing.T) {
-	metricsOptions := map[string]interface{}{
+	metricsOptions := map[string]any{
 		"bindAddress":    ":8080",
 		"secureServing":  false,
 		"filterProvider": nil, // Would be filters.WithAuthenticationAndAuthorization in real code
