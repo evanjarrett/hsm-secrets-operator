@@ -31,6 +31,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
@@ -258,7 +259,8 @@ func Run(args []string) error {
 
 	// Agent manager will detect the current namespace automatically
 	imageResolver := controller.NewImageResolver(mgr.GetClient())
-	agentManager := agent.NewManager(mgr.GetClient(), "", imageResolver)
+	// TODO: Configure TLS for gRPC connections between manager and agents
+	agentManager := agent.NewManager(mgr.GetClient(), "", imageResolver, nil)
 
 	// Set up HSMPool controller to aggregate discovery reports from pod annotations
 	if err := (&controller.HSMPoolReconciler{
@@ -329,7 +331,14 @@ func Run(args []string) error {
 
 	// Start API server if enabled
 	if enableAPI {
-		apiServer := api.NewServer(mgr.GetClient(), agentManager, operatorNamespace, ctrl.Log.WithName("api"))
+		// Create Kubernetes clientset for JWT authentication
+		k8sInterface, err := kubernetes.NewForConfig(mgr.GetConfig())
+		if err != nil {
+			setupLog.Error(err, "unable to create Kubernetes clientset for API authentication")
+			return err
+		}
+
+		apiServer := api.NewServer(mgr.GetClient(), agentManager, operatorNamespace, k8sInterface, ctrl.Log.WithName("api"))
 
 		// Start API server in a separate goroutine
 		go func() {

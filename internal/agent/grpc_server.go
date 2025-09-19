@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -28,9 +29,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	hsmv1 "github.com/evanjarrett/hsm-secrets-operator/api/proto/hsm/v1"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/security"
 )
 
 const (
@@ -41,22 +44,95 @@ const (
 // GRPCServer represents the HSM agent gRPC server
 type GRPCServer struct {
 	hsmv1.UnimplementedHSMAgentServer
-	hsmClient  hsm.Client
-	logger     logr.Logger
-	port       int
-	healthPort int
-	startTime  time.Time
+	hsmClient   hsm.Client
+	logger      logr.Logger
+	port        int
+	healthPort  int
+	startTime   time.Time
+	tlsConfig   *security.TLSConfig
+	certRotator *security.CertificateRotator
+	rateLimiter *security.RateLimiter
+	validator   *security.InputValidator
+	grpcServer  *grpc.Server
+	k8sClient   client.Client
+	serviceName string
+	namespace   string
+	dnsNames    []string
+	ips         []net.IP
 }
 
-// NewGRPCServer creates a new HSM agent gRPC server
-func NewGRPCServer(hsmClient hsm.Client, port, healthPort int, logger logr.Logger) *GRPCServer {
-	return &GRPCServer{
-		hsmClient:  hsmClient,
-		logger:     logger.WithName("grpc-server"),
-		port:       port,
-		healthPort: healthPort,
-		startTime:  time.Now(),
+// GRPCServerConfig configures the gRPC server
+type GRPCServerConfig struct {
+	ServiceName string
+	Namespace   string
+	DNSNames    []string
+	IPs         []net.IP
+	K8sClient   client.Client
+	EnableTLS   bool
+}
+
+// NewGRPCServer creates a new HSM agent gRPC server with optional mTLS
+func NewGRPCServer(hsmClient hsm.Client, port, healthPort int, config GRPCServerConfig, logger logr.Logger) *GRPCServer {
+	server := &GRPCServer{
+		hsmClient:   hsmClient,
+		logger:      logger.WithName("grpc-server"),
+		port:        port,
+		healthPort:  healthPort,
+		startTime:   time.Now(),
+		rateLimiter: security.NewRateLimiter(),
+		validator:   security.NewInputValidator(),
+		k8sClient:   config.K8sClient,
+		serviceName: config.ServiceName,
+		namespace:   config.Namespace,
+		dnsNames:    config.DNSNames,
+		ips:         config.IPs,
 	}
+
+	// Initialize certificate rotation if TLS is enabled and k8s client is available
+	if config.EnableTLS && config.K8sClient != nil {
+		if err := server.initializeTLS(); err != nil {
+			logger.Error(err, "Failed to initialize TLS, falling back to insecure mode")
+		}
+	}
+
+	return server
+}
+
+// initializeTLS sets up certificate rotation for the server
+func (s *GRPCServer) initializeTLS() error {
+	if s.serviceName == "" {
+		s.serviceName = os.Getenv("POD_NAME")
+		if s.serviceName == "" {
+			s.serviceName = "hsm-agent"
+		}
+	}
+	if s.namespace == "" {
+		s.namespace = os.Getenv("POD_NAMESPACE")
+		if s.namespace == "" {
+			return fmt.Errorf("namespace not configured and POD_NAMESPACE environment variable not set")
+		}
+	}
+
+	// Create certificate rotator
+	rotatorConfig := security.DefaultRotatorConfig(
+		s.namespace,
+		fmt.Sprintf("%s-tls", s.serviceName),
+		s.serviceName,
+	)
+	rotatorConfig.DNSNames = s.dnsNames
+	rotatorConfig.IPs = s.ips
+
+	rotator, err := security.NewCertificateRotator(s.k8sClient, rotatorConfig, s.logger)
+	if err != nil {
+		return fmt.Errorf("failed to create certificate rotator: %w", err)
+	}
+
+	s.certRotator = rotator
+
+	// Register callback for certificate updates
+	s.certRotator.AddUpdateCallback(s.onCertificateUpdate)
+
+	return nil
 }
 
 // Start starts both the gRPC server and health server
@@ -64,15 +140,53 @@ func (s *GRPCServer) Start(ctx context.Context) error {
 	// Start health server in background (HTTP for simplicity with probes)
 	go s.startHealthServer(ctx)
 
-	// Start gRPC server
+	// Start certificate rotation if enabled
+	if s.certRotator != nil {
+		if err := s.certRotator.Start(ctx, s.serviceName, s.dnsNames, s.ips); err != nil {
+			s.logger.Error(err, "Failed to start certificate rotator, falling back to insecure mode")
+			s.certRotator = nil
+		} else {
+			s.logger.Info("Certificate rotator started successfully")
+			// Get initial TLS config
+			s.tlsConfig = s.certRotator.GetCurrentTLSConfig()
+		}
+	}
+
+	// Start gRPC server with current configuration
+	return s.startGRPCServer(ctx)
+}
+
+// startGRPCServer creates and starts the gRPC server with current TLS configuration
+func (s *GRPCServer) startGRPCServer(ctx context.Context) error {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", s.port))
 	if err != nil {
 		return fmt.Errorf("failed to listen on port %d: %w", s.port, err)
 	}
 
-	// Configure server with lenient keepalive policy to prevent "too_many_pings" errors
-	grpcServer := grpc.NewServer(
-		grpc.UnaryInterceptor(s.loggingInterceptor),
+	// Configure server with security interceptors and TLS if available
+	var serverOptions []grpc.ServerOption
+
+	// Add TLS credentials if configured
+	if s.tlsConfig != nil {
+		creds, err := s.tlsConfig.GetServerCredentials()
+		if err != nil {
+			s.logger.Error(err, "Failed to get server credentials, continuing without TLS")
+		} else {
+			serverOptions = append(serverOptions, grpc.Creds(creds))
+			s.logger.Info("gRPC server configured with mTLS")
+		}
+	}
+
+	if s.tlsConfig == nil {
+		s.logger.Info("gRPC server running without TLS (development mode)")
+	}
+
+	// Add security interceptors
+	serverOptions = append(serverOptions,
+		grpc.ChainUnaryInterceptor(
+			security.SecurityInterceptor(s.rateLimiter, s.validator),
+			s.loggingInterceptor,
+		),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             15 * time.Second, // Allow pings every 15s minimum
 			PermitWithoutStream: true,             // Allow pings without active streams
@@ -83,18 +197,34 @@ func (s *GRPCServer) Start(ctx context.Context) error {
 		}),
 	)
 
+	s.grpcServer = grpc.NewServer(serverOptions...)
+
 	// Register the HSM agent service
-	hsmv1.RegisterHSMAgentServer(grpcServer, s)
+	hsmv1.RegisterHSMAgentServer(s.grpcServer, s)
 
 	// Graceful shutdown
 	go func() {
 		<-ctx.Done()
 		s.logger.Info("Shutting down gRPC server")
-		grpcServer.GracefulStop()
+		if s.certRotator != nil {
+			s.certRotator.Stop()
+		}
+		s.grpcServer.GracefulStop()
 	}()
 
-	s.logger.Info("Starting HSM agent gRPC server", "port", s.port)
-	return grpcServer.Serve(lis)
+	s.logger.Info("Starting HSM agent gRPC server", "port", s.port, "tls_enabled", s.tlsConfig != nil)
+	return s.grpcServer.Serve(lis)
+}
+
+// onCertificateUpdate handles certificate rotation updates
+func (s *GRPCServer) onCertificateUpdate(newTLSConfig *security.TLSConfig) error {
+	s.logger.Info("Certificate rotation detected, updating TLS configuration")
+
+	// Update the TLS config - the next gRPC connection will use the new certificates
+	s.tlsConfig = newTLSConfig
+
+	s.logger.Info("TLS configuration updated successfully")
+	return nil
 }
 
 // startHealthServer starts the HTTP health server
@@ -102,6 +232,7 @@ func (s *GRPCServer) startHealthServer(ctx context.Context) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/readyz", s.handleReadyz)
+	mux.HandleFunc("/cert-info", s.handleCertInfo)
 
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", s.healthPort),
@@ -367,6 +498,58 @@ func (s *GRPCServer) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if _, err := fmt.Fprintf(w, `{"status":"ready"}`); err != nil {
 		s.logger.Error(err, "Failed to write readiness response")
+	}
+}
+
+// handleCertInfo handles certificate information requests (HTTP)
+func (s *GRPCServer) handleCertInfo(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if s.certRotator == nil {
+		w.WriteHeader(http.StatusOK)
+		if _, err := fmt.Fprintf(w, `{"tls_enabled":false,"mode":"development"}`); err != nil {
+			s.logger.Error(err, "Failed to write cert info response")
+		}
+		return
+	}
+
+	certInfo := s.certRotator.GetCertificateInfo()
+	certInfo["tls_enabled"] = true
+	certInfo["mode"] = "production"
+
+	// Convert to JSON manually for simplicity
+	certStatus := certInfo["status"].(string)
+
+	response := fmt.Sprintf(`{
+		"tls_enabled": true,
+		"mode": "production",
+		"status": "%s"`, certStatus)
+
+	if expiry, ok := certInfo["expiry"].(string); ok {
+		response += fmt.Sprintf(`,
+		"certificate_expiry": "%s"`, expiry)
+	}
+
+	if timeUntilExpiry, ok := certInfo["time_until_expiry"].(string); ok {
+		response += fmt.Sprintf(`,
+		"time_until_expiry": "%s"`, timeUntilExpiry)
+	}
+
+	if needsRenewal, ok := certInfo["needs_renewal"].(bool); ok {
+		response += fmt.Sprintf(`,
+		"needs_renewal": %t`, needsRenewal)
+	}
+
+	if rotationInterval, ok := certInfo["rotation_interval"].(string); ok {
+		response += fmt.Sprintf(`,
+		"rotation_interval": "%s"`, rotationInterval)
+	}
+
+	response += "}"
+
+	w.WriteHeader(http.StatusOK)
+	if _, err := fmt.Fprintf(w, "%s", response); err != nil {
+		s.logger.Error(err, "Failed to write cert info response")
 	}
 }
 

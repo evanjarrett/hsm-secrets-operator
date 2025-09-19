@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/runtime"
+	kubefake "k8s.io/client-go/kubernetes/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
@@ -60,7 +61,7 @@ func TestGetAllAvailableAgents(t *testing.T) {
 			name: "valid agent manager with no devices",
 			agentManager: func() *agent.Manager {
 				fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-				return agent.NewManager(fakeClient, "test-namespace", nil)
+				return agent.NewManager(fakeClient, "test-namespace", nil, nil)
 			}(),
 			expectedDevices: nil,
 			expectError:     true, // GetAvailableDevices returns error when no devices found
@@ -96,9 +97,10 @@ func TestNewServer(t *testing.T) {
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 	mockImageResolver := &MockImageResolver{}
 	agentManager := agent.NewTestManager(client, "test-namespace", mockImageResolver)
+	k8sInterface := kubefake.NewSimpleClientset()
 	logger := logr.Discard()
 
-	server := NewServer(client, agentManager, "test-namespace", logger)
+	server := NewServer(client, agentManager, "test-namespace", k8sInterface, logger)
 
 	assert.NotNil(t, server)
 	assert.Equal(t, client, server.client)
@@ -115,9 +117,10 @@ func TestServerStart(t *testing.T) {
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 	mockImageResolver := &MockImageResolver{}
 	agentManager := agent.NewTestManager(client, "test-namespace", mockImageResolver)
+	k8sInterface := kubefake.NewSimpleClientset()
 	logger := logr.Discard()
 
-	server := NewServer(client, agentManager, "test-namespace", logger)
+	server := NewServer(client, agentManager, "test-namespace", k8sInterface, logger)
 
 	// Test that server can be created and has expected configuration
 	assert.NotNil(t, server)

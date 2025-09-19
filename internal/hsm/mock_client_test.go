@@ -39,7 +39,7 @@ func TestMockClientInitialize(t *testing.T) {
 
 	config := Config{
 		PKCS11LibraryPath: "/test/lib.so",
-		PIN:               "testpin",
+		PINProvider:       NewStaticPINProvider("testpin"),
 		SlotID:            1,
 	}
 

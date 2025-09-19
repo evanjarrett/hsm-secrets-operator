@@ -78,8 +78,8 @@ func (c *PKCS11Client) Initialize(ctx context.Context, config Config) error {
 		return fmt.Errorf("PKCS11LibraryPath is required")
 	}
 
-	if config.PIN == "" {
-		return fmt.Errorf("PIN is required for HSM authentication")
+	if config.PINProvider == nil {
+		return fmt.Errorf("PINProvider is required for HSM authentication")
 	}
 
 	// Initialize PKCS#11 context
@@ -171,8 +171,21 @@ func (c *PKCS11Client) Initialize(ctx context.Context, config Config) error {
 	}
 	c.session = session
 
+	// Get PIN from provider
+	pin, err := config.PINProvider.GetPIN(ctx)
+	if err != nil {
+		if closeErr := c.ctx.CloseSession(session); closeErr != nil {
+			c.logger.V(1).Info("Failed to close session", "error", closeErr)
+		}
+		if finErr := c.ctx.Finalize(); finErr != nil {
+			c.logger.V(1).Info("Failed to finalize PKCS#11 context", "error", finErr)
+		}
+		c.ctx.Destroy()
+		return fmt.Errorf("failed to get PIN from provider: %w", err)
+	}
+
 	// Login with PIN
-	if err := c.ctx.Login(session, pkcs11.CKU_USER, config.PIN); err != nil {
+	if err := c.ctx.Login(session, pkcs11.CKU_USER, pin); err != nil {
 		if closeErr := c.ctx.CloseSession(session); closeErr != nil {
 			c.logger.V(1).Info("Failed to close session", "error", closeErr)
 		}

@@ -20,20 +20,34 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
+	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
 )
 
 var (
 	setupLog = ctrl.Log.WithName("agent")
+	scheme   = runtime.NewScheme()
 )
+
+func init() {
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(hsmv1alpha1.AddToScheme(scheme))
+}
 
 // Run starts the agent mode
 func Run(args []string) error {
@@ -75,9 +89,6 @@ func Run(args []string) error {
 	if tokenLabel == "" {
 		tokenLabel = os.Getenv("PKCS11_TOKEN_LABEL")
 	}
-	if pin == "" {
-		pin = os.Getenv("PKCS11_PIN")
-	}
 
 	setupLog.Info("Starting HSM agent",
 		"device", deviceName,
@@ -89,26 +100,54 @@ func Run(args []string) error {
 		"token-label", tokenLabel,
 	)
 
+	// Get Kubernetes clients for certificate management and PIN access
+	var k8sClient client.Client
+	var k8sTypedClient kubernetes.Interface
+	var enableTLS bool
+	if kubeConfig, err := config.GetConfig(); err == nil {
+		if k8sClient, err = client.New(kubeConfig, client.Options{Scheme: scheme}); err != nil {
+			setupLog.Error(err, "Failed to create Kubernetes client, TLS disabled")
+		} else {
+			enableTLS = true
+			setupLog.Info("Kubernetes client created, TLS enabled")
+		}
+		if k8sTypedClient, err = kubernetes.NewForConfig(kubeConfig); err != nil {
+			setupLog.Error(err, "Failed to create typed Kubernetes client")
+			return err
+		}
+	} else {
+		setupLog.Error(err, "Failed to get Kubernetes config")
+		return err
+	}
+
 	// Create HSM client
 	var hsmClient hsm.Client
 
+	namespace := os.Getenv("POD_NAMESPACE") // Should be set by downward API
+	if namespace == "" {
+		return fmt.Errorf("POD_NAMESPACE environment variable is required but not set")
+	}
+
 	if pkcs11LibraryPath != "" {
+		// Create PIN provider for Kubernetes Secret access
+		pinProvider := hsm.NewKubernetesPINProvider(k8sClient, k8sTypedClient, deviceName, namespace)
+
 		// Create PKCS#11 client for production use
-		config := hsm.Config{
+		hsmConfig := hsm.Config{
 			PKCS11LibraryPath: pkcs11LibraryPath,
 			SlotID:            uint(slotID),
-			PIN:               pin,
 			TokenLabel:        tokenLabel,
 			ConnectionTimeout: 30 * time.Second,
 			RetryAttempts:     3,
 			RetryDelay:        2 * time.Second,
+			PINProvider:       pinProvider,
 		}
 
 		hsmClient = hsm.NewPKCS11Client()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		if err := hsmClient.Initialize(ctx, config); err != nil {
+		if err := hsmClient.Initialize(ctx, hsmConfig); err != nil {
 			setupLog.Error(err, "Failed to initialize PKCS#11 client")
 			return err
 		}
@@ -120,7 +159,10 @@ func Run(args []string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		if err := hsmClient.Initialize(ctx, hsm.DefaultConfig()); err != nil {
+		// For mock client, use a static PIN provider
+		mockConfig := hsm.DefaultConfig()
+		mockConfig.PINProvider = hsm.NewStaticPINProvider("123456") // Mock PIN
+		if err := hsmClient.Initialize(ctx, mockConfig); err != nil {
 			setupLog.Error(err, "Failed to initialize mock client")
 			return err
 		}
@@ -140,10 +182,24 @@ func Run(args []string) error {
 		cancel()
 	}()
 
-	// Start gRPC server
-	setupLog.Info("HSM agent ready", "device", deviceName)
+	// Configure gRPC server
+	serverConfig := agent.GRPCServerConfig{
+		ServiceName: fmt.Sprintf("hsm-agent-%s", deviceName),
+		Namespace:   namespace,
+		K8sClient:   k8sClient,
+		EnableTLS:   enableTLS,
+		DNSNames: []string{
+			fmt.Sprintf("hsm-agent-%s", deviceName),
+		},
+		IPs: []net.IP{
+			net.ParseIP("127.0.0.1"),
+		},
+	}
 
-	grpcServer := agent.NewGRPCServer(hsmClient, port, healthPort, setupLog)
+	// Start gRPC server
+	setupLog.Info("HSM agent ready", "device", deviceName, "tls_enabled", enableTLS)
+
+	grpcServer := agent.NewGRPCServer(hsmClient, port, healthPort, serverConfig, setupLog)
 	if err := grpcServer.Start(ctx); err != nil {
 		setupLog.Error(err, "gRPC server failed")
 		return err

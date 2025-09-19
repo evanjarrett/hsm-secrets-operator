@@ -215,7 +215,7 @@ func TestNewGRPCClient(t *testing.T) {
 	logger := logr.Discard()
 
 	t.Run("successful creation", func(t *testing.T) {
-		client, err := NewGRPCClient("localhost:9090", logger)
+		client, err := NewGRPCClient("localhost:9090", nil, "", logger)
 		require.NoError(t, err)
 		assert.NotNil(t, client)
 		assert.Equal(t, "localhost:9090", client.endpoint)
@@ -226,7 +226,7 @@ func TestNewGRPCClient(t *testing.T) {
 	})
 
 	t.Run("empty endpoint", func(t *testing.T) {
-		client, err := NewGRPCClient("", logger)
+		client, err := NewGRPCClient("", nil, "", logger)
 		require.Error(t, err)
 		assert.Nil(t, client)
 		assert.Contains(t, err.Error(), "endpoint cannot be empty")
@@ -235,7 +235,7 @@ func TestNewGRPCClient(t *testing.T) {
 	t.Run("invalid host format", func(t *testing.T) {
 		// gRPC connections are lazy, so invalid format won't fail at creation
 		// but will fail when actually trying to connect during Initialize
-		client, err := NewGRPCClient("invalid://bad-host", logger)
+		client, err := NewGRPCClient("invalid://bad-host", nil, "", logger)
 		require.NoError(t, err)
 		require.NotNil(t, client)
 
@@ -527,7 +527,7 @@ func TestGRPCClientConnectionHandling(t *testing.T) {
 
 	t.Run("connection unavailable", func(t *testing.T) {
 		// Try to connect to non-existent server
-		client, err := NewGRPCClient("localhost:99999", logger)
+		client, err := NewGRPCClient("localhost:99999", nil, "", logger)
 		require.NoError(t, err) // Connection is lazy
 
 		// Initialize should fail

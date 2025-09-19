@@ -36,6 +36,7 @@ import (
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/security"
 )
 
 // ManagerInterface defines the interface for HSM agent management
@@ -81,6 +82,7 @@ type Manager struct {
 	AgentImage     string
 	AgentNamespace string
 	ImageResolver  ImageResolver
+	TLSConfig      *security.TLSConfig // Optional TLS configuration for secure gRPC connections
 
 	// Internal tracking
 	activeAgents   map[string]*AgentInfo // deviceName -> AgentInfo
@@ -107,7 +109,7 @@ type deviceWork struct {
 }
 
 // NewManager creates a new agent manager
-func NewManager(k8sClient client.Client, namespace string, imageResolver ImageResolver) *Manager {
+func NewManager(k8sClient client.Client, namespace string, imageResolver ImageResolver, tlsConfig *security.TLSConfig) *Manager {
 	// Create logger for the manager
 	logger := logr.FromContextOrDiscard(context.Background()).WithName("agent-manager")
 
@@ -115,15 +117,13 @@ func NewManager(k8sClient client.Client, namespace string, imageResolver ImageRe
 		Client:         k8sClient,
 		AgentNamespace: namespace,
 		ImageResolver:  imageResolver,
+		TLSConfig:      tlsConfig,
 		activeAgents:   make(map[string]*AgentInfo),
-		connectionPool: NewConnectionPool(logger),
+		connectionPool: NewConnectionPool(logger, tlsConfig),
 		// Default production timeouts
 		WaitTimeout:      60 * time.Second,
 		WaitPollInterval: 2 * time.Second,
 	}
-
-	// If no namespace provided, agents will be deployed in the same namespace as their HSMDevice
-	// AgentNamespace is only used as a fallback now
 
 	return m
 }
@@ -133,12 +133,14 @@ func NewTestManager(k8sClient client.Client, namespace string, imageResolver Ima
 	// Create logger for the test manager
 	logger := logr.FromContextOrDiscard(context.Background()).WithName("agent-manager-test")
 
+	// For testing, use nil TLS config (insecure connections)
 	m := &Manager{
 		Client:         k8sClient,
 		AgentNamespace: namespace,
 		ImageResolver:  imageResolver,
+		TLSConfig:      nil, // Insecure for testing
 		activeAgents:   make(map[string]*AgentInfo),
-		connectionPool: NewConnectionPool(logger),
+		connectionPool: NewConnectionPool(logger, nil),
 		// Fast test timeouts
 		TestMode:         true,
 		WaitTimeout:      5 * time.Second,
@@ -598,21 +600,6 @@ func (m *Manager) buildAgentEnv(ctx context.Context, hsmPool *hsmv1alpha1.HSMPoo
 				Value: hsmDevice.Spec.PKCS11.TokenLabel,
 			},
 		}...)
-
-		// Add PIN from secret if configured
-		if hsmDevice.Spec.PKCS11.PinSecret != nil {
-			env = append(env, corev1.EnvVar{
-				Name: "PKCS11_PIN",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: hsmDevice.Spec.PKCS11.PinSecret.Name,
-						},
-						Key: hsmDevice.Spec.PKCS11.PinSecret.Key,
-					},
-				},
-			})
-		}
 	}
 
 	return env, nil

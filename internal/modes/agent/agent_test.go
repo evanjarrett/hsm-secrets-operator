@@ -269,7 +269,6 @@ func TestEnvironmentVariablePatterns(t *testing.T) {
 		"PKCS11_LIBRARY_PATH": "/usr/lib/opensc-pkcs11.so",
 		"PKCS11_SLOT_ID":      "0",
 		"PKCS11_TOKEN_LABEL":  "PicoHSM",
-		"PKCS11_PIN":          "123456",
 	}
 
 	for key, value := range envVars {
@@ -460,7 +459,6 @@ func TestAgentEnvironmentVariables(t *testing.T) {
 				"HSM_DEVICE_NAME":     "test-device",
 				"PKCS11_LIBRARY_PATH": "/usr/lib/test-pkcs11.so",
 				"PKCS11_TOKEN_LABEL":  "TestToken",
-				"PKCS11_PIN":          "123456",
 			},
 			expectedDevice: "test-device",
 			expectedLib:    "/usr/lib/test-pkcs11.so",
@@ -472,7 +470,7 @@ func TestAgentEnvironmentVariables(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Clear environment
-			envKeys := []string{"HSM_DEVICE_NAME", "PKCS11_LIBRARY_PATH", "PKCS11_TOKEN_LABEL", "PKCS11_PIN"}
+			envKeys := []string{"HSM_DEVICE_NAME", "PKCS11_LIBRARY_PATH", "PKCS11_TOKEN_LABEL"}
 			for _, key := range envKeys {
 				_ = os.Unsetenv(key)
 			}
@@ -486,12 +484,12 @@ func TestAgentEnvironmentVariables(t *testing.T) {
 			deviceName := os.Getenv("HSM_DEVICE_NAME")
 			libraryPath := os.Getenv("PKCS11_LIBRARY_PATH")
 			tokenLabel := os.Getenv("PKCS11_TOKEN_LABEL")
-			pin := os.Getenv("PKCS11_PIN")
+			// Note: PIN is now fetched on-demand from Kubernetes Secret
 
 			assert.Equal(t, tt.expectedDevice, deviceName)
 			assert.Equal(t, tt.expectedLib, libraryPath)
 			assert.Equal(t, tt.expectedToken, tokenLabel)
-			assert.Equal(t, tt.expectedPIN, pin)
+			// Note: PIN is no longer available via environment variable
 
 			// Clean up
 			for _, key := range envKeys {

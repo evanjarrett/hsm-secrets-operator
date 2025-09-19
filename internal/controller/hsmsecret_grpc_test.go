@@ -83,7 +83,12 @@ func TestHSMSecretControllerGRPCIntegration(t *testing.T) {
 
 	// Start gRPC server
 	logger := logr.Discard()
-	grpcServer := agent.NewGRPCServer(mockHSMClient, 0, 0, logger)
+	testConfig := agent.GRPCServerConfig{
+		ServiceName: "test-agent",
+		Namespace:   "test",
+		EnableTLS:   false, // Disable TLS for tests
+	}
+	grpcServer := agent.NewGRPCServer(mockHSMClient, 0, 0, testConfig, logger)
 
 	// Start server on agent port 9090 for testing
 	server := grpc.NewServer()
@@ -105,7 +110,7 @@ func TestHSMSecretControllerGRPCIntegration(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Create agent manager and add fake agent info with correct port mapping
-	agentManager := agent.NewManager(nil, "default", nil)
+	agentManager := agent.NewManager(nil, "default", nil, nil)
 	agentManager.SetAgentInfo("test-hsm-device", &agent.AgentInfo{
 		PodIPs:    []string{"127.0.0.1"},
 		Status:    agent.AgentStatusReady,
@@ -402,7 +407,7 @@ func TestHSMSecretControllerGRPCErrors(t *testing.T) {
 		Build()
 
 	// Create agent manager with invalid endpoint
-	agentManager := agent.NewManager(nil, "default", nil)
+	agentManager := agent.NewManager(nil, "default", nil, nil)
 	agentManager.SetAgentInfo("test-hsm-device", &agent.AgentInfo{
 		PodIPs:    []string{"127.0.0.1:99999"}, // Non-existent port
 		Status:    agent.AgentStatusReady,

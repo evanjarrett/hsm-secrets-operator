@@ -232,7 +232,7 @@ func TestAgentTracking(t *testing.T) {
 
 	t.Run("GetAgentInfo - agent exists", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-		manager := NewManager(fakeClient, "test-namespace", nil)
+		manager := NewManager(fakeClient, "test-namespace", nil, nil)
 
 		// Add agent to tracking
 		agentInfo := &AgentInfo{
@@ -251,7 +251,7 @@ func TestAgentTracking(t *testing.T) {
 
 	t.Run("GetAgentInfo - agent does not exist", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-		manager := NewManager(fakeClient, "test-namespace", nil)
+		manager := NewManager(fakeClient, "test-namespace", nil, nil)
 
 		retrieved, exists := manager.GetAgentInfo("nonexistent-device")
 		assert.False(t, exists)
@@ -264,7 +264,7 @@ func TestAgentTracking(t *testing.T) {
 
 	t.Run("removeAgentFromTracking", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-		manager := NewManager(fakeClient, "test-namespace", nil)
+		manager := NewManager(fakeClient, "test-namespace", nil, nil)
 
 		// Add agent to tracking
 		agentInfo := &AgentInfo{
@@ -424,7 +424,7 @@ func TestGetAvailableDevices(t *testing.T) {
 				WithRuntimeObjects(objs...).
 				Build()
 
-			manager := NewManager(fakeClient, "test-namespace", nil)
+			manager := NewManager(fakeClient, "test-namespace", nil, nil)
 
 			devices, err := manager.GetAvailableDevices(ctx, "test-namespace")
 
@@ -464,7 +464,7 @@ func TestIsAgentHealthy(t *testing.T) {
 			WithRuntimeObjects(pod1).
 			Build()
 
-		manager := NewManager(fakeClient, "test-namespace", nil)
+		manager := NewManager(fakeClient, "test-namespace", nil, nil)
 
 		agentInfo := &AgentInfo{
 			PodIPs:    []string{"10.1.1.5"},
@@ -480,7 +480,7 @@ func TestIsAgentHealthy(t *testing.T) {
 	t.Run("unhealthy agent with no pod IPs", func(t *testing.T) {
 		ctx := context.Background()
 		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-		manager := NewManager(fakeClient, "test-namespace", nil)
+		manager := NewManager(fakeClient, "test-namespace", nil, nil)
 
 		agentInfo := &AgentInfo{
 			PodIPs:    []string{}, // No pod IPs
@@ -513,7 +513,7 @@ func TestIsAgentHealthy(t *testing.T) {
 			WithRuntimeObjects(pod1).
 			Build()
 
-		manager := NewManager(fakeClient, "test-namespace", nil)
+		manager := NewManager(fakeClient, "test-namespace", nil, nil)
 
 		agentInfo := &AgentInfo{
 			PodIPs:    []string{"10.1.1.5"},

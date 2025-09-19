@@ -89,9 +89,6 @@ type Config struct {
 	// UseSlotID indicates whether SlotID should be used (vs auto-discovery)
 	UseSlotID bool
 
-	// PIN is the user PIN for authentication
-	PIN string
-
 	// TokenLabel is the token label to use
 	TokenLabel string
 
@@ -103,6 +100,9 @@ type Config struct {
 
 	// RetryDelay between retry attempts
 	RetryDelay time.Duration
+
+	// PINProvider provides PIN on-demand (replaces static PIN)
+	PINProvider PINProvider
 }
 
 // DefaultConfig returns a default HSM configuration
@@ -118,7 +118,7 @@ func DefaultConfig() Config {
 }
 
 // ConfigFromHSMDevice creates a Config from HSMDevice spec
-func ConfigFromHSMDevice(hsmDevice HSMDeviceSpec, pin string) Config {
+func ConfigFromHSMDevice(hsmDevice HSMDeviceSpec, pinProvider PINProvider) Config {
 	config := DefaultConfig()
 
 	if hsmDevice.PKCS11 != nil {
@@ -127,7 +127,7 @@ func ConfigFromHSMDevice(hsmDevice HSMDeviceSpec, pin string) Config {
 		config.TokenLabel = hsmDevice.PKCS11.TokenLabel
 	}
 
-	config.PIN = pin
+	config.PINProvider = pinProvider
 	return config
 }
 

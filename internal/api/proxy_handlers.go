@@ -33,6 +33,14 @@ func (s *Server) setupProxyRoutes() {
 	// Create API v1 group
 	v1 := s.router.Group("/api/v1")
 	{
+		// Authentication endpoints (no auth required)
+		if s.authenticator != nil {
+			authGroup := v1.Group("/auth")
+			{
+				authGroup.POST("/token", s.authenticator.HandleTokenGeneration())
+			}
+		}
+
 		// HSM operations group - use ProxyClient methods directly as handlers
 		hsmGroup := v1.Group("/hsm")
 		{

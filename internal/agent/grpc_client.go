@@ -30,6 +30,7 @@ import (
 
 	hsmv1 "github.com/evanjarrett/hsm-secrets-operator/api/proto/hsm/v1"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/security"
 )
 
 // GRPCClient implements the HSM client interface using gRPC
@@ -41,23 +42,53 @@ type GRPCClient struct {
 	timeout  time.Duration
 }
 
-// NewGRPCClient creates a new gRPC-based HSM client
-func NewGRPCClient(endpoint string, logger logr.Logger) (*GRPCClient, error) {
+// NewGRPCClient creates a new gRPC-based HSM client with optional TLS support
+// If tlsConfig is nil, creates an insecure connection for development
+// If tlsConfig is provided, creates a secure mTLS connection
+func NewGRPCClient(endpoint string, tlsConfig *security.TLSConfig, serverName string, logger logr.Logger) (*GRPCClient, error) {
 	if endpoint == "" {
 		return nil, fmt.Errorf("endpoint cannot be empty")
 	}
 
-	// Create gRPC connection with conservative keepalive settings
-	// Reduce ping frequency to prevent "too_many_pings" errors
-	conn, err := grpc.NewClient(endpoint,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	var conn *grpc.ClientConn
+	var err error
+	var loggerName string
+
+	// Configure connection options
+	opts := []grpc.DialOption{
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                30 * time.Second, // Reduced from 10s to 30s
+			Time:                30 * time.Second, // Reduced from 10s to 30s to prevent "too_many_pings" errors
 			Timeout:             10 * time.Second, // Increased from 3s to 10s
 			PermitWithoutStream: true,
 		}),
-	)
+	}
+
+	if tlsConfig != nil {
+		// Secure connection with mTLS
+		if serverName == "" {
+			return nil, fmt.Errorf("serverName is required when using TLS")
+		}
+
+		creds, err := tlsConfig.GetClientCredentials(serverName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get client credentials: %w", err)
+		}
+
+		opts = append(opts, grpc.WithTransportCredentials(creds))
+		loggerName = "grpc-client-tls"
+		logger.V(1).Info("Creating secure gRPC client with mTLS", "endpoint", endpoint, "serverName", serverName)
+	} else {
+		// Insecure connection for development
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		loggerName = "grpc-client"
+		logger.V(1).Info("Creating insecure gRPC client for development", "endpoint", endpoint)
+	}
+
+	conn, err = grpc.NewClient(endpoint, opts...)
 	if err != nil {
+		if tlsConfig != nil {
+			return nil, fmt.Errorf("failed to connect to agent at %s with TLS: %w", endpoint, err)
+		}
 		return nil, fmt.Errorf("failed to connect to agent at %s: %w", endpoint, err)
 	}
 
@@ -66,7 +97,7 @@ func NewGRPCClient(endpoint string, logger logr.Logger) (*GRPCClient, error) {
 	return &GRPCClient{
 		client:   client,
 		conn:     conn,
-		logger:   logger.WithName("grpc-client"),
+		logger:   logger.WithName(loggerName),
 		endpoint: endpoint,
 		timeout:  30 * time.Second,
 	}, nil

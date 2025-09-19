@@ -88,6 +88,9 @@ https://github.com/evanjarrett/hsm-secrets-operator`,
 	cmd.AddCommand(commands.NewHealthCmd())
 	cmd.AddCommand(commands.NewDevicesCmd())
 
+	// Add authentication command
+	cmd.AddCommand(commands.NewAuthCmd())
+
 	// Add completion command
 	cmd.AddCommand(newCompletionCmd())
 
