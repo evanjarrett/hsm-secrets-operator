@@ -45,6 +45,7 @@ import (
 	"github.com/evanjarrett/hsm-secrets-operator/internal/api"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/controller"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/mirror"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/utils"
 )
 
 var (
@@ -55,18 +56,6 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(hsmv1alpha1.AddToScheme(scheme))
-}
-
-// getCurrentNamespace returns the namespace the operator is running in
-func getCurrentNamespace() string {
-	// Try to read namespace from service account mount
-	if ns, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
-		return strings.TrimSpace(string(ns))
-	}
-
-	// Fallback to default namespace if we can't determine it
-	setupLog.Info("Could not determine current namespace, using 'default'")
-	return "default"
 }
 
 // getOperatorName returns the operator deployment name
@@ -253,7 +242,11 @@ func Run(args []string) error {
 	}
 
 	// Get current operator namespace and name
-	operatorNamespace := getCurrentNamespace()
+	operatorNamespace, err := utils.GetCurrentNamespace()
+	if err != nil {
+		setupLog.Error(err, "unable to get the current namespace")
+		return err
+	}
 	operatorName := getOperatorName()
 	setupLog.Info("Detected operator details", "namespace", operatorNamespace, "name", operatorName)
 

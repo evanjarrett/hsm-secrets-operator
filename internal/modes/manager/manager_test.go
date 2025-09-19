@@ -25,6 +25,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/utils"
 )
 
 func TestSchemeInitialization(t *testing.T) {
@@ -105,9 +106,10 @@ func TestGetCurrentNamespace(t *testing.T) {
 				ns := strings.TrimSpace(tt.fileContent)
 				assert.Equal(t, tt.expectedNS, ns)
 			} else {
-				// Test the fallback behavior by checking default namespace
-				ns := getCurrentNamespace()
-				assert.NotEmpty(t, ns)
+				// Test the error behavior when no namespace can be determined
+				ns, err := utils.GetCurrentNamespace()
+				assert.Error(t, err)
+				assert.Empty(t, ns)
 			}
 		})
 	}
