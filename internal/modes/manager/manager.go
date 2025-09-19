@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -45,6 +46,7 @@ import (
 	"github.com/evanjarrett/hsm-secrets-operator/internal/config"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/controller"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/mirror"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/security"
 )
 
 var (
@@ -232,9 +234,15 @@ func Run(args []string) error {
 	// Create image resolver for fallback/auto-detection
 	imageResolver := config.NewImageResolver(mgr.GetClient())
 
-	// Agent manager will detect the current namespace automatically
-	// TODO: Configure TLS for gRPC connections between manager and agents
-	agentManager := agent.NewManager(mgr.GetClient(), "", agentImage, imageResolver, nil)
+	// Configure TLS for secure gRPC connections between manager and agents
+	clientTLSConfig, err := setupManagerTLS()
+	if err != nil {
+		setupLog.Error(err, "unable to setup mTLS for agent connections")
+		return err
+	}
+
+	// Agent manager will detect the current namespace automatically and use secure connections
+	agentManager := agent.NewManager(mgr.GetClient(), "", agentImage, imageResolver, clientTLSConfig)
 
 	// Set up HSMPool controller to aggregate discovery reports from pod annotations
 	if err := (&controller.HSMPoolReconciler{
@@ -376,4 +384,26 @@ func Run(args []string) error {
 	}
 
 	return nil
+}
+
+// setupManagerTLS configures TLS for secure gRPC connections between manager and agents
+func setupManagerTLS() (*security.TLSConfig, error) {
+	setupLog := ctrl.Log.WithName("setup-tls")
+
+	// Create certificate manager for mTLS
+	certManager, err := security.NewCertificateManager()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create certificate manager: %w", err)
+	}
+
+	// Generate client certificates for the manager to authenticate with agents
+	clientTLSConfig, err := certManager.GenerateClientCert("hsm-manager")
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate client certificates: %w", err)
+	}
+
+	setupLog.Info("mTLS enabled for gRPC connections to agents",
+		"ca_fingerprint", fmt.Sprintf("%.8x", clientTLSConfig.CAPEM[:8]))
+
+	return clientTLSConfig, nil
 }
