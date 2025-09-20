@@ -180,6 +180,7 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 				Client:       k8sClient,
 				Scheme:       k8sClient.Scheme(),
 				AgentManager: agentManager,
+				AgentImage:   "test-agent:latest",
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -392,7 +393,8 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 			reconciler := &HSMPoolAgentReconciler{
 				Client:       k8sClient,
 				Scheme:       k8sClient.Scheme(),
-				AgentManager: nil, // This will cause an error
+				AgentManager: nil, // This will not prevent deployment creation
+				AgentImage:   "test-agent:latest",
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -404,15 +406,15 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 			// Should not return error (errors are logged but don't fail reconciliation)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Checking that no agent deployment was created")
+			By("Checking that agent deployment was created despite nil agent manager")
 			agentName := fmt.Sprintf("hsm-agent-%s-0", hsmDeviceName)
 			deployment := &appsv1.Deployment{}
-			Consistently(func() error {
+			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
 					Name:      agentName,
 					Namespace: hsmPoolNamespace,
 				}, deployment)
-			}).Should(MatchError(ContainSubstring("not found")))
+			}).Should(Succeed())
 		})
 
 		It("Should idempotently handle existing agent deployments", func() {
@@ -503,7 +505,7 @@ func TestCleanupStaleAgents(t *testing.T) {
 			name: "cleanup device absent for too long",
 			hsmPool: &hsmv1alpha1.HSMPool{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-pool",
+					Name:      "absent-device-pool",
 					Namespace: "default",
 					OwnerReferences: []metav1.OwnerReference{
 						{
@@ -543,7 +545,7 @@ func TestCleanupStaleAgents(t *testing.T) {
 			name: "no cleanup for recently seen device",
 			hsmPool: &hsmv1alpha1.HSMPool{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-pool",
+					Name:      "recent-device-pool",
 					Namespace: "default",
 					OwnerReferences: []metav1.OwnerReference{
 						{
@@ -583,7 +585,7 @@ func TestCleanupStaleAgents(t *testing.T) {
 			name: "no cleanup for available device",
 			hsmPool: &hsmv1alpha1.HSMPool{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-pool",
+					Name:      "available-device-pool",
 					Namespace: "default",
 					OwnerReferences: []metav1.OwnerReference{
 						{
@@ -623,7 +625,7 @@ func TestCleanupStaleAgents(t *testing.T) {
 			name: "cleanup device never seen after pool timeout",
 			hsmPool: &hsmv1alpha1.HSMPool{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:              "test-pool",
+					Name:              "never-seen-device-pool",
 					Namespace:         "default",
 					CreationTimestamp: metav1.NewTime(tenMinutesAgo), // Pool created 10 minutes ago
 					OwnerReferences: []metav1.OwnerReference{
@@ -709,7 +711,7 @@ func TestDefaultAbsenceTimeout(t *testing.T) {
 	// Pool with custom grace period but no explicit absence timeout
 	hsmPool := &hsmv1alpha1.HSMPool{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-pool",
+			Name:      "test-device-pool",
 			Namespace: "default",
 			OwnerReferences: []metav1.OwnerReference{
 				{
