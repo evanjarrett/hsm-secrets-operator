@@ -37,25 +37,27 @@ import (
 
 // AgentManagerRunnable wraps an agent manager to create it after TLS is ready
 type AgentManagerRunnable struct {
-	k8sClient    client.Client
-	agentImage   string
-	operatorNS   string
-	logger       logr.Logger
-	agentManager *agent.Manager
-	mu           sync.RWMutex
-	ready        bool
-	readyCh      chan struct{}
-	readyOnce    sync.Once
+	k8sClient          client.Client
+	agentImage         string
+	operatorNS         string
+	serviceAccountName string
+	logger             logr.Logger
+	agentManager       *agent.Manager
+	mu                 sync.RWMutex
+	ready              bool
+	readyCh            chan struct{}
+	readyOnce          sync.Once
 }
 
 // NewAgentManagerRunnable creates a new agent manager runnable
-func NewAgentManagerRunnable(k8sClient client.Client, agentImage string, operatorNS string, logger logr.Logger) *AgentManagerRunnable {
+func NewAgentManagerRunnable(k8sClient client.Client, agentImage string, operatorNS, serviceAccountName string, logger logr.Logger) *AgentManagerRunnable {
 	return &AgentManagerRunnable{
-		k8sClient:  k8sClient,
-		agentImage: agentImage,
-		operatorNS: operatorNS,
-		logger:     logger.WithName("agent-manager-runnable"),
-		readyCh:    make(chan struct{}),
+		k8sClient:          k8sClient,
+		agentImage:         agentImage,
+		operatorNS:         operatorNS,
+		serviceAccountName: serviceAccountName,
+		logger:             logger.WithName("agent-manager-runnable"),
+		readyCh:            make(chan struct{}),
 	}
 }
 
@@ -256,16 +258,18 @@ type AgentControllerSetupRunnable struct {
 	mgr                  manager.Manager
 	operatorNamespace    string
 	operatorName         string
+	serviceAccountName   string
 	logger               logr.Logger
 }
 
 // NewAgentControllerSetupRunnable creates a new agent controller setup runnable
-func NewAgentControllerSetupRunnable(agentManagerRunnable *AgentManagerRunnable, mgr manager.Manager, operatorNamespace, operatorName string, logger logr.Logger) *AgentControllerSetupRunnable {
+func NewAgentControllerSetupRunnable(agentManagerRunnable *AgentManagerRunnable, mgr manager.Manager, operatorNamespace, operatorName, serviceAccountName string, logger logr.Logger) *AgentControllerSetupRunnable {
 	return &AgentControllerSetupRunnable{
 		agentManagerRunnable: agentManagerRunnable,
 		mgr:                  mgr,
 		operatorNamespace:    operatorNamespace,
 		operatorName:         operatorName,
+		serviceAccountName:   serviceAccountName,
 		logger:               logger.WithName("agent-controller-setup"),
 	}
 }
@@ -292,6 +296,7 @@ func (acsr *AgentControllerSetupRunnable) Start(ctx context.Context) error {
 		AgentManager:         agentManager,
 		ImageResolver:        imageResolver,
 		DeviceAbsenceTimeout: 10 * time.Minute, // Default: cleanup agents after 10 minutes of device absence
+		ServiceAccountName:   acsr.serviceAccountName,
 	}).SetupWithManager(acsr.mgr); err != nil {
 		return fmt.Errorf("unable to create controller HSMPoolAgent: %w", err)
 	}

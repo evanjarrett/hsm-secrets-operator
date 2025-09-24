@@ -17,10 +17,12 @@ limitations under the License.
 package manager
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"os"
 	"path/filepath"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -243,7 +245,7 @@ func setupOperatorComponents() (string, string, error) {
 }
 
 // setupBaseControllers sets up controllers that don't depend on the agent manager
-func setupBaseControllers(mgr ctrl.Manager, cfg *managerConfig) error {
+func setupBaseControllers(mgr ctrl.Manager, cfg *managerConfig, serviceAccountName string) error {
 	// Create image resolver
 	imageResolver := config.NewImageResolver(mgr.GetClient())
 
@@ -258,10 +260,11 @@ func setupBaseControllers(mgr ctrl.Manager, cfg *managerConfig) error {
 
 	// Set up discovery DaemonSet controller (manager-owned)
 	if err := (&controller.DiscoveryDaemonSetReconciler{
-		Client:         mgr.GetClient(),
-		Scheme:         mgr.GetScheme(),
-		ImageResolver:  imageResolver,
-		DiscoveryImage: cfg.discoveryImage,
+		Client:             mgr.GetClient(),
+		Scheme:             mgr.GetScheme(),
+		ImageResolver:      imageResolver,
+		DiscoveryImage:     cfg.discoveryImage,
+		ServiceAccountName: serviceAccountName,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DiscoveryDaemonSet")
 		return err
@@ -326,8 +329,19 @@ func Run(args []string) error {
 		return err
 	}
 
+	// Get the service account name that this pod is running under
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	serviceAccountName, err := config.GetCurrentServiceAccount(ctx, mgr.GetClient())
+	if err != nil {
+		setupLog.Error(err, "unable to get current service account - agent and discovery pods will fail without proper RBAC")
+		return err
+	}
+	setupLog.Info("Detected service account", "serviceAccount", serviceAccountName)
+
 	// Create agent manager runnable that will create the agent manager after TLS is ready
-	agentManagerRunnable := NewAgentManagerRunnable(mgr.GetClient(), cfg.agentImage, operatorNamespace, setupLog)
+	agentManagerRunnable := NewAgentManagerRunnable(mgr.GetClient(), cfg.agentImage, operatorNamespace, serviceAccountName, setupLog)
 
 	// Add agent manager as a runnable to start after TLS is ready
 	setupLog.Info("Adding agent manager to manager")
@@ -337,12 +351,12 @@ func Run(args []string) error {
 	}
 
 	// Setup controllers that don't need the agent manager immediately
-	if err := setupBaseControllers(mgr, cfg); err != nil {
+	if err := setupBaseControllers(mgr, cfg, serviceAccountName); err != nil {
 		return err
 	}
 
 	// Create a runnable to setup agent-dependent controllers after agent manager is ready
-	agentControllerSetup := NewAgentControllerSetupRunnable(agentManagerRunnable, mgr, operatorNamespace, operatorName, setupLog)
+	agentControllerSetup := NewAgentControllerSetupRunnable(agentManagerRunnable, mgr, operatorNamespace, operatorName, serviceAccountName, setupLog)
 	setupLog.Info("Adding agent controller setup to manager")
 	if err := mgr.Add(agentControllerSetup); err != nil {
 		setupLog.Error(err, "unable to add agent controller setup to manager")
