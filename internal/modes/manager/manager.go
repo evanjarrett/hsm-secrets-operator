@@ -17,12 +17,10 @@ limitations under the License.
 package manager
 
 import (
-	"context"
 	"crypto/tls"
 	"flag"
 	"os"
 	"path/filepath"
-	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -329,16 +327,12 @@ func Run(args []string) error {
 		return err
 	}
 
-	// Get the service account name that this pod is running under
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	serviceAccountName, err := config.GetCurrentServiceAccount(ctx, mgr.GetClient())
-	if err != nil {
-		setupLog.Error(err, "unable to get current service account - agent and discovery pods will fail without proper RBAC")
-		return err
+	// Get the service account name from environment variable (injected via downward API)
+	serviceAccountName := os.Getenv("SERVICE_ACCOUNT_NAME")
+	if serviceAccountName == "" {
+		serviceAccountName = "hsm-secrets-operator-controller-manager" // fallback default
 	}
-	setupLog.Info("Detected service account", "serviceAccount", serviceAccountName)
+	setupLog.Info("Using service account", "serviceAccount", serviceAccountName)
 
 	// Create agent manager runnable that will create the agent manager after TLS is ready
 	agentManagerRunnable := NewAgentManagerRunnable(mgr.GetClient(), cfg.agentImage, operatorNamespace, serviceAccountName, setupLog)

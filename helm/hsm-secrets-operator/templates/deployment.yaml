@@ -64,6 +64,11 @@ spec:
           value: {{ .Values.config.defaultSyncInterval | quote }}
         - name: DEFAULT_SECRET_TYPE
           value: {{ .Values.config.defaultSecretType | quote }}
+        # Inject service account name using downward API
+        - name: SERVICE_ACCOUNT_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.serviceAccountName
         ports:
         {{- if .Values.metrics.enabled }}
         - name: metrics
