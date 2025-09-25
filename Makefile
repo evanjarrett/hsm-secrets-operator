@@ -3,7 +3,7 @@
 # To re-generate a bundle for another specific version without changing the standard setup, you can:
 # - use the VERSION as arg of the bundle target (e.g make bundle VERSION=0.0.2)
 # - use environment variables to overwrite this value (e.g export VERSION=0.0.2)
-VERSION ?= 0.6.2
+VERSION ?= 0.6.3
 
 # CHANNELS define the bundle channels used in the bundle.
 # Add a new line here if you would like to change its default config. (E.g CHANNELS = "candidate,fast,stable")
@@ -128,9 +128,8 @@ $(eval NEW_VERSION := $(shell echo "$(VERSION)" | awk -F. -v component=$(1) '{ \
 @echo "✅ Version updated to $(NEW_VERSION)"
 @echo ""
 @echo "Next steps:"
-@echo "1. git add Makefile helm/hsm-secrets-operator/Chart.yaml"
-@echo "2. git commit -m 'chore: bump version to $(NEW_VERSION)'"
-@echo "3. git tag v$(NEW_VERSION) && git push --tags"
+@echo "git commit -am 'chore: bump version to $(NEW_VERSION)'"
+@echo "git tag v$(NEW_VERSION) && git push origin v$(NEW_VERSION)"
 endef
 
 ##@ Development
