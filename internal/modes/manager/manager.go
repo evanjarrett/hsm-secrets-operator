@@ -21,6 +21,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -38,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/config"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/controller"
 )
@@ -242,8 +244,8 @@ func setupOperatorComponents() (string, string, error) {
 	return operatorNamespace, operatorName, nil
 }
 
-// setupBaseControllers sets up controllers that don't depend on the agent manager
-func setupBaseControllers(mgr ctrl.Manager, cfg *managerConfig, serviceAccountName string) error {
+// setupAllControllers sets up all controllers (base and agent-dependent)
+func setupAllControllers(mgr ctrl.Manager, cfg *managerConfig, serviceAccountName string, agentManager *agent.Manager, operatorNamespace, operatorName string) error {
 	// Create image resolver
 	imageResolver := config.NewImageResolver(mgr.GetClient())
 
@@ -268,12 +270,39 @@ func setupBaseControllers(mgr ctrl.Manager, cfg *managerConfig, serviceAccountNa
 		return err
 	}
 
+	// Set up HSMPool agent controller to deploy agents when pools are ready
+	if err := (&controller.HSMPoolAgentReconciler{
+		Client:               mgr.GetClient(),
+		Scheme:               mgr.GetScheme(),
+		AgentManager:         agentManager,
+		ImageResolver:        imageResolver,
+		DeviceAbsenceTimeout: 10 * time.Minute, // Default: cleanup agents after 10 minutes of device absence
+		ServiceAccountName:   serviceAccountName,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "HSMPoolAgent")
+		return err
+	}
+
+	// Set up HSMSecret controller
+	if err := (&controller.HSMSecretReconciler{
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		AgentManager:      agentManager,
+		OperatorNamespace: operatorNamespace,
+		OperatorName:      operatorName,
+		StartupTime:       time.Now(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "HSMSecret")
+		return err
+	}
+
+	setupLog.Info("All controllers set up successfully")
 	return nil
 }
 
 // startServices starts the API server, mirroring service, and manager
-func startServices(mgr ctrl.Manager, agentManagerRunnable *AgentManagerRunnable, operatorNamespace string, cfg *managerConfig) error {
-	// Start API server if enabled (will wait for agent manager to be ready)
+func startServices(mgr ctrl.Manager, agentManager *agent.Manager, operatorNamespace string, cfg *managerConfig) error {
+	// Start API server if enabled
 	if cfg.enableAPI {
 		// Create Kubernetes clientset for JWT authentication
 		k8sInterface, err := kubernetes.NewForConfig(mgr.GetConfig())
@@ -282,24 +311,24 @@ func startServices(mgr ctrl.Manager, agentManagerRunnable *AgentManagerRunnable,
 			return err
 		}
 
-		// Create API server runnable that waits for agent manager
-		apiServerRunnable := NewAPIServerRunnable(mgr.GetClient(), agentManagerRunnable, operatorNamespace, k8sInterface, cfg.apiPort, ctrl.Log.WithName("api"))
+		// Create API server runnable
+		apiServerRunnable := NewAPIServerRunnable(mgr.GetClient(), agentManager, operatorNamespace, k8sInterface, cfg.apiPort, ctrl.Log.WithName("api"))
 
 		// Add API server as a Runnable to ensure it starts after the cache is ready
 		if err := mgr.Add(apiServerRunnable); err != nil {
 			setupLog.Error(err, "unable to add API server to manager")
 			return err
 		}
-		setupLog.Info("API server will start after agent manager is ready", "port", cfg.apiPort)
+		setupLog.Info("API server will start", "port", cfg.apiPort)
 	}
 
-	// Start device-scoped HSM mirroring in background (will wait for agent manager to be ready)
-	mirrorManagerRunnable := NewMirrorManagerRunnable(mgr.GetClient(), agentManagerRunnable, operatorNamespace, ctrl.Log.WithName("device-mirror"))
+	// Start device-scoped HSM mirroring in background
+	mirrorManagerRunnable := NewMirrorManagerRunnable(mgr.GetClient(), agentManager, operatorNamespace, ctrl.Log.WithName("device-mirror"))
 	if err := mgr.Add(mirrorManagerRunnable); err != nil {
 		setupLog.Error(err, "unable to add mirror manager to manager")
 		return err
 	}
-	setupLog.Info("Mirror manager will start after agent manager is ready")
+	setupLog.Info("Mirror manager will start")
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
@@ -334,26 +363,13 @@ func Run(args []string) error {
 	}
 	setupLog.Info("Using service account", "serviceAccount", serviceAccountName)
 
-	// Create agent manager runnable that will create the agent manager after TLS is ready
-	agentManagerRunnable := NewAgentManagerRunnable(mgr.GetClient(), cfg.agentImage, operatorNamespace, serviceAccountName, setupLog)
+	// Create agent manager directly (no runnable needed)
+	setupLog.Info("Creating agent manager")
+	imageResolver := config.NewImageResolver(mgr.GetClient())
+	agentManager := agent.NewManager(mgr.GetClient(), operatorNamespace, cfg.agentImage, imageResolver)
 
-	// Add agent manager as a runnable to start after TLS is ready
-	setupLog.Info("Adding agent manager to manager")
-	if err := mgr.Add(agentManagerRunnable); err != nil {
-		setupLog.Error(err, "unable to add agent manager to manager")
-		return err
-	}
-
-	// Setup controllers that don't need the agent manager immediately
-	if err := setupBaseControllers(mgr, cfg, serviceAccountName); err != nil {
-		return err
-	}
-
-	// Create a runnable to setup agent-dependent controllers after agent manager is ready
-	agentControllerSetup := NewAgentControllerSetupRunnable(agentManagerRunnable, mgr, operatorNamespace, operatorName, serviceAccountName, setupLog)
-	setupLog.Info("Adding agent controller setup to manager")
-	if err := mgr.Add(agentControllerSetup); err != nil {
-		setupLog.Error(err, "unable to add agent controller setup to manager")
+	// Setup all controllers directly
+	if err := setupAllControllers(mgr, cfg, serviceAccountName, agentManager, operatorNamespace, operatorName); err != nil {
 		return err
 	}
 
@@ -382,5 +398,5 @@ func Run(args []string) error {
 		return err
 	}
 
-	return startServices(mgr, agentManagerRunnable, operatorNamespace, cfg)
+	return startServices(mgr, agentManager, operatorNamespace, cfg)
 }
