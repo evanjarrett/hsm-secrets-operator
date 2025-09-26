@@ -23,6 +23,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -243,6 +244,11 @@ func (r *DiscoveryDaemonSetReconciler) ensureDiscoveryDaemonSet(ctx context.Cont
 									MountPath: "/sys",
 									ReadOnly:  true,
 								},
+								{
+									Name:      "run-udev",
+									MountPath: "/run/udev",
+									ReadOnly:  true,
+								},
 							},
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
@@ -279,7 +285,7 @@ func (r *DiscoveryDaemonSetReconciler) ensureDiscoveryDaemonSet(ctx context.Cont
 			UpdateStrategy: appsv1.DaemonSetUpdateStrategy{
 				Type: appsv1.RollingUpdateDaemonSetStrategyType,
 				RollingUpdate: &appsv1.RollingUpdateDaemonSet{
-					MaxUnavailable: &intstr.IntOrString{Type: intstr.String, StrVal: "100%"},
+					MaxUnavailable: &intstr.IntOrString{Type: intstr.String, StrVal: "50%"},
 				},
 			},
 		},
@@ -305,11 +311,27 @@ func (r *DiscoveryDaemonSetReconciler) ensureDiscoveryDaemonSet(ctx context.Cont
 		return ctrl.Result{}, fmt.Errorf("failed to get discovery DaemonSet: %w", err)
 	}
 
-	// Update existing DaemonSet if needed
+	// Check if DaemonSet needs updating using Kubernetes-aware equality
+	specChanged := !equality.Semantic.DeepEqual(existing.Spec, desired.Spec)
+	labelsChanged := !equality.Semantic.DeepEqual(existing.Labels, desired.Labels)
+
+	if !specChanged && !labelsChanged {
+		logger.V(1).Info("Discovery DaemonSet spec unchanged, skipping update",
+			"device", hsmDevice.Name,
+			"daemonset", daemonSetName)
+		return ctrl.Result{}, nil
+	}
+
+	// Update existing DaemonSet
 	existing.Spec = desired.Spec
 	existing.Labels = desired.Labels
 
-	logger.Info("Updating discovery DaemonSet", "device", hsmDevice.Name, "daemonset", daemonSetName)
+	logger.Info("Updating discovery DaemonSet",
+		"device", hsmDevice.Name,
+		"daemonset", daemonSetName,
+		"specChanged", specChanged,
+		"labelsChanged", labelsChanged)
+
 	if err := r.Update(ctx, existing); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to update discovery DaemonSet: %w", err)
 	}
@@ -450,6 +472,12 @@ func (r *DiscoveryDaemonSetReconciler) getVolumes(isTestEnvironment bool) []core
 					EmptyDir: &corev1.EmptyDirVolumeSource{},
 				},
 			},
+			corev1.Volume{
+				Name: "run-udev",
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				},
+			},
 		)
 	} else {
 		// In production, add hostPath volumes for device discovery
@@ -468,6 +496,15 @@ func (r *DiscoveryDaemonSetReconciler) getVolumes(isTestEnvironment bool) []core
 				VolumeSource: corev1.VolumeSource{
 					HostPath: &corev1.HostPathVolumeSource{
 						Path: "/sys",
+						Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
+					},
+				},
+			},
+			corev1.Volume{
+				Name: "run-udev",
+				VolumeSource: corev1.VolumeSource{
+					HostPath: &corev1.HostPathVolumeSource{
+						Path: "/run/udev",
 						Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
 					},
 				},

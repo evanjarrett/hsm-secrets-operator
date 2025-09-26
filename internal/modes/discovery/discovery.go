@@ -139,27 +139,66 @@ type DiscoveryAgent struct {
 	podNamespace  string
 	usbDiscoverer *discovery.USBDiscoverer
 	syncInterval  time.Duration
+
+	// Event-driven discovery support
+	eventMonitoringActive bool
+	deviceCache           map[string][]hsmv1alpha1.DiscoveredDevice // Cache current device state per HSMDevice
+	deviceLookup          map[string]map[string]int                 // Fast lookup: HSMDevice -> (serial/path -> index)
 }
 
-// Run starts the discovery loop
+// Run starts the discovery loop with event-driven monitoring
 func (d *DiscoveryAgent) Run(ctx context.Context) error {
-	ticker := time.NewTicker(d.syncInterval)
-	defer ticker.Stop()
+	// Initialize device cache
+	d.deviceCache = make(map[string][]hsmv1alpha1.DiscoveredDevice)
+	d.deviceLookup = make(map[string]map[string]int)
 
-	// Run initial discovery
+	// Step 1: Mandatory initial discovery to detect already-connected devices
+	d.logger.Info("Performing initial device discovery scan")
 	if err := d.performDiscovery(ctx); err != nil {
-		d.logger.Error(err, "Initial discovery failed")
+		d.logger.Error(err, "Initial discovery failed - continuing with event monitoring")
+	} else {
+		d.logger.Info("Initial device discovery completed successfully")
 	}
 
-	// Start periodic discovery
+	// Step 2: Start event monitoring for real-time changes
+	if err := d.startEventMonitoring(ctx); err != nil {
+		d.logger.Error(err, "Failed to start USB event monitoring - falling back to polling only")
+		d.eventMonitoringActive = false
+	} else {
+		d.logger.Info("USB event monitoring started successfully")
+		d.eventMonitoringActive = true
+	}
+
+	// Step 3: Set up periodic reconciliation (reduced frequency - acts as safety net)
+	reconcileTicker := time.NewTicker(d.syncInterval)
+	defer reconcileTicker.Stop()
+
+	// Step 4: Main event loop
+	eventChan := d.usbDiscoverer.GetEventChannel()
+
 	for {
 		select {
 		case <-ctx.Done():
 			d.logger.Info("Discovery agent shutting down")
+			d.usbDiscoverer.StopEventMonitoring()
 			return nil
-		case <-ticker.C:
-			if err := d.performDiscovery(ctx); err != nil {
-				d.logger.Error(err, "Discovery iteration failed")
+
+		case event, ok := <-eventChan:
+			if !ok {
+				d.logger.Info("USB event channel closed, restarting event monitoring")
+				if err := d.restartEventMonitoring(ctx); err != nil {
+					d.logger.Error(err, "Failed to restart event monitoring")
+					d.eventMonitoringActive = false
+				}
+				continue
+			}
+			d.handleUSBEvent(ctx, event)
+
+		case <-reconcileTicker.C:
+			// Periodic reconciliation - safety net and health check
+			d.logger.V(1).Info("Performing periodic reconciliation")
+			if err := d.reconcileDevices(ctx); err != nil {
+				d.logger.Error(err, "Reconciliation failed")
 			}
 		}
 	}
@@ -180,6 +219,9 @@ func (d *DiscoveryAgent) performDiscovery(ctx context.Context) error {
 		if err := d.processHSMDevice(ctx, &hsmDevice); err != nil {
 			d.logger.Error(err, "Failed to process HSMDevice", "device", hsmDevice.Name)
 		}
+
+		// Register USB specs for event monitoring
+		d.registerSpecForMonitoring(&hsmDevice)
 	}
 
 	return nil
@@ -207,6 +249,9 @@ func (d *DiscoveryAgent) processHSMDevice(ctx context.Context, hsmDevice *hsmv1a
 		"node", d.nodeName,
 		"devicesFound", len(discoveredDevices))
 
+	// Update device cache
+	d.updateDeviceCache(hsmDevice.Name, discoveredDevices)
+
 	// Update pod annotation with discovery results
 	if err := d.updatePodAnnotation(ctx, hsmDevice.Name, discoveredDevices); err != nil {
 		d.logger.Error(err, "Failed to update pod annotation", "device", hsmDevice.Name)
@@ -226,8 +271,6 @@ func (d *DiscoveryAgent) discoverDevicesForSpec(
 	// Perform discovery based on specification
 	if hsmDevice.Spec.Discovery != nil && hsmDevice.Spec.Discovery.USB != nil {
 		devices, err = d.discoverUSBDevices(ctx, hsmDevice)
-	} else if hsmDevice.Spec.Discovery != nil && hsmDevice.Spec.Discovery.DevicePath != nil {
-		devices, err = d.discoverPathDevices(ctx, hsmDevice)
 	} else if hsmDevice.Spec.Discovery != nil && hsmDevice.Spec.Discovery.AutoDiscovery {
 		devices, err = d.autoDiscoverDevices(ctx, hsmDevice)
 	} else {
@@ -288,41 +331,6 @@ func (d *DiscoveryAgent) discoverUSBDevices(
 	}
 
 	d.logger.V(1).Info("USB device discovery completed", "devicesFound", len(devices))
-	return devices, nil
-}
-
-// discoverPathDevices discovers devices using path-based specifications
-func (d *DiscoveryAgent) discoverPathDevices(
-	ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice,
-) ([]hsmv1alpha1.DiscoveredDevice, error) {
-	usbDevices, err := d.usbDiscoverer.DiscoverByPath(ctx, hsmDevice.Spec.Discovery.DevicePath)
-	if err != nil {
-		return nil, fmt.Errorf("path discovery failed: %w", err)
-	}
-
-	devices := make([]hsmv1alpha1.DiscoveredDevice, 0, len(usbDevices))
-	for _, usbDev := range usbDevices {
-		device := hsmv1alpha1.DiscoveredDevice{
-			DevicePath:   usbDev.DevicePath,
-			SerialNumber: usbDev.SerialNumber,
-			NodeName:     d.nodeName,
-			LastSeen:     metav1.Now(),
-			Available:    true,
-			DeviceInfo: map[string]string{
-				"discovery-type": "path",
-				"path-pattern":   hsmDevice.Spec.Discovery.DevicePath.Path,
-			},
-		}
-
-		// Add additional device info
-		for k, v := range usbDev.DeviceInfo {
-			device.DeviceInfo[k] = v
-		}
-
-		devices = append(devices, device)
-	}
-
-	d.logger.V(1).Info("Path device discovery completed", "devicesFound", len(devices))
 	return devices, nil
 }
 
@@ -424,4 +432,267 @@ func (d *DiscoveryAgent) updatePodAnnotation(
 		"pod", d.podName)
 
 	return nil
+}
+
+// startEventMonitoring initializes and starts USB event monitoring
+func (d *DiscoveryAgent) startEventMonitoring(ctx context.Context) error {
+	// Start the USB event monitor
+	if err := d.usbDiscoverer.StartEventMonitoring(ctx); err != nil {
+		return fmt.Errorf("failed to start USB event monitoring: %w", err)
+	}
+
+	d.logger.Info("USB event monitoring initialized successfully")
+	return nil
+}
+
+// restartEventMonitoring attempts to restart USB event monitoring
+func (d *DiscoveryAgent) restartEventMonitoring(ctx context.Context) error {
+	d.logger.Info("Restarting USB event monitoring")
+
+	// Stop current monitoring
+	d.usbDiscoverer.StopEventMonitoring()
+
+	// Re-register all specs
+	if err := d.reregisterAllSpecs(); err != nil {
+		return fmt.Errorf("failed to re-register specs: %w", err)
+	}
+
+	// Start monitoring again
+	if err := d.usbDiscoverer.StartEventMonitoring(ctx); err != nil {
+		return fmt.Errorf("failed to restart USB event monitoring: %w", err)
+	}
+
+	d.eventMonitoringActive = true
+	d.logger.Info("USB event monitoring restarted successfully")
+	return nil
+}
+
+// handleUSBEvent processes a USB device event (add/remove)
+func (d *DiscoveryAgent) handleUSBEvent(ctx context.Context, event discovery.USBEvent) {
+	d.logger.V(1).Info("Processing USB event",
+		"action", event.Action,
+		"device", event.HSMDeviceName,
+		"vendor", event.Device.VendorID,
+		"product", event.Device.ProductID,
+		"serial", event.Device.SerialNumber)
+
+	switch event.Action {
+	case "add":
+		d.handleDeviceAdd(ctx, event)
+	case "remove":
+		d.handleDeviceRemove(ctx, event)
+	default:
+		d.logger.V(2).Info("Ignoring USB event with unknown action", "action", event.Action)
+	}
+}
+
+// handleDeviceAdd handles USB device addition events
+func (d *DiscoveryAgent) handleDeviceAdd(ctx context.Context, event discovery.USBEvent) {
+	// Convert USBDevice to DiscoveredDevice
+	device := discovery.ConvertToDiscoveredDevice(event.Device, d.nodeName)
+
+	// Update device cache
+	currentDevices, exists := d.deviceCache[event.HSMDeviceName]
+	if !exists {
+		currentDevices = []hsmv1alpha1.DiscoveredDevice{}
+	}
+
+	// Check if device already exists using fast lookup
+	if existingIdx := d.findDeviceIndex(event.HSMDeviceName, device); existingIdx != -1 {
+		d.logger.V(2).Info("Device already in cache, updating last seen",
+			"device", event.HSMDeviceName,
+			"serial", device.SerialNumber)
+		currentDevices[existingIdx].LastSeen = device.LastSeen
+		d.updateDeviceCache(event.HSMDeviceName, currentDevices)
+		if err := d.updatePodAnnotation(ctx, event.HSMDeviceName, currentDevices); err != nil {
+			d.logger.Error(err, "Failed to update pod annotation after updating device last seen")
+		}
+		return
+	}
+
+	// Add new device
+	currentDevices = append(currentDevices, device)
+	d.updateDeviceCache(event.HSMDeviceName, currentDevices)
+
+	d.logger.Info("Added device to cache",
+		"device", event.HSMDeviceName,
+		"serial", device.SerialNumber,
+		"path", device.DevicePath,
+		"totalDevices", len(currentDevices))
+
+	// Update pod annotation
+	if err := d.updatePodAnnotation(ctx, event.HSMDeviceName, currentDevices); err != nil {
+		d.logger.Error(err, "Failed to update pod annotation after device add")
+	}
+}
+
+// handleDeviceRemove handles USB device removal events
+func (d *DiscoveryAgent) handleDeviceRemove(ctx context.Context, event discovery.USBEvent) {
+	currentDevices, exists := d.deviceCache[event.HSMDeviceName]
+	if !exists {
+		d.logger.V(2).Info("No devices in cache for device removal", "device", event.HSMDeviceName)
+		return
+	}
+
+	device := discovery.ConvertToDiscoveredDevice(event.Device, d.nodeName)
+
+	// Find device using fast lookup
+	deviceIdx := d.findDeviceIndex(event.HSMDeviceName, device)
+	if deviceIdx == -1 {
+		d.logger.V(2).Info("Device not found in cache for removal",
+			"device", event.HSMDeviceName,
+			"serial", device.SerialNumber)
+		return
+	}
+
+	d.logger.Info("Removed device from cache",
+		"device", event.HSMDeviceName,
+		"serial", device.SerialNumber,
+		"path", device.DevicePath)
+
+	// Remove device efficiently by swapping with last element
+	lastIdx := len(currentDevices) - 1
+	if deviceIdx != lastIdx {
+		currentDevices[deviceIdx] = currentDevices[lastIdx]
+	}
+	currentDevices = currentDevices[:lastIdx]
+
+	d.updateDeviceCache(event.HSMDeviceName, currentDevices)
+
+	d.logger.Info("Updated device cache after removal",
+		"device", event.HSMDeviceName,
+		"remainingDevices", len(currentDevices))
+
+	// Update pod annotation
+	if err := d.updatePodAnnotation(ctx, event.HSMDeviceName, currentDevices); err != nil {
+		d.logger.Error(err, "Failed to update pod annotation after device remove")
+	}
+}
+
+// reconcileDevices performs periodic reconciliation as a safety net
+func (d *DiscoveryAgent) reconcileDevices(ctx context.Context) error {
+	if !d.eventMonitoringActive {
+		// If event monitoring is not active, fall back to regular discovery
+		d.logger.V(1).Info("Event monitoring inactive, performing full discovery")
+		return d.performDiscovery(ctx)
+	}
+
+	// Light reconciliation - just verify our cached state matches reality
+	d.logger.V(2).Info("Performing light reconciliation check")
+
+	// List all HSMDevice resources
+	var hsmDeviceList hsmv1alpha1.HSMDeviceList
+	if err := d.client.List(ctx, &hsmDeviceList); err != nil {
+		return fmt.Errorf("failed to list HSMDevice resources during reconciliation: %w", err)
+	}
+
+	// Re-register specs in case any were missed
+	for _, hsmDevice := range hsmDeviceList.Items {
+		d.registerSpecForMonitoring(&hsmDevice)
+	}
+
+	return nil
+}
+
+// registerSpecForMonitoring registers an HSMDevice specification for event monitoring
+func (d *DiscoveryAgent) registerSpecForMonitoring(hsmDevice *hsmv1alpha1.HSMDevice) {
+	// Skip if device should not be discovered on this node
+	if !d.shouldDiscoverOnNode(hsmDevice) {
+		return
+	}
+
+	var spec *hsmv1alpha1.USBDeviceSpec
+
+	// Determine the USB spec to monitor
+	if hsmDevice.Spec.Discovery != nil && hsmDevice.Spec.Discovery.USB != nil {
+		spec = hsmDevice.Spec.Discovery.USB
+	} else if hsmDevice.Spec.Discovery != nil && hsmDevice.Spec.Discovery.AutoDiscovery {
+		// Use well-known specs for auto-discovery
+		wellKnownSpecs := discovery.GetWellKnownHSMSpecs()
+		if wellKnownSpec, exists := wellKnownSpecs[hsmDevice.Spec.DeviceType]; exists {
+			spec = wellKnownSpec
+		}
+	} else {
+		// Default to auto-discovery with well-known specs
+		wellKnownSpecs := discovery.GetWellKnownHSMSpecs()
+		if wellKnownSpec, exists := wellKnownSpecs[hsmDevice.Spec.DeviceType]; exists {
+			spec = wellKnownSpec
+		}
+	}
+
+	// Register the spec if we have one
+	if spec != nil {
+		d.usbDiscoverer.AddSpecForMonitoring(hsmDevice.Name, spec)
+		d.logger.V(2).Info("Registered USB spec for event monitoring",
+			"device", hsmDevice.Name,
+			"vendor", spec.VendorID,
+			"product", spec.ProductID)
+	}
+}
+
+// reregisterAllSpecs re-registers all current HSMDevice specs for monitoring
+func (d *DiscoveryAgent) reregisterAllSpecs() error {
+	ctx := context.Background()
+
+	var hsmDeviceList hsmv1alpha1.HSMDeviceList
+	if err := d.client.List(ctx, &hsmDeviceList); err != nil {
+		return fmt.Errorf("failed to list HSMDevice resources: %w", err)
+	}
+
+	for _, hsmDevice := range hsmDeviceList.Items {
+		d.registerSpecForMonitoring(&hsmDevice)
+	}
+
+	return nil
+}
+
+// updateDeviceCache updates both the device cache and lookup index
+func (d *DiscoveryAgent) updateDeviceCache(hsmDeviceName string, devices []hsmv1alpha1.DiscoveredDevice) {
+	d.deviceCache[hsmDeviceName] = devices
+
+	// Rebuild lookup index for this HSM device
+	if d.deviceLookup[hsmDeviceName] == nil {
+		d.deviceLookup[hsmDeviceName] = make(map[string]int)
+	} else {
+		// Clear existing entries
+		for k := range d.deviceLookup[hsmDeviceName] {
+			delete(d.deviceLookup[hsmDeviceName], k)
+		}
+	}
+
+	// Build lookup index
+	for i, device := range devices {
+		// Index by serial number if available
+		if device.SerialNumber != "" {
+			d.deviceLookup[hsmDeviceName]["serial:"+device.SerialNumber] = i
+		}
+		// Index by device path if available
+		if device.DevicePath != "" {
+			d.deviceLookup[hsmDeviceName]["path:"+device.DevicePath] = i
+		}
+	}
+}
+
+// findDeviceIndex returns the index of a device in the cache, or -1 if not found
+func (d *DiscoveryAgent) findDeviceIndex(hsmDeviceName string, device hsmv1alpha1.DiscoveredDevice) int {
+	lookupMap, exists := d.deviceLookup[hsmDeviceName]
+	if !exists {
+		return -1
+	}
+
+	// Try serial number lookup first
+	if device.SerialNumber != "" {
+		if idx, found := lookupMap["serial:"+device.SerialNumber]; found {
+			return idx
+		}
+	}
+
+	// Fall back to device path lookup
+	if device.DevicePath != "" {
+		if idx, found := lookupMap["path:"+device.DevicePath]; found {
+			return idx
+		}
+	}
+
+	return -1
 }
