@@ -23,6 +23,12 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # Install system dependencies for CGO builds (libudev for USB discovery)
+      - name: Install libudev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev
+
       - name: Install Kind
         run: |
           curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64

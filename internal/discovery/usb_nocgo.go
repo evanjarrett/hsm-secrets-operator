@@ -1,5 +1,4 @@
 //go:build !cgo
-// +build !cgo
 
 /*
 Copyright 2025.
@@ -22,96 +21,74 @@ package discovery
 import (
 	"context"
 	"fmt"
-	"time"
-
-	"github.com/go-logr/logr"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	ctrl "sigs.k8s.io/controller-runtime"
-
-	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
 )
 
-// USBDevice represents a discovered USB device
-type USBDevice struct {
-	VendorID     string
-	ProductID    string
-	SerialNumber string
-	DevicePath   string
-	Manufacturer string
-	Product      string
-	DeviceInfo   map[string]string
+// UDevDevice is a stub type for non-CGO builds
+type UDevDevice struct{}
+
+// Monitor is a stub type for non-CGO builds
+type Monitor struct{}
+
+// Udev is a stub type for non-CGO builds
+type Udev struct{}
+
+// NewEnumerate creates a stub enumerate object for non-CGO builds
+func (u *Udev) NewEnumerate() *Enumerate {
+	return &Enumerate{}
 }
 
-// USBEvent represents a USB device event
-type USBEvent struct {
-	Action        string    // "add" or "remove"
-	Device        USBDevice // The device that changed
-	Timestamp     time.Time
-	HSMDeviceName string // Which HSMDevice spec this event relates to
+// NewMonitorFromNetlink creates a stub monitor for non-CGO builds
+func (u *Udev) NewMonitorFromNetlink(string) *Monitor {
+	return &Monitor{}
 }
 
-// USBDiscoverer handles USB device discovery and monitoring (no-CGO stub)
-type USBDiscoverer struct {
-	logger       logr.Logger
-	eventChannel chan USBEvent
-	activeSpecs  map[string]*hsmv1alpha1.USBDeviceSpec
-}
+// Enumerate is a stub type for non-CGO builds
+type Enumerate struct{}
 
-// NewUSBDiscoverer creates a new USB device discoverer (no-CGO stub)
-func NewUSBDiscoverer() *USBDiscoverer {
-	logger := ctrl.Log.WithName("usb-discoverer-nocgo")
-
-	return &USBDiscoverer{
-		logger:       logger,
-		eventChannel: make(chan USBEvent, 100),
-		activeSpecs:  make(map[string]*hsmv1alpha1.USBDeviceSpec),
-	}
-}
-
-// NewUSBDiscovererWithMethod creates a new USB device discoverer (method parameter is ignored, kept for compatibility)
-func NewUSBDiscovererWithMethod(method string) *USBDiscoverer {
-	return NewUSBDiscoverer()
-}
-
-// DiscoverDevices finds USB devices matching the given specification (no-CGO stub - returns empty)
-func (u *USBDiscoverer) DiscoverDevices(ctx context.Context, spec *hsmv1alpha1.USBDeviceSpec) ([]USBDevice, error) {
-	u.logger.Info("USB device discovery not available (CGO disabled)",
-		"vendorId", spec.VendorID,
-		"productId", spec.ProductID)
-
-	// Return empty slice - no devices found without udev
-	return []USBDevice{}, nil
-}
-
-// StartEventMonitoring starts monitoring for USB device events (no-CGO stub - does nothing)
-func (u *USBDiscoverer) StartEventMonitoring(ctx context.Context) error {
-	u.logger.Info("USB event monitoring not available (CGO disabled)")
+// AddMatchSubsystem does nothing in non-CGO builds
+func (e *Enumerate) AddMatchSubsystem(string) error {
 	return nil
 }
 
-// AddSpecForMonitoring adds a device spec to monitor for events (no-CGO stub)
-func (u *USBDiscoverer) AddSpecForMonitoring(hsmDeviceName string, spec *hsmv1alpha1.USBDeviceSpec) {
-	u.logger.V(1).Info("USB monitoring not available (CGO disabled)", "device", hsmDeviceName)
-	u.activeSpecs[hsmDeviceName] = spec
+// AddMatchProperty does nothing in non-CGO builds
+func (e *Enumerate) AddMatchProperty(string, string) error {
+	return nil
 }
 
-// RemoveSpecFromMonitoring removes a device spec from event monitoring (no-CGO stub)
-func (u *USBDiscoverer) RemoveSpecFromMonitoring(hsmDeviceName string) {
-	u.logger.V(1).Info("USB monitoring not available (CGO disabled)", "device", hsmDeviceName)
-	delete(u.activeSpecs, hsmDeviceName)
+// Devices returns an empty slice for non-CGO builds
+func (e *Enumerate) Devices() ([]*UDevDevice, error) {
+	return []*UDevDevice{}, nil
 }
 
-// GetEventChannel returns the channel for USB events (no-CGO stub)
-func (u *USBDiscoverer) GetEventChannel() <-chan USBEvent {
-	return u.eventChannel
+// DeviceChan returns empty channels for non-CGO builds
+func (m *Monitor) DeviceChan(ctx context.Context) (<-chan *UDevDevice, <-chan error, error) {
+	deviceChan := make(chan *UDevDevice)
+	errorChan := make(chan error)
+
+	// Close channels immediately since no devices will be found
+	close(deviceChan)
+	close(errorChan)
+
+	return deviceChan, errorChan, nil
 }
 
-// StopEventMonitoring stops USB device event monitoring (no-CGO stub)
-func (u *USBDiscoverer) StopEventMonitoring() {
-	u.logger.Info("USB event monitoring not available (CGO disabled)")
+// FilterAddMatchSubsystem does nothing in non-CGO builds
+func (m *Monitor) FilterAddMatchSubsystem(string) error {
+	return nil
 }
 
-// IsEventMonitoringActive returns whether event monitoring is active (no-CGO stub - always false)
-func (u *USBDiscoverer) IsEventMonitoringActive() bool {
-	return false
+// convertUdevDevice always returns nil for non-CGO builds
+func (u *USBDiscoverer) convertUdevDevice(device *UDevDevice) *USBDevice {
+	return nil
+}
+
+// handleDeviceEvent does nothing for non-CGO builds
+func (u *USBDiscoverer) handleDeviceEvent(device *UDevDevice) {
+	// No-op for non-CGO builds
+}
+
+// init logs a warning about using fallback mode
+func init() {
+	// Note: We can't use the logger here since it's not available during init
+	fmt.Println("WARNING: USB discovery running in fallback mode (CGO disabled). No USB devices will be detected.")
 }

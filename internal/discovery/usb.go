@@ -1,6 +1,3 @@
-//go:build cgo
-// +build cgo
-
 /*
 Copyright 2025.
 
@@ -22,11 +19,11 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
-	"github.com/jochenvg/go-udev"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -55,10 +52,10 @@ type USBEvent struct {
 // USBDiscoverer handles USB device discovery and monitoring
 type USBDiscoverer struct {
 	logger logr.Logger
-	udev   *udev.Udev
+	udev   *Udev
 
 	// Event monitoring
-	monitor      *udev.Monitor
+	monitor      *Monitor
 	eventChannel chan USBEvent
 	activeSpecs  map[string]*hsmv1alpha1.USBDeviceSpec
 }
@@ -67,7 +64,7 @@ type USBDiscoverer struct {
 func NewUSBDiscoverer() *USBDiscoverer {
 	logger := ctrl.Log.WithName("usb-discoverer")
 
-	udev := &udev.Udev{}
+	udev := &Udev{}
 
 	return &USBDiscoverer{
 		logger:       logger,
@@ -127,32 +124,6 @@ func (u *USBDiscoverer) DiscoverDevices(ctx context.Context, spec *hsmv1alpha1.U
 		"matchedDevices", len(matchingDevices))
 
 	return matchingDevices, nil
-}
-
-// convertUdevDevice converts a go-udev Device to our USBDevice format
-func (u *USBDiscoverer) convertUdevDevice(device *udev.Device) *USBDevice {
-	// Only process actual USB devices, not interfaces
-	if device.PropertyValue("DEVTYPE") != "usb_device" {
-		return nil
-	}
-
-	vendorID := device.PropertyValue("ID_VENDOR_ID")
-	productID := device.PropertyValue("ID_MODEL_ID")
-
-	// Skip devices without vendor/product IDs
-	if vendorID == "" || productID == "" {
-		return nil
-	}
-
-	return &USBDevice{
-		VendorID:     vendorID,
-		ProductID:    productID,
-		SerialNumber: device.PropertyValue("ID_SERIAL_SHORT"),
-		DevicePath:   device.Devnode(),
-		Manufacturer: device.PropertyValue("ID_VENDOR"),
-		Product:      device.PropertyValue("ID_MODEL"),
-		DeviceInfo:   device.Properties(),
-	}
 }
 
 // matchesSpec checks if a USB device matches the given specification
@@ -241,52 +212,6 @@ func (u *USBDiscoverer) monitorLoop(ctx context.Context) {
 	}
 }
 
-// handleDeviceEvent processes a single USB device event
-func (u *USBDiscoverer) handleDeviceEvent(device *udev.Device) {
-	action := device.Action()
-
-	// Only process add/remove events
-	if action != "add" && action != "remove" {
-		return
-	}
-
-	// Convert to USBDevice
-	usbDev := u.convertUdevDevice(device)
-	if usbDev == nil {
-		return
-	}
-
-	u.logger.V(2).Info("Received USB event",
-		"action", action,
-		"vendor", usbDev.VendorID,
-		"product", usbDev.ProductID,
-		"serial", usbDev.SerialNumber)
-
-	// Check which active specs match this device
-	for hsmDeviceName, spec := range u.activeSpecs {
-		if u.matchesSpec(*usbDev, spec) {
-			event := USBEvent{
-				Action:        action,
-				Device:        *usbDev,
-				Timestamp:     time.Now(),
-				HSMDeviceName: hsmDeviceName,
-			}
-
-			select {
-			case u.eventChannel <- event:
-				u.logger.V(1).Info("Sent USB event",
-					"action", action,
-					"device", hsmDeviceName,
-					"vendor", usbDev.VendorID,
-					"product", usbDev.ProductID,
-					"serial", usbDev.SerialNumber)
-			default:
-				u.logger.Error(nil, "USB event channel full, dropping event", "action", action)
-			}
-		}
-	}
-}
-
 // AddSpecForMonitoring registers an HSMDevice spec for event monitoring
 func (u *USBDiscoverer) AddSpecForMonitoring(hsmDeviceName string, spec *hsmv1alpha1.USBDeviceSpec) {
 	u.activeSpecs[hsmDeviceName] = spec
@@ -337,9 +262,7 @@ func ConvertToDiscoveredDevice(usbDevice USBDevice, nodeName string) hsmv1alpha1
 	}
 
 	// Add additional device info
-	for k, v := range usbDevice.DeviceInfo {
-		device.DeviceInfo[k] = v
-	}
+	maps.Copy(device.DeviceInfo, usbDevice.DeviceInfo)
 
 	return device
 }
