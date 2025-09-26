@@ -159,30 +159,35 @@ var _ = Describe("DiscoveryDaemonSetReconciler", func() {
 			Expect(podNameEnv).NotTo(BeNil())
 			Expect(podNameEnv.ValueFrom.FieldRef.FieldPath).To(Equal("metadata.name"))
 
-			// Check volumes
-			Expect(podSpec.Volumes).To(HaveLen(2))
-			var devVolume, sysVolume *corev1.Volume
+			// Check volumes - now includes /run/udev for event-driven USB discovery
+			Expect(podSpec.Volumes).To(HaveLen(3))
+			var devVolume, sysVolume, udevVolume *corev1.Volume
 			for i := range podSpec.Volumes {
 				switch podSpec.Volumes[i].Name {
 				case "dev":
 					devVolume = &podSpec.Volumes[i]
 				case "sys":
 					sysVolume = &podSpec.Volumes[i]
+				case "run-udev":
+					udevVolume = &podSpec.Volumes[i]
 				}
 			}
 
 			Expect(devVolume).NotTo(BeNil())
 			Expect(sysVolume).NotTo(BeNil())
+			Expect(udevVolume).NotTo(BeNil())
 
 			// In CI environments, volumes use EmptyDir; in production they use HostPath
 			if devVolume.HostPath != nil {
 				// Production environment - expect HostPath volumes
 				Expect(devVolume.HostPath.Path).To(Equal("/dev"))
 				Expect(sysVolume.HostPath.Path).To(Equal("/sys"))
+				Expect(udevVolume.HostPath.Path).To(Equal("/run/udev"))
 			} else {
 				// CI/test environment - expect EmptyDir volumes
 				Expect(devVolume.EmptyDir).NotTo(BeNil())
 				Expect(sysVolume.EmptyDir).NotTo(BeNil())
+				Expect(udevVolume.EmptyDir).NotTo(BeNil())
 			}
 
 			// Check node selector from HSMDevice

@@ -4,10 +4,12 @@ FROM golang:1.24-alpine AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
-# Install build dependencies for PKCS#11
+# Install build dependencies for PKCS#11 and USB event monitoring
 RUN apk add --no-cache \
   gcc \
-  g++
+  g++ \
+  eudev-dev \
+  linux-headers
 
 # Return to workspace for Go builds
 WORKDIR /workspace
@@ -28,7 +30,7 @@ COPY web/ web/
 RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o hsm-operator cmd/hsm-operator/main.go
 
 FROM alpine:3.22
-RUN apk add --no-cache opensc-dev ccid pcsc-lite openssl libtool libusb ca-certificates
+RUN apk add --no-cache opensc-dev ccid pcsc-lite openssl libtool libusb ca-certificates eudev
 
 WORKDIR /
 COPY --from=builder /workspace/hsm-operator .

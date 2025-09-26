@@ -17,16 +17,14 @@ limitations under the License.
 package discovery
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"io/fs"
-	"os"
-	"path/filepath"
-	"regexp"
 	"strings"
+	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/jochenvg/go-udev"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
@@ -43,488 +41,115 @@ type USBDevice struct {
 	DeviceInfo   map[string]string
 }
 
-// USBDiscoverer handles USB device discovery
+// USBEvent represents a USB device event
+type USBEvent struct {
+	Action        string    // "add" or "remove"
+	Device        USBDevice // The device that changed
+	Timestamp     time.Time
+	HSMDeviceName string // Which HSMDevice spec this event relates to
+}
+
+// USBDiscoverer handles USB device discovery and monitoring
 type USBDiscoverer struct {
 	logger logr.Logger
-	// mutex  sync.RWMutex // unused
+	udev   *udev.Udev
 
-	// Known USB paths to scan (support both container and host-mounted paths)
-	usbSysPaths []string
-	devicePaths []string
-
-	// Detection method preference: "lsusb", "sysfs", or "auto"
-	detectionMethod string
+	// Event monitoring
+	monitor      *udev.Monitor
+	eventChannel chan USBEvent
+	activeSpecs  map[string]*hsmv1alpha1.USBDeviceSpec
 }
 
 // NewUSBDiscoverer creates a new USB device discoverer
 func NewUSBDiscoverer() *USBDiscoverer {
-	return NewUSBDiscovererWithMethod("auto")
+	logger := ctrl.Log.WithName("usb-discoverer")
+
+	udev := &udev.Udev{}
+
+	return &USBDiscoverer{
+		logger:       logger,
+		udev:         udev,
+		eventChannel: make(chan USBEvent, 100),
+		activeSpecs:  make(map[string]*hsmv1alpha1.USBDeviceSpec),
+	}
 }
 
-// NewUSBDiscovererWithMethod creates a new USB device discoverer with specific detection method
+// NewUSBDiscovererWithMethod creates a new USB device discoverer (method parameter is ignored, kept for compatibility)
 func NewUSBDiscovererWithMethod(method string) *USBDiscoverer {
-	return &USBDiscoverer{
-		logger: ctrl.Log.WithName("usb-discoverer"),
-		usbSysPaths: []string{
-			"/host/sys/bus/usb/devices", // Host-mounted path (for DaemonSet)
-			"/sys/bus/usb/devices",      // Container path (for regular deployment)
-			"/host/sys/class/usbmisc",   // Alternative host path
-			"/sys/class/usbmisc",        // Alternative container path
-		},
-		devicePaths: []string{
-			"/host/dev", // Host-mounted path (for DaemonSet)
-			"/dev",      // Container path (for regular deployment)
-		},
-		detectionMethod: method,
-	}
+	return NewUSBDiscoverer()
 }
 
 // DiscoverDevices finds USB devices matching the given specification
 func (u *USBDiscoverer) DiscoverDevices(ctx context.Context, spec *hsmv1alpha1.USBDeviceSpec) ([]USBDevice, error) {
 	u.logger.V(1).Info("Starting USB device discovery",
 		"vendorId", spec.VendorID,
-		"productId", spec.ProductID,
-		"method", u.detectionMethod)
+		"productId", spec.ProductID)
 
-	var devices []USBDevice
+	// Create enumerate object
+	enumerate := u.udev.NewEnumerate()
 
-	// Choose detection method based on configuration
-	u.logger.V(1).Info("Using detection method", "method", u.detectionMethod)
+	// Filter for USB devices only
+	if err := enumerate.AddMatchSubsystem("usb"); err != nil {
+		return nil, fmt.Errorf("failed to add subsystem filter: %w", err)
+	}
 
-	switch u.detectionMethod {
-	case "sysfs":
-		// Use native sysfs reading (recommended method)
-		u.logger.V(1).Info("Forcing native sysfs detection method")
-		sysfsDevices, err := u.scanUSBWithSysfs()
-		if err != nil {
-			return nil, fmt.Errorf("native sysfs detection method failed: %w", err)
+	if err := enumerate.AddMatchProperty("DEVTYPE", "usb_device"); err != nil {
+		return nil, fmt.Errorf("failed to add device type filter: %w", err)
+	}
+
+	// Get all USB devices
+	devices, err := enumerate.Devices()
+	if err != nil {
+		return nil, fmt.Errorf("failed to enumerate devices: %w", err)
+	}
+
+	u.logger.V(1).Info("Found USB devices", "totalDevices", len(devices))
+
+	// Convert and filter devices
+	var matchingDevices []USBDevice
+	for _, device := range devices {
+		if usbDev := u.convertUdevDevice(device); usbDev != nil {
+			if u.matchesSpec(*usbDev, spec) {
+				u.logger.V(1).Info("Found matching USB device",
+					"vendorId", usbDev.VendorID,
+					"productId", usbDev.ProductID,
+					"serial", usbDev.SerialNumber,
+					"path", usbDev.DevicePath)
+				matchingDevices = append(matchingDevices, *usbDev)
+			}
 		}
-		devices = u.filterDevices(sysfsDevices, spec, "native-sysfs")
-
-	case "legacy":
-		// Legacy method removed - use native sysfs instead
-		u.logger.V(1).Info("Legacy method deprecated, using native sysfs")
-		sysfsDevices, err := u.scanUSBWithSysfs()
-		if err != nil {
-			return nil, fmt.Errorf("native sysfs detection method failed: %w", err)
-		}
-		devices = u.filterDevices(sysfsDevices, spec, "native-sysfs")
-
-	case "auto":
-		fallthrough
-	default:
-		// Always use native sysfs - no fallback needed
-		u.logger.V(1).Info("Auto-detection: using native sysfs")
-		sysfsDevices, err := u.scanUSBWithSysfs()
-		if err != nil {
-			return nil, fmt.Errorf("native sysfs detection method failed: %w", err)
-		}
-		u.logger.V(1).Info("Using native sysfs for USB discovery", "foundDevices", len(sysfsDevices))
-		devices = u.filterDevices(sysfsDevices, spec, "native-sysfs")
 	}
 
 	u.logger.Info("USB device discovery completed",
-		"matchedDevices", len(devices),
-		"method", u.detectionMethod)
+		"matchedDevices", len(matchingDevices))
 
-	return devices, nil
+	return matchingDevices, nil
 }
 
-// filterDevices filters USB devices based on specification
-func (u *USBDiscoverer) filterDevices(allDevices []USBDevice, spec *hsmv1alpha1.USBDeviceSpec, method string) []USBDevice {
-	devices := make([]USBDevice, 0)
-
-	for _, device := range allDevices {
-		if u.matchesSpec(device, spec) {
-			u.logger.V(1).Info("Found matching USB device",
-				"vendorId", device.VendorID,
-				"productId", device.ProductID,
-				"serial", device.SerialNumber,
-				"path", device.DevicePath,
-				"method", method)
-			devices = append(devices, device)
-		}
-	}
-
-	return devices
-}
-
-// DiscoverByPath finds devices using path-based discovery
-func (u *USBDiscoverer) DiscoverByPath(ctx context.Context, pathSpec *hsmv1alpha1.DevicePathSpec) ([]USBDevice, error) {
-	u.logger.V(1).Info("Starting path-based device discovery", "path", pathSpec.Path)
-
-	devices := make([]USBDevice, 0)
-
-	// Handle glob patterns
-	matches, err := filepath.Glob(pathSpec.Path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to glob path %s: %w", pathSpec.Path, err)
-	}
-
-	for _, match := range matches {
-		// Check if the path exists and is accessible
-		if _, err := os.Stat(match); err != nil {
-			u.logger.V(2).Info("Skipping inaccessible device path", "path", match, "error", err)
-			continue
-		}
-
-		// Create USB device entry for path-based discovery
-		device := USBDevice{
-			DevicePath: match,
-			DeviceInfo: map[string]string{
-				"discovery-method": "path",
-				"permissions":      pathSpec.Permissions,
-			},
-		}
-
-		// Try to get additional device info if possible
-		if info := u.getDeviceInfoFromPath(match); info != nil {
-			device.VendorID = info["vendor_id"]
-			device.ProductID = info["product_id"]
-			device.SerialNumber = info["serial"]
-			device.Manufacturer = info["manufacturer"]
-			device.Product = info["product"]
-			for k, v := range info {
-				device.DeviceInfo[k] = v
-			}
-		}
-
-		devices = append(devices, device)
-	}
-
-	u.logger.Info("Path-based device discovery completed",
-		"matchedDevices", len(devices))
-
-	return devices, nil
-}
-
-// scanUSBWithSysfs uses /sys/bus/usb/devices directly (works without root like lsusb)
-func (u *USBDiscoverer) scanUSBWithSysfs() ([]USBDevice, error) {
-	devices := make([]USBDevice, 0)
-
-	// Try different USB sysfs paths (same as existing logic but focused on bus scan)
-	var usbSysPath string
-	for _, path := range u.usbSysPaths {
-		if _, err := os.Stat(path); err == nil {
-			usbSysPath = path
-			u.logger.V(1).Info("Using USB sysfs path for native scan", "path", usbSysPath)
-			break
-		}
-	}
-
-	if usbSysPath == "" {
-		return nil, fmt.Errorf("no USB sysfs path available, tried: %v", u.usbSysPaths)
-	}
-
-	// Read the USB bus devices directly (like lsusb does)
-	u.logger.V(1).Info("Scanning USB devices in sysfs", "path", usbSysPath)
-
-	err := filepath.WalkDir(usbSysPath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			u.logger.V(2).Info("Error walking USB device", "path", path, "error", err)
-			return err
-		}
-
-		// Skip the root directory itself
-		if path == usbSysPath {
-			return nil
-		}
-
-		// Check if this is a directory or symlink to a directory (handles sysfs symlinks)
-		info, err := os.Stat(path)
-		if err != nil {
-			u.logger.V(2).Info("Cannot stat USB device path", "path", path, "error", err)
-			return nil
-		}
-
-		if !info.IsDir() {
-			return nil
-		}
-
-		// Check if this is a USB device directory (e.g., 1-1.2 or usb1)
-		name := d.Name()
-		// Match USB device patterns: N-N.N.N (port topology) or usbN (root hub)
-		if !regexp.MustCompile(`^(\d+-[\d.]+|usb\d+)$`).MatchString(name) {
-			return nil
-		}
-
-		// Skip USB root hubs unless they're actual devices
-		if strings.HasPrefix(name, "usb") {
-			return nil
-		}
-
-		u.logger.V(2).Info("Found potential USB device directory", "name", name, "path", path)
-
-		device := u.parseUSBDeviceFromSysfs(path)
-		if device != nil {
-			u.logger.V(1).Info("Successfully parsed USB device",
-				"vendorId", device.VendorID, "productId", device.ProductID,
-				"manufacturer", device.Manufacturer, "product", device.Product)
-			devices = append(devices, *device)
-		}
-
+// convertUdevDevice converts a go-udev Device to our USBDevice format
+func (u *USBDiscoverer) convertUdevDevice(device *udev.Device) *USBDevice {
+	// Only process actual USB devices, not interfaces
+	if device.PropertyValue("DEVTYPE") != "usb_device" {
 		return nil
-	})
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to scan USB sysfs: %w", err)
 	}
 
-	u.logger.V(1).Info("Native sysfs USB scan completed", "devicesFound", len(devices))
-	return devices, nil
-}
-
-// findHSMDevicePath looks for HSM device paths using sysfs information
-func (u *USBDiscoverer) findHSMDevicePath(sysfsPath, vendorID, productID string) string {
-	// Method 1: Extract bus/device numbers and construct /dev/bus/usb path
-	if usbDevPath := u.findUSBDevicePath(sysfsPath); usbDevPath != "" {
-		u.logger.V(2).Info("Found USB device path", "path", usbDevPath, "vendorId", vendorID, "productId", productID)
-		return usbDevPath
-	}
-
-	// Method 2: Check for serial device nodes (ttyUSB, ttyACM)
-	if serialPath := u.findSerialDevicePath(sysfsPath); serialPath != "" {
-		u.logger.V(2).Info("Found serial device path", "path", serialPath, "vendorId", vendorID, "productId", productID)
-		return serialPath
-	}
-
-	// Method 3: Check for HID device nodes (hidraw)
-	if hidPath := u.findHIDDevicePath(sysfsPath); hidPath != "" {
-		u.logger.V(2).Info("Found HID device path", "path", hidPath, "vendorId", vendorID, "productId", productID)
-		return hidPath
-	}
-
-	// Method 4: Fallback to common paths (legacy compatibility)
-	if commonPath := u.findCommonDevicePath(vendorID, productID); commonPath != "" {
-		u.logger.V(2).Info("Found common device path", "path", commonPath, "vendorId", vendorID, "productId", productID)
-		return commonPath
-	}
-
-	return ""
-}
-
-// findUSBDevicePath constructs /dev/bus/usb path from sysfs path
-func (u *USBDiscoverer) findUSBDevicePath(sysfsPath string) string {
-	// Extract bus and device numbers from sysfs path
-	// sysfsPath looks like: /sys/bus/usb/devices/1-6
-	// We need to read busnum and devnum files
-
-	busNumPath := filepath.Join(sysfsPath, "busnum")
-	devNumPath := filepath.Join(sysfsPath, "devnum")
-
-	busNum, err1 := u.readSysfsFile(busNumPath)
-	devNum, err2 := u.readSysfsFile(devNumPath)
-
-	if err1 != nil || err2 != nil {
-		u.logger.V(2).Info("Could not read bus/dev numbers", "sysfsPath", sysfsPath, "busErr", err1, "devErr", err2)
-		return ""
-	}
-
-	busNum = strings.TrimSpace(busNum)
-	devNum = strings.TrimSpace(devNum)
-
-	// Format as 3-digit numbers for /dev/bus/usb path
-	if len(busNum) == 1 {
-		busNum = "00" + busNum
-	} else if len(busNum) == 2 {
-		busNum = "0" + busNum
-	}
-
-	if len(devNum) == 1 {
-		devNum = "00" + devNum
-	} else if len(devNum) == 2 {
-		devNum = "0" + devNum
-	}
-
-	// Construct device path
-	usbDevPath := fmt.Sprintf("/dev/bus/usb/%s/%s", busNum, devNum)
-
-	// Check both container and host-mounted paths
-	if u.deviceExists(usbDevPath) {
-		return usbDevPath
-	}
-
-	return ""
-}
-
-// findSerialDevicePath looks for ttyUSB/ttyACM device nodes
-func (u *USBDiscoverer) findSerialDevicePath(sysfsPath string) string {
-	// Look for tty subdirectories in sysfs
-	ttyPattern := filepath.Join(sysfsPath, "*", "tty", "tty*")
-	matches, err := filepath.Glob(ttyPattern)
-	if err != nil {
-		return ""
-	}
-
-	for _, match := range matches {
-		devName := filepath.Base(match)
-		devPath := "/dev/" + devName
-		if u.deviceExists(devPath) {
-			return devPath
-		}
-	}
-
-	return ""
-}
-
-// findHIDDevicePath looks for hidraw device nodes
-func (u *USBDiscoverer) findHIDDevicePath(sysfsPath string) string {
-	// Look for hidraw subdirectories in sysfs
-	hidPattern := filepath.Join(sysfsPath, "*", "hidraw", "hidraw*")
-	matches, err := filepath.Glob(hidPattern)
-	if err != nil {
-		return ""
-	}
-
-	for _, match := range matches {
-		devName := filepath.Base(match)
-		devPath := "/dev/" + devName
-		if u.deviceExists(devPath) {
-			return devPath
-		}
-	}
-
-	return ""
-}
-
-// findCommonDevicePath checks common device paths (legacy fallback)
-func (u *USBDiscoverer) findCommonDevicePath(vendorID, _ string) string {
-	// Common HSM device paths that might be accessible without root
-	commonPaths := []string{
-		"/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/ttyUSB2", "/dev/ttyUSB3",
-		"/dev/ttyACM0", "/dev/ttyACM1", "/dev/ttyACM2", "/dev/ttyACM3",
-		"/dev/sc-hsm", "/dev/pkcs11",
-	}
-
-	// For specific HSM vendors, try known paths
-	knownHSMPaths := map[string][]string{
-		"20a0": {"/dev/ttyUSB0", "/dev/sc-hsm"}, // Pico HSM
-		"04e6": {"/dev/ttyACM0"},                // SmartCard-HSM
-	}
-
-	if paths, exists := knownHSMPaths[vendorID]; exists {
-		commonPaths = append(paths, commonPaths...)
-	}
-
-	for _, path := range commonPaths {
-		if u.deviceExists(path) {
-			return path
-		}
-	}
-
-	return ""
-}
-
-// deviceExists checks if a device path exists, trying both container and host-mounted paths
-func (u *USBDiscoverer) deviceExists(devicePath string) bool {
-	// Try both container and host-mounted paths
-	paths := []string{
-		devicePath,           // /dev/ttyUSB0 or /dev/bus/usb/001/002
-		"/host" + devicePath, // /host/dev/ttyUSB0 or /host/dev/bus/usb/001/002
-	}
-
-	for _, path := range paths {
-		if _, err := os.Stat(path); err == nil {
-			return true
-		}
-	}
-	return false
-}
-
-// parseUSBDeviceFromSysfs parses USB device information directly from sysfs (native lsusb equivalent)
-func (u *USBDiscoverer) parseUSBDeviceFromSysfs(devicePath string) *USBDevice {
-	device := &USBDevice{
-		DeviceInfo: make(map[string]string),
-	}
-
-	// Read vendor ID
-	if vendorID, err := u.readSysfsFile(filepath.Join(devicePath, "idVendor")); err == nil {
-		device.VendorID = strings.TrimSpace(vendorID)
-	}
-
-	// Read product ID
-	if productID, err := u.readSysfsFile(filepath.Join(devicePath, "idProduct")); err == nil {
-		device.ProductID = strings.TrimSpace(productID)
-	}
-
-	// Read serial number
-	if serial, err := u.readSysfsFile(filepath.Join(devicePath, "serial")); err == nil {
-		device.SerialNumber = strings.TrimSpace(serial)
-	}
-
-	// Read manufacturer
-	if manufacturer, err := u.readSysfsFile(filepath.Join(devicePath, "manufacturer")); err == nil {
-		device.Manufacturer = strings.TrimSpace(manufacturer)
-	}
-
-	// Read product name
-	if product, err := u.readSysfsFile(filepath.Join(devicePath, "product")); err == nil {
-		device.Product = strings.TrimSpace(product)
-	}
+	vendorID := device.PropertyValue("ID_VENDOR_ID")
+	productID := device.PropertyValue("ID_MODEL_ID")
 
 	// Skip devices without vendor/product IDs
-	if device.VendorID == "" || device.ProductID == "" {
+	if vendorID == "" || productID == "" {
 		return nil
 	}
 
-	// Try to find associated device paths
-	device.DevicePath = u.findHSMDevicePath(devicePath, device.VendorID, device.ProductID)
-
-	// Add additional device info
-	device.DeviceInfo["sysfs-path"] = devicePath
-	device.DeviceInfo["discovery-method"] = "native-sysfs"
-
-	// Extract bus and device numbers from path if possible
-	deviceName := filepath.Base(devicePath)
-	device.DeviceInfo["device-address"] = deviceName
-
-	u.logger.V(2).Info("Parsed USB device from sysfs",
-		"path", devicePath,
-		"vendorId", device.VendorID,
-		"productId", device.ProductID,
-		"manufacturer", device.Manufacturer,
-		"product", device.Product)
-
-	return device
-}
-
-// readSysfsFile reads a single-line file from sysfs
-func (u *USBDiscoverer) readSysfsFile(path string) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
+	return &USBDevice{
+		VendorID:     vendorID,
+		ProductID:    productID,
+		SerialNumber: device.PropertyValue("ID_SERIAL_SHORT"),
+		DevicePath:   device.Devnode(),
+		Manufacturer: device.PropertyValue("ID_VENDOR"),
+		Product:      device.PropertyValue("ID_MODEL"),
+		DeviceInfo:   device.Properties(),
 	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			// Log the error but don't fail the operation
-			u.logger.V(2).Info("Failed to close sysfs file", "path", path, "error", err)
-		}
-	}()
-
-	scanner := bufio.NewScanner(file)
-	if scanner.Scan() {
-		return scanner.Text(), nil
-	}
-
-	return "", fmt.Errorf("empty file or read error")
-}
-
-// getDeviceInfoFromPath attempts to get device info from a device path
-func (u *USBDiscoverer) getDeviceInfoFromPath(devicePath string) map[string]string {
-	// This is a placeholder implementation
-	// In a real implementation, you'd use udev or similar to get device info
-	info := make(map[string]string)
-
-	// Try to determine device type from path
-	if strings.Contains(devicePath, "ttyUSB") || strings.Contains(devicePath, "ttyACM") {
-		info["device_type"] = "serial"
-	} else if strings.Contains(devicePath, "sc-hsm") {
-		info["device_type"] = "hsm"
-		info["vendor_id"] = "20a0"  // Example: Pico HSM vendor ID
-		info["product_id"] = "4230" // Example: Pico HSM product ID
-	}
-
-	return info
 }
 
 // matchesSpec checks if a USB device matches the given specification
@@ -559,4 +184,175 @@ func GetWellKnownHSMSpecs() map[hsmv1alpha1.HSMDeviceType]*hsmv1alpha1.USBDevice
 			ProductID: "5816", // Example SmartCard-HSM product ID
 		},
 	}
+}
+
+// StartEventMonitoring begins real-time USB device event monitoring
+func (u *USBDiscoverer) StartEventMonitoring(ctx context.Context) error {
+	u.logger.Info("Starting USB event monitoring")
+
+	// Create monitor
+	u.monitor = u.udev.NewMonitorFromNetlink("udev")
+
+	// Add filters for USB devices
+	if err := u.monitor.FilterAddMatchSubsystem("usb"); err != nil {
+		return fmt.Errorf("failed to add subsystem filter to monitor: %w", err)
+	}
+
+	// Start monitoring goroutine
+	go u.monitorLoop(ctx)
+
+	u.logger.Info("USB event monitoring started successfully")
+	return nil
+}
+
+// monitorLoop handles udev events in a separate goroutine
+func (u *USBDiscoverer) monitorLoop(ctx context.Context) {
+	defer close(u.eventChannel)
+
+	deviceChan, errorChan, err := u.monitor.DeviceChan(ctx)
+	if err != nil {
+		u.logger.Error(err, "Failed to create device channel")
+		return
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			u.logger.Info("USB event monitoring stopped")
+			return
+
+		case device, ok := <-deviceChan:
+			if !ok {
+				u.logger.Info("USB device channel closed")
+				return
+			}
+			u.handleDeviceEvent(device)
+
+		case err, ok := <-errorChan:
+			if !ok {
+				u.logger.Info("USB error channel closed")
+				return
+			}
+			u.logger.Error(err, "USB monitoring error")
+		}
+	}
+}
+
+// handleDeviceEvent processes a single USB device event
+func (u *USBDiscoverer) handleDeviceEvent(device *udev.Device) {
+	action := device.Action()
+
+	// Only process add/remove events
+	if action != "add" && action != "remove" {
+		return
+	}
+
+	// Convert to USBDevice
+	usbDev := u.convertUdevDevice(device)
+	if usbDev == nil {
+		return
+	}
+
+	u.logger.V(2).Info("Received USB event",
+		"action", action,
+		"vendor", usbDev.VendorID,
+		"product", usbDev.ProductID,
+		"serial", usbDev.SerialNumber)
+
+	// Check which active specs match this device
+	for hsmDeviceName, spec := range u.activeSpecs {
+		if u.matchesSpec(*usbDev, spec) {
+			event := USBEvent{
+				Action:        action,
+				Device:        *usbDev,
+				Timestamp:     time.Now(),
+				HSMDeviceName: hsmDeviceName,
+			}
+
+			select {
+			case u.eventChannel <- event:
+				u.logger.V(1).Info("Sent USB event",
+					"action", action,
+					"device", hsmDeviceName,
+					"vendor", usbDev.VendorID,
+					"product", usbDev.ProductID,
+					"serial", usbDev.SerialNumber)
+			default:
+				u.logger.Error(nil, "USB event channel full, dropping event", "action", action)
+			}
+		}
+	}
+}
+
+// AddSpecForMonitoring registers an HSMDevice spec for event monitoring
+func (u *USBDiscoverer) AddSpecForMonitoring(hsmDeviceName string, spec *hsmv1alpha1.USBDeviceSpec) {
+	u.activeSpecs[hsmDeviceName] = spec
+	u.logger.V(2).Info("Added USB spec for monitoring",
+		"device", hsmDeviceName,
+		"vendor", spec.VendorID,
+		"product", spec.ProductID)
+}
+
+// RemoveSpecFromMonitoring unregisters an HSMDevice spec from event monitoring
+func (u *USBDiscoverer) RemoveSpecFromMonitoring(hsmDeviceName string) {
+	delete(u.activeSpecs, hsmDeviceName)
+	u.logger.V(2).Info("Removed USB spec from monitoring", "device", hsmDeviceName)
+}
+
+// GetEventChannel returns the channel for receiving USB device events
+func (u *USBDiscoverer) GetEventChannel() <-chan USBEvent {
+	return u.eventChannel
+}
+
+// StopEventMonitoring stops the USB event monitor
+func (u *USBDiscoverer) StopEventMonitoring() {
+	u.logger.Info("Stopping USB event monitor")
+	if u.monitor != nil {
+		u.monitor = nil
+	}
+}
+
+// IsEventMonitoringActive returns whether event monitoring is currently active
+func (u *USBDiscoverer) IsEventMonitoringActive() bool {
+	return u.monitor != nil
+}
+
+// ConvertToDiscoveredDevice converts a USBDevice to a DiscoveredDevice
+func ConvertToDiscoveredDevice(usbDevice USBDevice, nodeName string) hsmv1alpha1.DiscoveredDevice {
+	device := hsmv1alpha1.DiscoveredDevice{
+		DevicePath:   usbDevice.DevicePath,
+		SerialNumber: usbDevice.SerialNumber,
+		NodeName:     nodeName,
+		LastSeen:     metav1.Now(),
+		Available:    true,
+		DeviceInfo: map[string]string{
+			"vendor-id":    usbDevice.VendorID,
+			"product-id":   usbDevice.ProductID,
+			"manufacturer": usbDevice.Manufacturer,
+			"product":      usbDevice.Product,
+		},
+	}
+
+	// Add additional device info
+	for k, v := range usbDevice.DeviceInfo {
+		device.DeviceInfo[k] = v
+	}
+
+	return device
+}
+
+// IsSameDevice checks if two devices are the same (by serial number or device path)
+func IsSameDevice(device1, device2 hsmv1alpha1.DiscoveredDevice) bool {
+	// Compare by serial number if both have one
+	if device1.SerialNumber != "" && device2.SerialNumber != "" {
+		return device1.SerialNumber == device2.SerialNumber
+	}
+
+	// Fall back to device path comparison
+	if device1.DevicePath != "" && device2.DevicePath != "" {
+		return device1.DevicePath == device2.DevicePath
+	}
+
+	// If we can't identify devices uniquely, assume they're different
+	return false
 }
