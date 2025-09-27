@@ -297,3 +297,18 @@ func (c *Client) doRequest(ctx context.Context, method, path string, requestBody
 
 	return nil
 }
+
+// TriggerMirrorSync triggers manual mirror synchronization
+func (c *Client) TriggerMirrorSync(ctx context.Context, force bool) (*MirrorSyncResult, error) {
+	req := &MirrorSyncRequest{
+		Force: force,
+	}
+
+	var result MirrorSyncResult
+	err := c.doRequest(ctx, "POST", "/api/v1/hsm/mirror/sync", req, &result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to trigger mirror sync: %w", err)
+	}
+
+	return &result, nil
+}

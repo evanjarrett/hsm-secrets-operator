@@ -49,7 +49,7 @@ func NewMirrorManager(k8sClient client.Client, agentManager AgentManagerInterfac
 	return &MirrorManager{
 		client:            k8sClient,
 		agentManager:      agentManager,
-		logger:            logger.WithName("mirror-manager"),
+		logger:            logger,
 		operatorNamespace: operatorNamespace,
 	}
 }

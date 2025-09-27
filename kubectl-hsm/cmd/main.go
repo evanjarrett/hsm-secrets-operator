@@ -68,6 +68,12 @@ Examples:
   # Check operator health
   kubectl hsm health
 
+  # Trigger manual mirror synchronization
+  kubectl hsm mirror sync
+
+  # Force immediate mirror sync
+  kubectl hsm mirror sync --force
+
 For more information about the HSM Secrets Operator, visit:
 https://github.com/evanjarrett/hsm-secrets-operator`,
 		SilenceUsage:  true,
@@ -90,6 +96,7 @@ https://github.com/evanjarrett/hsm-secrets-operator`,
 	// Add operational commands
 	cmd.AddCommand(commands.NewHealthCmd())
 	cmd.AddCommand(commands.NewDevicesCmd())
+	cmd.AddCommand(commands.NewMirrorCmd())
 
 	// Add authentication command
 	cmd.AddCommand(commands.NewAuthCmd())

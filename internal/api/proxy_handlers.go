@@ -67,6 +67,9 @@ func (s *Server) setupProxyRoutes() {
 
 			// PIN operations
 			hsmGroup.POST("/change-pin", s.proxyClient.ChangePIN)
+
+			// Mirror operations
+			hsmGroup.POST("/mirror/sync", s.handleMirrorSync)
 		}
 
 		// Health and info endpoints can stay local

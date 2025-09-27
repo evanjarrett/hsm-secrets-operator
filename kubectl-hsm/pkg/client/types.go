@@ -121,3 +121,16 @@ type ChangePINResponse struct {
 	Errors       []string `json:"errors,omitempty"`
 	Message      string   `json:"message"`
 }
+
+// MirrorSyncRequest represents a request to trigger mirror synchronization
+type MirrorSyncRequest struct {
+	Force bool `json:"force,omitempty"`
+}
+
+// MirrorSyncResult represents the result of a mirror sync trigger
+type MirrorSyncResult struct {
+	Triggered bool   `json:"triggered"`
+	Reason    string `json:"reason"`
+	Force     bool   `json:"force"`
+	Message   string `json:"message"`
+}

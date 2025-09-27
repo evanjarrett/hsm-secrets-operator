@@ -71,6 +71,10 @@ type managerConfig struct {
 	apiPort              int
 	agentImage           string
 	discoveryImage       string
+
+	// Mirror configuration
+	mirrorPeriodicInterval string // Duration string for periodic sync interval
+	mirrorDebounceWindow   string // Duration string for event debounce window
 }
 
 // parseFlags parses command line arguments and returns the configuration
@@ -103,6 +107,12 @@ func parseFlags(args []string) (*managerConfig, error) {
 		"Container image for HSM agent pods")
 	fs.StringVar(&cfg.discoveryImage, "discovery-image", "",
 		"Container image for HSM discovery DaemonSet")
+
+	// Mirror configuration flags
+	fs.StringVar(&cfg.mirrorPeriodicInterval, "mirror-periodic-interval", "5m",
+		"Interval for periodic mirror safety sync (e.g., 5m, 10m, 1h)")
+	fs.StringVar(&cfg.mirrorDebounceWindow, "mirror-debounce-window", "5s",
+		"Debounce window for batching mirror events (e.g., 5s, 10s, 30s)")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -322,8 +332,28 @@ func startServices(mgr ctrl.Manager, agentManager *agent.Manager, operatorNamesp
 		setupLog.Info("API server will start", "port", cfg.apiPort)
 	}
 
+	// Create Kubernetes clientset for pod watching
+	k8sInterface, err := kubernetes.NewForConfig(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "unable to create Kubernetes clientset for mirror manager")
+		return err
+	}
+
+	// Parse mirror configuration durations
+	periodicInterval, err := time.ParseDuration(cfg.mirrorPeriodicInterval)
+	if err != nil {
+		setupLog.Error(err, "invalid mirror periodic interval", "value", cfg.mirrorPeriodicInterval)
+		return err
+	}
+
+	debounceWindow, err := time.ParseDuration(cfg.mirrorDebounceWindow)
+	if err != nil {
+		setupLog.Error(err, "invalid mirror debounce window", "value", cfg.mirrorDebounceWindow)
+		return err
+	}
+
 	// Start device-scoped HSM mirroring in background
-	mirrorManagerRunnable := NewMirrorManagerRunnable(mgr.GetClient(), agentManager, operatorNamespace, ctrl.Log.WithName("device-mirror"))
+	mirrorManagerRunnable := NewMirrorManagerRunnable(mgr.GetClient(), k8sInterface, agentManager, operatorNamespace, ctrl.Log.WithName("agent-mirror"), periodicInterval, debounceWindow)
 	if err := mgr.Add(mirrorManagerRunnable); err != nil {
 		setupLog.Error(err, "unable to add mirror manager to manager")
 		return err

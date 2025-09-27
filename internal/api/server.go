@@ -150,6 +150,61 @@ func (s *Server) handleHealth(c *gin.Context) {
 	s.sendResponse(c, http.StatusOK, "Health check completed", health)
 }
 
+// MirrorTriggerInterface defines the interface for triggering mirror syncs
+type MirrorTriggerInterface interface {
+	TriggerMirror(reason, source string, force bool)
+}
+
+// Global mirror trigger for API access
+var globalMirrorTrigger MirrorTriggerInterface
+
+// SetMirrorTrigger sets the global mirror trigger for API access
+func SetMirrorTrigger(trigger MirrorTriggerInterface) {
+	globalMirrorTrigger = trigger
+}
+
+// handleMirrorSync triggers a manual mirror synchronization
+func (s *Server) handleMirrorSync(c *gin.Context) {
+	// Parse request body for force flag
+	var req struct {
+		Force bool `json:"force,omitempty"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil && err.Error() != "EOF" {
+		s.sendError(c, http.StatusBadRequest, "invalid_request", "Invalid request body", map[string]any{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	// Get the global mirror trigger
+	if globalMirrorTrigger == nil {
+		s.sendError(c, http.StatusServiceUnavailable, "mirror_unavailable", "Mirror service not available", nil)
+		return
+	}
+
+	// Trigger the mirror sync
+	reason := "manual_api"
+	source := "api_endpoint"
+	if req.Force {
+		reason = "manual_api_force"
+	}
+
+	globalMirrorTrigger.TriggerMirror(reason, source, req.Force)
+
+	s.logger.Info("Manual mirror sync triggered via API",
+		"force", req.Force,
+		"source", c.ClientIP())
+
+	response := map[string]any{
+		"triggered": true,
+		"reason":    reason,
+		"force":     req.Force,
+		"message":   "Mirror synchronization triggered successfully",
+	}
+
+	s.sendResponse(c, http.StatusOK, "Mirror sync triggered", response)
+}
+
 // All HSM operations are now proxied to agents - no direct handlers needed
 
 // sendResponse sends a successful API response

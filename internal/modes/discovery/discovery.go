@@ -17,6 +17,7 @@ limitations under the License.
 package discovery
 
 import (
+	"maps"
 	"context"
 	"encoding/json"
 	"flag"
@@ -323,9 +324,7 @@ func (d *DiscoveryAgent) discoverUSBDevices(
 		}
 
 		// Add additional device info
-		for k, v := range usbDev.DeviceInfo {
-			device.DeviceInfo[k] = v
-		}
+		maps.Copy(device.DeviceInfo, usbDev.DeviceInfo)
 
 		devices = append(devices, device)
 	}
@@ -497,15 +496,36 @@ func (d *DiscoveryAgent) handleDeviceAdd(ctx context.Context, event discovery.US
 		currentDevices = []hsmv1alpha1.DiscoveredDevice{}
 	}
 
-	// Check if device already exists using fast lookup
+	// Check if device already exists using fast lookup (by serial number)
 	if existingIdx := d.findDeviceIndex(event.HSMDeviceName, device); existingIdx != -1 {
-		d.logger.V(2).Info("Device already in cache, updating last seen",
-			"device", event.HSMDeviceName,
-			"serial", device.SerialNumber)
-		currentDevices[existingIdx].LastSeen = device.LastSeen
+		existingDevice := currentDevices[existingIdx]
+
+		// Check if this is a migration (same serial, different node)
+		if !existingDevice.Available && existingDevice.NodeName != d.nodeName {
+			d.logger.Info("Device migrated from another node",
+				"device", event.HSMDeviceName,
+				"serial", device.SerialNumber,
+				"fromNode", existingDevice.NodeName,
+				"toNode", d.nodeName,
+				"fromPath", existingDevice.DevicePath,
+				"toPath", device.DevicePath)
+		} else if existingDevice.Available && existingDevice.NodeName == d.nodeName {
+			d.logger.V(2).Info("Device already available on this node, updating last seen",
+				"device", event.HSMDeviceName,
+				"serial", device.SerialNumber)
+		} else if !existingDevice.Available && existingDevice.NodeName == d.nodeName {
+			d.logger.Info("Device reconnected on same node",
+				"device", event.HSMDeviceName,
+				"serial", device.SerialNumber)
+		}
+
+		// Update the existing device entry with new information
+		currentDevices[existingIdx] = device
+		currentDevices[existingIdx].Available = true // Mark as available
+
 		d.updateDeviceCache(event.HSMDeviceName, currentDevices)
 		if err := d.updatePodAnnotation(ctx, event.HSMDeviceName, currentDevices); err != nil {
-			d.logger.Error(err, "Failed to update pod annotation after updating device last seen")
+			d.logger.Error(err, "Failed to update pod annotation after device reconnection")
 		}
 		return
 	}
@@ -545,23 +565,21 @@ func (d *DiscoveryAgent) handleDeviceRemove(ctx context.Context, event discovery
 		return
 	}
 
-	d.logger.Info("Removed device from cache",
+	d.logger.Info("Marking device as lost in cache",
 		"device", event.HSMDeviceName,
 		"serial", device.SerialNumber,
 		"path", device.DevicePath)
 
-	// Remove device efficiently by swapping with last element
-	lastIdx := len(currentDevices) - 1
-	if deviceIdx != lastIdx {
-		currentDevices[deviceIdx] = currentDevices[lastIdx]
-	}
-	currentDevices = currentDevices[:lastIdx]
+	// Mark device as lost instead of removing it from cache
+	currentDevices[deviceIdx].Available = false
+	currentDevices[deviceIdx].LastSeen = metav1.Now() // Use LastSeen as "lost at" timestamp
 
 	d.updateDeviceCache(event.HSMDeviceName, currentDevices)
 
-	d.logger.Info("Updated device cache after removal",
+	d.logger.Info("Updated device cache after marking as lost",
 		"device", event.HSMDeviceName,
-		"remainingDevices", len(currentDevices))
+		"serial", device.SerialNumber,
+		"totalDevices", len(currentDevices))
 
 	// Update pod annotation
 	if err := d.updatePodAnnotation(ctx, event.HSMDeviceName, currentDevices); err != nil {
@@ -589,6 +607,39 @@ func (d *DiscoveryAgent) reconcileDevices(ctx context.Context) error {
 	// Re-register specs in case any were missed
 	for _, hsmDevice := range hsmDeviceList.Items {
 		d.registerSpecForMonitoring(&hsmDevice)
+	}
+
+	// Clean up devices that have been lost for too long (5 minutes)
+	cleanupThreshold := 5 * time.Minute
+	for hsmDeviceName, devices := range d.deviceCache {
+		var activeDevices []hsmv1alpha1.DiscoveredDevice
+		cleanedCount := 0
+
+		for _, device := range devices {
+			if !device.Available && time.Since(device.LastSeen.Time) > cleanupThreshold {
+				// Skip this device, it's been gone too long
+				cleanedCount++
+				d.logger.V(1).Info("Cleaning up stale lost device from cache",
+					"device", hsmDeviceName,
+					"serial", device.SerialNumber,
+					"lastSeen", device.LastSeen.Time,
+					"timeSinceLost", time.Since(device.LastSeen.Time))
+				continue
+			}
+			activeDevices = append(activeDevices, device)
+		}
+
+		if cleanedCount > 0 {
+			d.logger.Info("Cleaned up stale lost devices",
+				"device", hsmDeviceName,
+				"cleanedCount", cleanedCount,
+				"remainingDevices", len(activeDevices))
+
+			d.updateDeviceCache(hsmDeviceName, activeDevices)
+			if err := d.updatePodAnnotation(ctx, hsmDeviceName, activeDevices); err != nil {
+				d.logger.Error(err, "Failed to update pod annotation after cleanup", "device", hsmDeviceName)
+			}
+		}
 	}
 
 	return nil

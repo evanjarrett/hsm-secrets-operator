@@ -85,7 +85,7 @@ func (r *HSMPoolAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	logger.Info("Reconciling HSM agent deployment for pool", "pool", hsmPool.Name, "phase", hsmPool.Status.Phase)
+	logger.Info("Reconciling HSM agent deployment", "phase", hsmPool.Status.Phase)
 
 	// Only deploy agents for ready pools with discovered hardware
 	if hsmPool.Status.Phase == hsmv1alpha1.HSMPoolPhaseReady && len(hsmPool.Status.AggregatedDevices) > 0 {
@@ -306,76 +306,108 @@ func (r *HSMPoolAgentReconciler) cleanupAgentDeploymentsByPattern(ctx context.Co
 // Deployment creation and management functions
 
 // ensureAgentDeployments ensures agent deployments exist for all available devices in the pool
+// Handles device migrations by grouping devices by serial number and detecting state changes
 func (r *HSMPoolAgentReconciler) ensureAgentDeployments(ctx context.Context, hsmPool *hsmv1alpha1.HSMPool) error {
 	logger := log.FromContext(ctx)
 
-	var deploymentErrors []error
-
-	// Create stable device-to-index mapping by sorting devices by serial number
-	// This ensures the same device always gets the same index regardless of discovery order
-	availableDevices := make([]hsmv1alpha1.DiscoveredDevice, 0)
+	// Group devices by serial number to detect migrations
+	devicesBySerial := make(map[string][]hsmv1alpha1.DiscoveredDevice)
 	for _, device := range hsmPool.Status.AggregatedDevices {
-		if device.Available {
-			availableDevices = append(availableDevices, device)
-		}
+		devicesBySerial[device.SerialNumber] = append(devicesBySerial[device.SerialNumber], device)
 	}
 
-	// Sort by serial number for stable index assignment
-	sort.Slice(availableDevices, func(i, j int) bool {
-		return availableDevices[i].SerialNumber < availableDevices[j].SerialNumber
-	})
+	// Process each unique serial with stable ordering
+	serialNumbers := make([]string, 0, len(devicesBySerial))
+	for serial := range devicesBySerial {
+		serialNumbers = append(serialNumbers, serial)
+	}
+	sort.Strings(serialNumbers) // Stable ordering
 
-	// Process each available device with stable index
-	for i, aggregatedDevice := range availableDevices {
-		agentName := fmt.Sprintf("%s-%d", r.generateAgentName(hsmPool), i)
+	var deploymentErrors []error
 
-		// Check if deployment already exists
-		var deployment appsv1.Deployment
-		err := r.Get(ctx, types.NamespacedName{
-			Name:      agentName,
-			Namespace: hsmPool.Namespace,
-		}, &deployment)
+	for i, serial := range serialNumbers {
+		devices := devicesBySerial[serial]
+		agentName := fmt.Sprintf("%s-%s-%d", AgentNamePrefix, hsmPool.OwnerReferences[0].Name, i)
 
-		if err == nil {
-			// Deployment exists, check if it needs updating
-			needsUpdate, err := r.agentNeedsUpdate(ctx, &deployment, hsmPool)
-			if err != nil {
-				logger.Error(err, "Failed to check if agent deployment needs update", "deployment", agentName)
-				deploymentErrors = append(deploymentErrors, fmt.Errorf("failed to check deployment %s: %w", agentName, err))
-				continue
-			}
+		// Find the active device (if any) and lost device (if any)
+		var activeDevice *hsmv1alpha1.DiscoveredDevice
+		var lostDevice *hsmv1alpha1.DiscoveredDevice
 
-			// Check device-specific configuration for this specific device (deployment index matches device index)
-			if !needsUpdate {
-				needsUpdate = r.deploymentNeedsUpdateForDevice(&deployment, &aggregatedDevice)
-			}
-
-			if needsUpdate {
-				// Delete existing deployment to trigger recreation
-				logger.Info("Deleting outdated agent deployment", "deployment", agentName)
-				if err := r.Delete(ctx, &deployment); err != nil && !errors.IsNotFound(err) {
-					logger.Error(err, "Failed to delete outdated agent deployment", "deployment", agentName)
-					deploymentErrors = append(deploymentErrors, fmt.Errorf("failed to delete deployment %s: %w", agentName, err))
-					continue
-				}
-				// Fall through to create new deployment
+		for j := range devices {
+			dev := &devices[j]
+			if dev.Available {
+				activeDevice = dev
 			} else {
-				// Deployment is up to date
-				logger.V(1).Info("Agent deployment is up to date", "deployment", agentName)
-				continue
+				lostDevice = dev
 			}
-		} else if !errors.IsNotFound(err) {
-			logger.Error(err, "Failed to check agent deployment", "deployment", agentName)
-			deploymentErrors = append(deploymentErrors, fmt.Errorf("failed to check deployment %s: %w", agentName, err))
-			continue
 		}
 
-		// Create new deployment
-		logger.Info("Creating agent deployment", "deployment", agentName, "device", aggregatedDevice.SerialNumber)
-		if err := r.createAgentDeployment(ctx, hsmPool, &aggregatedDevice, agentName); err != nil {
-			logger.Error(err, "Failed to create agent deployment", "deployment", agentName)
-			deploymentErrors = append(deploymentErrors, fmt.Errorf("failed to create deployment %s: %w", agentName, err))
-			continue
+		// Decision logic based on device state
+		if activeDevice != nil && lostDevice != nil {
+			// Migration scenario - device moved nodes
+			timeSinceLost := time.Since(lostDevice.LastSeen.Time)
+			gracePeriod := 5 * time.Minute
+			if hsmPool.Spec.GracePeriod != nil {
+				gracePeriod = hsmPool.Spec.GracePeriod.Duration
+			}
+
+			if timeSinceLost < gracePeriod && activeDevice.NodeName != lostDevice.NodeName {
+				logger.Info("Device migration detected",
+					"serial", serial,
+					"from", lostDevice.NodeName,
+					"to", activeDevice.NodeName,
+					"timeSinceLost", timeSinceLost)
+
+				// Ensure agent is on the new node (will handle deletion/creation)
+				if err := r.ensureAgentOnNode(ctx, hsmPool, activeDevice, agentName); err != nil {
+					logger.Error(err, "Failed to ensure agent on new node after migration", "serial", serial)
+					deploymentErrors = append(deploymentErrors, fmt.Errorf("migration failed for %s: %w", serial, err))
+					continue
+				}
+			} else if timeSinceLost < gracePeriod {
+				// Device came back on same node within grace period
+				logger.Info("Device reconnected on same node",
+					"serial", serial,
+					"node", activeDevice.NodeName,
+					"timeSinceLost", timeSinceLost)
+
+				if err := r.ensureAgentOnNode(ctx, hsmPool, activeDevice, agentName); err != nil {
+					logger.Error(err, "Failed to ensure agent after reconnection", "serial", serial)
+					deploymentErrors = append(deploymentErrors, fmt.Errorf("reconnection failed for %s: %w", serial, err))
+					continue
+				}
+			}
+		} else if activeDevice != nil {
+			// Normal case - device is available
+			if err := r.ensureAgentOnNode(ctx, hsmPool, activeDevice, agentName); err != nil {
+				logger.Error(err, "Failed to ensure agent for available device", "serial", serial)
+				deploymentErrors = append(deploymentErrors, fmt.Errorf("agent creation failed for %s: %w", serial, err))
+				continue
+			}
+		} else if lostDevice != nil {
+			// Device is lost - check if we should clean up
+			timeSinceLost := time.Since(lostDevice.LastSeen.Time)
+			gracePeriod := 5 * time.Minute
+			if hsmPool.Spec.GracePeriod != nil {
+				gracePeriod = hsmPool.Spec.GracePeriod.Duration
+			}
+
+			if timeSinceLost > gracePeriod {
+				logger.Info("Cleaning up agent for lost device",
+					"serial", serial,
+					"lastNode", lostDevice.NodeName,
+					"timeSinceLost", timeSinceLost)
+
+				if err := r.deleteAgent(ctx, agentName, hsmPool.Namespace); err != nil {
+					logger.Error(err, "Failed to delete agent for lost device", "serial", serial)
+					deploymentErrors = append(deploymentErrors, fmt.Errorf("cleanup failed for %s: %w", serial, err))
+				}
+			} else {
+				logger.V(1).Info("Device lost but within grace period",
+					"serial", serial,
+					"timeSinceLost", timeSinceLost,
+					"gracePeriod", gracePeriod)
+			}
 		}
 	}
 
@@ -384,6 +416,104 @@ func (r *HSMPoolAgentReconciler) ensureAgentDeployments(ctx context.Context, hsm
 		return fmt.Errorf("deployment errors occurred: %v", deploymentErrors)
 	}
 
+	return nil
+}
+
+// ensureAgentOnNode ensures an agent deployment exists on the correct node for the given device
+func (r *HSMPoolAgentReconciler) ensureAgentOnNode(ctx context.Context, hsmPool *hsmv1alpha1.HSMPool, device *hsmv1alpha1.DiscoveredDevice, agentName string) error {
+	logger := log.FromContext(ctx)
+
+	// Check if deployment exists
+	var deployment appsv1.Deployment
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      agentName,
+		Namespace: hsmPool.Namespace,
+	}, &deployment)
+
+	if err == nil {
+		// Deployment exists - check if it's on the right node
+		if !r.isDeploymentOnNode(&deployment, device.NodeName) {
+			logger.Info("Agent on wrong node, recreating",
+				"agent", agentName,
+				"currentNode", r.getDeploymentNode(&deployment),
+				"targetNode", device.NodeName,
+				"serial", device.SerialNumber)
+
+			// Delete and recreate
+			if err := r.Delete(ctx, &deployment); err != nil && !errors.IsNotFound(err) {
+				return fmt.Errorf("failed to delete outdated agent: %w", err)
+			}
+			// Fall through to create
+		} else {
+			// Agent is on correct node - check if other details need updating
+			needsUpdate, err := r.agentNeedsUpdate(ctx, &deployment, hsmPool)
+			if err != nil {
+				return fmt.Errorf("failed to check if agent needs update: %w", err)
+			}
+
+			if !needsUpdate {
+				needsUpdate = r.deploymentNeedsUpdateForDevice(&deployment, device)
+			}
+
+			if needsUpdate {
+				logger.Info("Agent needs updating, recreating",
+					"agent", agentName,
+					"node", device.NodeName,
+					"serial", device.SerialNumber)
+
+				if err := r.Delete(ctx, &deployment); err != nil && !errors.IsNotFound(err) {
+					return fmt.Errorf("failed to delete outdated agent: %w", err)
+				}
+				// Fall through to create
+			} else {
+				// Agent is up to date
+				logger.V(1).Info("Agent deployment is up to date",
+					"agent", agentName,
+					"node", device.NodeName,
+					"serial", device.SerialNumber)
+				return nil
+			}
+		}
+	} else if !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to check agent deployment: %w", err)
+	}
+
+	// Create agent deployment
+	logger.Info("Creating agent deployment",
+		"agent", agentName,
+		"node", device.NodeName,
+		"serial", device.SerialNumber)
+
+	return r.createAgentDeployment(ctx, hsmPool, device, agentName)
+}
+
+// isDeploymentOnNode checks if a deployment is pinned to the specified node
+func (r *HSMPoolAgentReconciler) isDeploymentOnNode(deployment *appsv1.Deployment, nodeName string) bool {
+	if deployment.Spec.Template.Spec.NodeSelector != nil {
+		return deployment.Spec.Template.Spec.NodeSelector["kubernetes.io/hostname"] == nodeName
+	}
+	return false
+}
+
+// getDeploymentNode returns the node name that a deployment is pinned to
+func (r *HSMPoolAgentReconciler) getDeploymentNode(deployment *appsv1.Deployment) string {
+	if deployment.Spec.Template.Spec.NodeSelector != nil {
+		return deployment.Spec.Template.Spec.NodeSelector["kubernetes.io/hostname"]
+	}
+	return ""
+}
+
+// deleteAgent deletes an agent deployment by name
+func (r *HSMPoolAgentReconciler) deleteAgent(ctx context.Context, name, namespace string) error {
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+	}
+	if err := r.Delete(ctx, deployment); err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete agent deployment %s: %w", name, err)
+	}
 	return nil
 }
 

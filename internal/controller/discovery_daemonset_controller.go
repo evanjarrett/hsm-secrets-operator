@@ -327,7 +327,6 @@ func (r *DiscoveryDaemonSetReconciler) ensureDiscoveryDaemonSet(ctx context.Cont
 	existing.Labels = desired.Labels
 
 	logger.Info("Updating discovery DaemonSet",
-		"device", hsmDevice.Name,
 		"daemonset", daemonSetName,
 		"specChanged", specChanged,
 		"labelsChanged", labelsChanged)
