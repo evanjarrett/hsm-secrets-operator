@@ -17,11 +17,11 @@ limitations under the License.
 package discovery
 
 import (
-	"maps"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"maps"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
