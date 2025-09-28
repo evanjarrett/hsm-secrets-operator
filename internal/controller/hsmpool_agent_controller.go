@@ -543,9 +543,8 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 	}
 
 	var replicas int32 = 1
-	// var rootUserId int64 = 0
-	var pcscdUserId int64 = 65532
-	var pcscdGroupId int64 = 65532
+	var rootUserId int64 = 0
+	// Fallback to root for USB device access - compensated by distroless
 	falsePtr := new(bool)
 	*falsePtr = false
 	truePtr := new(bool)
@@ -611,19 +610,15 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 						},
 					},
 					SecurityContext: &corev1.PodSecurityContext{
-						RunAsUser:    &pcscdUserId,
-						RunAsGroup:   &pcscdGroupId,
-						RunAsNonRoot: truePtr,
+						RunAsUser:    &rootUserId,
+						RunAsGroup:   &rootUserId,
+						RunAsNonRoot: falsePtr, // Root required for USB access
 					},
 					ServiceAccountName: r.ServiceAccountName,
 					Containers: []corev1.Container{
 						{
 							Name:  "agent",
 							Image: agentImage,
-							Command: []string{
-								"/entrypoint.sh",
-								"agent",
-							},
 							Args: r.buildAgentArgs(ctx, hsmPool, deviceName),
 							Env:  []corev1.EnvVar{},
 							Ports: []corev1.ContainerPort{
@@ -669,16 +664,14 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 								},
 							},
 							SecurityContext: &corev1.SecurityContext{
-								Privileged:               falsePtr,
-								AllowPrivilegeEscalation: falsePtr,
-								ReadOnlyRootFilesystem:   falsePtr,
-								RunAsNonRoot:             truePtr,
-								RunAsUser:                &pcscdUserId,
+								Privileged:               falsePtr, // Still no privileged containers
+								AllowPrivilegeEscalation: falsePtr, // Still no privilege escalation
+								ReadOnlyRootFilesystem:   truePtr,  // Possible with distroless
+								RunAsNonRoot:             falsePtr, // Root required for USB
+								RunAsUser:                &rootUserId,
 								Capabilities: &corev1.Capabilities{
-									Drop: []corev1.Capability{"ALL"},
-									Add: []corev1.Capability{
-										"DAC_OVERRIDE", // Allow bypassing file permission checks for USB devices
-									},
+									Drop: []corev1.Capability{"ALL"}, // Drop all capabilities
+									// No additional capabilities needed with root
 								},
 								SeccompProfile: &corev1.SeccompProfile{
 									Type: corev1.SeccompProfileTypeRuntimeDefault,
@@ -688,6 +681,7 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 								{
 									Name:      "tmp",
 									MountPath: "/tmp",
+									ReadOnly:  false, // Required for pcscd runtime with readonly filesystem
 								},
 								{
 									Name:      "usb-bus",
@@ -697,6 +691,7 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 								{
 									Name:      "pcscd-run",
 									MountPath: "/var/run/pcscd",
+									ReadOnly:  false, // Required for pcscd socket
 								},
 							},
 						},
@@ -817,6 +812,7 @@ func (r *HSMPoolAgentReconciler) generateAgentName(hsmPool *hsmv1alpha1.HSMPool)
 // buildAgentArgs builds CLI arguments for the HSM agent
 func (r *HSMPoolAgentReconciler) buildAgentArgs(ctx context.Context, hsmPool *hsmv1alpha1.HSMPool, deviceName string) []string {
 	args := []string{
+		"--mode=agent",
 		"--device-name=" + deviceName,
 		"--port=" + fmt.Sprintf("%d", AgentPort),
 		"--health-port=" + fmt.Sprintf("%d", AgentHealthPort),

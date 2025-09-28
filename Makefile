@@ -3,7 +3,7 @@
 # To re-generate a bundle for another specific version without changing the standard setup, you can:
 # - use the VERSION as arg of the bundle target (e.g make bundle VERSION=0.0.2)
 # - use environment variables to overwrite this value (e.g export VERSION=0.0.2)
-VERSION ?= 0.6.16
+VERSION ?= 0.6.17
 
 # CHANNELS define the bundle channels used in the bundle.
 # Add a new line here if you would like to change its default config. (E.g CHANNELS = "candidate,fast,stable")
@@ -237,8 +237,16 @@ run-discovery: ## Run discovery mode from your host.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
-docker-build: ## Build production docker image with PKCS#11 support.
+docker-build: ## Build debug distroless image (root + busybox shell) - default for testing.
 	$(CONTAINER_TOOL) build -t ${IMG} .
+
+.PHONY: docker-build-production
+docker-build-production: ## Build production distroless image (root + no shell).
+	$(CONTAINER_TOOL) build --target production -t ${IMG}-production .
+
+.PHONY: docker-build-alpine
+docker-build-alpine: ## Build Alpine-based image (fallback option).
+	$(CONTAINER_TOOL) build -f Dockerfile.alpine -t ${IMG}-alpine .
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.

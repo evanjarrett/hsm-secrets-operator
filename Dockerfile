@@ -1,19 +1,29 @@
-# Production Dockerfile with real PKCS#11 support
-# Build the manager and agent binaries with CGO enabled
-FROM golang:1.24-alpine AS builder
+# Multi-stage distroless Dockerfile for maximum security with USB access
+# Phase 2: Root + Distroless - compensates for root requirement with minimal attack surface
+
+# Stage 1: Go builder (also serves as dependency source)
+FROM golang:1.24-bookworm AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
-# Install build dependencies for PKCS#11 and USB event monitoring
-RUN apk add --no-cache \
-  gcc \
-  g++ \
-  eudev-dev \
-  linux-headers
+# Install both runtime and development packages in single stage
+RUN apt-get update && apt-get install -y \
+    opensc \
+    pcscd \
+    libpcsclite1 \
+    libusb-1.0-0 \
+    udev \
+    ca-certificates \
+    libudev-dev \
+    libpcsclite-dev \
+    libusb-1.0-0-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-# Return to workspace for Go builds
+# Create necessary runtime directories
+RUN mkdir -p /var/run/pcscd /var/lock/pcsc && \
+    chmod 755 /var/run/pcscd /var/lock/pcsc
+
 WORKDIR /workspace
-
 # Copy the Go Modules manifests
 COPY go.mod go.mod
 COPY go.sum go.sum
@@ -21,33 +31,56 @@ COPY go.sum go.sum
 # and so that source changes don't invalidate our downloaded layer
 RUN go mod download
 
+# Copy the go source
 COPY cmd/ cmd/
 COPY api/ api/
 COPY internal/ internal/
 COPY web/ web/
 
-# Build unified binary with CGO enabled for PKCS#11 support (agent mode needs it)
+# Build with CGO enabled for PKCS#11 support
 RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o hsm-operator cmd/hsm-operator/main.go
 
-FROM alpine:3.22
-RUN apk add --no-cache opensc-dev ccid pcsc-lite openssl libtool libusb ca-certificates eudev
+# Stage 2: Base runtime stage with all files
+FROM gcr.io/distroless/cc-debian12:debug AS runtime
 
-WORKDIR /
-COPY --from=builder /workspace/hsm-operator .
-COPY --from=builder /workspace/web ./web/
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# Copy essential system files and create nonroot user
+COPY --from=builder /etc/passwd /etc/passwd
+COPY --from=builder /etc/group /etc/group
 
-# Create USB device access groups and add user to them
-RUN addgroup -g 20 dialout && \
-    adduser 65532 dialout && \
-    addgroup -g 85 usb 2>/dev/null || true && \
-    adduser 65532 usb 2>/dev/null || true
+# Ensure nonroot user exists (distroless provides user 65532:65532)
 
-RUN mkdir -p /var/run/pcscd /var/lock/pcsc && \
-    chown -R 65532:65532 /var/run/pcscd /var/lock/pcsc && \
-    chmod 755 /var/run/pcscd /var/lock/pcsc
+# Copy PKCS#11 and USB libraries
+COPY --from=builder /usr/lib/x86_64-linux-gnu/opensc-pkcs11.so /usr/lib/pkcs11/opensc-pkcs11.so
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libpcsclite.so.1 /usr/lib/x86_64-linux-gnu/
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libusb-1.0.so.0 /usr/lib/x86_64-linux-gnu/
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libudev.so.1 /usr/lib/x86_64-linux-gnu/
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libcap.so.2 /usr/lib/x86_64-linux-gnu/
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libgcc_s.so.1 /usr/lib/x86_64-linux-gnu/
 
+# Copy essential binaries
+COPY --from=builder /usr/sbin/pcscd /usr/sbin/
+COPY --from=builder /usr/bin/pkcs11-tool /usr/bin/
+
+# Copy udev rules for HSM devices (CCID support)
+COPY --from=builder /lib/udev/rules.d/92-libccid.rules /lib/udev/rules.d/
+
+# Copy CA certificates
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+# Copy runtime directories
+COPY --from=builder /var/run/pcscd /var/run/pcscd
+COPY --from=builder /var/lock/pcsc /var/lock/pcsc
+
+# Copy application binary and entrypoint
+COPY --from=builder /workspace/hsm-operator /hsm-operator
+COPY --chmod=755 entrypoint.sh /entrypoint.sh
+
+# Default to distroless nonroot user (can be overridden by deployment securityContext)
 USER 65532:65532
 
-ENTRYPOINT ["/entrypoint.sh"]
+# Stage 3: Debug variant with shell (DEFAULT for testing)
+FROM runtime
+
+# Debug image includes busybox shell for troubleshooting
+# Access via: kubectl exec -it pod -- /busybox/sh
+ENTRYPOINT ["/busybox/sh", "/entrypoint.sh"]
