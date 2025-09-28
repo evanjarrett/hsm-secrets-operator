@@ -56,6 +56,12 @@ COPY --from=builder /usr/lib/*/libpcsclite.so.1* /usr/lib/
 COPY --from=builder /usr/lib/*/libusb-1.0.so.0* /usr/lib/
 COPY --from=builder /usr/lib/*/libudev.so.1* /usr/lib/
 COPY --from=builder /usr/lib/*/libcap.so.2* /usr/lib/
+COPY --from=builder /usr/lib/*/libsystemd.so.0* /lib/x86_64-linux-gnu/libsystemd.so.0* /usr/lib/
+COPY --from=builder /usr/lib/*/libgcrypt.so.20* /lib/x86_64-linux-gnu/libgcrypt.so.20* /usr/lib/
+COPY --from=builder /usr/lib/*/liblzma.so.5* /lib/x86_64-linux-gnu/liblzma.so.5* /usr/lib/
+COPY --from=builder /usr/lib/*/libzstd.so.1* /lib/x86_64-linux-gnu/libzstd.so.1* /usr/lib/
+COPY --from=builder /usr/lib/*/liblz4.so.1* /lib/x86_64-linux-gnu/liblz4.so.1* /usr/lib/
+COPY --from=builder /usr/lib/*/libgpg-error.so.0* /lib/x86_64-linux-gnu/libgpg-error.so.0* /usr/lib/
 COPY --from=builder /lib/*/libgcc_s.so.1* /usr/lib/
 
 # Copy essential binaries
@@ -64,6 +70,9 @@ COPY --from=builder /usr/bin/pkcs11-tool /usr/bin/
 
 # Copy udev rules for HSM devices (CCID support)
 COPY --from=builder /lib/udev/rules.d/92-libccid.rules /lib/udev/rules.d/
+
+# Copy CCID drivers for pcscd
+COPY --from=builder /usr/lib/pcsc /usr/lib/pcsc
 
 # Copy CA certificates
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
