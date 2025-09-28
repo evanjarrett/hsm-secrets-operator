@@ -544,7 +544,9 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 	}
 
 	var replicas int32 = 1
-	var rootUserId int64 = 0
+	//var rootUserId int64 = 0
+	var pcscdUserId int64 = 100
+	var pcscdGroupId int64 = 101
 	falsePtr := new(bool)
 	*falsePtr = false
 	truePtr := new(bool)
@@ -610,9 +612,10 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 						},
 					},
 					SecurityContext: &corev1.PodSecurityContext{
-						RunAsUser:    &rootUserId,
-						RunAsGroup:   &rootUserId,
-						RunAsNonRoot: falsePtr,
+						RunAsUser:    &pcscdUserId,
+						RunAsGroup:   &pcscdGroupId,
+						RunAsNonRoot: truePtr,
+						FSGroup:      &pcscdGroupId,
 					},
 					ServiceAccountName: r.ServiceAccountName,
 					Containers: []corev1.Container{
@@ -668,17 +671,11 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 								},
 							},
 							SecurityContext: &corev1.SecurityContext{
-								Privileged:               truePtr,
-								AllowPrivilegeEscalation: truePtr,
-								// Capabilities: &corev1.Capabilities{
-								// 	Drop: []corev1.Capability{},
-								// 	Add: []corev1.Capability{
-								// 		"SYS_ADMIN",
-								// 	},
-								// },
-								ReadOnlyRootFilesystem: falsePtr,
-								RunAsNonRoot:           falsePtr,
-								RunAsUser:              &rootUserId,
+								Privileged:               falsePtr,
+								AllowPrivilegeEscalation: falsePtr,
+								ReadOnlyRootFilesystem:   truePtr,
+								RunAsNonRoot:             truePtr,
+								RunAsUser:                &pcscdUserId,
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
@@ -688,6 +685,10 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 								{
 									Name:      "hsm-device",
 									MountPath: "/dev/hsm",
+								},
+								{
+									Name:      "pcscd-run",
+									MountPath: "/var/run/pcscd",
 								},
 							},
 						},
@@ -706,6 +707,12 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 									Path: devicePath,
 									Type: &hostPath,
 								},
+							},
+						},
+						{
+							Name: "pcscd-run",
+							VolumeSource: corev1.VolumeSource{
+								EmptyDir: &corev1.EmptyDirVolumeSource{},
 							},
 						},
 					},
