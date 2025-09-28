@@ -51,7 +51,6 @@ COPY --from=builder /etc/group /etc/group
 
 # Copy PKCS#11 and USB libraries with explicit architecture paths
 # Use find to locate the correct architecture-specific paths
-RUN mkdir -p /usr/lib/pkcs11
 COPY --from=builder /usr/lib/*/opensc-pkcs11.so /usr/lib/pkcs11/
 COPY --from=builder /usr/lib/*/libpcsclite.so.1* /usr/lib/
 COPY --from=builder /usr/lib/*/libusb-1.0.so.0* /usr/lib/
