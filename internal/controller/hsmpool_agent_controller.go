@@ -530,6 +530,7 @@ func (r *HSMPoolAgentReconciler) normalizeDeploymentSpec(spec appsv1.DeploymentS
 
 	normalized.ProgressDeadlineSeconds = nil
 	normalized.RevisionHistoryLimit = nil
+	normalized.Strategy = appsv1.DeploymentStrategy{}
 
 	// Normalize pod template spec
 	podSpec := &normalized.Template.Spec
