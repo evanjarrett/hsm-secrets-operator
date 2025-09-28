@@ -544,7 +544,9 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 	}
 
 	var replicas int32 = 1
-	var rootUserId int64 = 0
+	// var rootUserId int64 = 0
+	var pcscdUserId int64 = 100
+	var pcscdGroupId int64 = 101
 	falsePtr := new(bool)
 	*falsePtr = false
 	truePtr := new(bool)
@@ -610,8 +612,8 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 						},
 					},
 					SecurityContext: &corev1.PodSecurityContext{
-						RunAsUser:    &rootUserId,
-						RunAsGroup:   &rootUserId,
+						RunAsUser:    &pcscdUserId,
+						RunAsGroup:   &pcscdGroupId,
 						RunAsNonRoot: falsePtr,
 					},
 					ServiceAccountName: r.ServiceAccountName,
@@ -668,7 +670,7 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 								},
 							},
 							SecurityContext: &corev1.SecurityContext{
-								Privileged:               truePtr,
+								Privileged:               falsePtr,
 								AllowPrivilegeEscalation: truePtr,
 								// Capabilities: &corev1.Capabilities{
 								// 	Drop: []corev1.Capability{},
@@ -677,8 +679,8 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 								// 	},
 								// },
 								ReadOnlyRootFilesystem: falsePtr,
-								RunAsNonRoot:           falsePtr,
-								RunAsUser:              &rootUserId,
+								RunAsNonRoot:           truePtr,
+								RunAsUser:              &pcscdUserId,
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
@@ -688,6 +690,10 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 								{
 									Name:      "hsm-device",
 									MountPath: "/dev/hsm",
+								},
+								{
+									Name:      "pcscd-run",
+									MountPath: "/var/run/pcscd",
 								},
 							},
 						},
@@ -706,6 +712,12 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 									Path: devicePath,
 									Type: &hostPath,
 								},
+							},
+						},
+						{
+							Name: "pcscd-run",
+							VolumeSource: corev1.VolumeSource{
+								EmptyDir: &corev1.EmptyDirVolumeSource{},
 							},
 						},
 					},
