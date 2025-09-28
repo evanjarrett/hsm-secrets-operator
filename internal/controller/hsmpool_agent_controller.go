@@ -659,10 +659,11 @@ func (r *HSMPoolAgentReconciler) buildAgentDeployment(ctx context.Context, hsmPo
 						},
 					},
 					SecurityContext: &corev1.PodSecurityContext{
-						RunAsUser:    &pcscdUserId,
-						RunAsGroup:   &pcscdGroupId,
-						RunAsNonRoot: truePtr,
-						FSGroup:      &pcscdGroupId,
+						RunAsUser:          &pcscdUserId,
+						RunAsGroup:         &pcscdGroupId,
+						RunAsNonRoot:       truePtr,
+						FSGroup:            &pcscdGroupId,
+						SupplementalGroups: []int64{0}, // Add root group for device access
 					},
 					ServiceAccountName: r.ServiceAccountName,
 					Containers: []corev1.Container{
