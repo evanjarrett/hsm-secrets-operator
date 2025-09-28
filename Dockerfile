@@ -30,7 +30,7 @@ COPY web/ web/
 RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o hsm-operator cmd/hsm-operator/main.go
 
 FROM alpine:3.22
-RUN apk add --no-cache opensc-dev ccid pcsc-lite openssl libtool libusb ca-certificates eudev
+RUN apk add --no-cache opensc-dev ccid pcsc-lite openssl libtool libusb ca-certificates eudev polkit
 
 WORKDIR /
 COPY --from=builder /workspace/hsm-operator .

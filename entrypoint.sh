@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-pcscd &
+pcscd -d -a &
 sleep 2
 
 # Entrypoint script for HSM Secrets Operator
