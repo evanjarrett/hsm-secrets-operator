@@ -670,12 +670,12 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 							SecurityContext: &corev1.SecurityContext{
 								Privileged:               truePtr,
 								AllowPrivilegeEscalation: truePtr,
-								Capabilities: &corev1.Capabilities{
-									Drop: []corev1.Capability{},
-									Add: []corev1.Capability{
-										"SYS_ADMIN",
-									},
-								},
+								// Capabilities: &corev1.Capabilities{
+								// 	Drop: []corev1.Capability{},
+								// 	Add: []corev1.Capability{
+								// 		"SYS_ADMIN",
+								// 	},
+								// },
 								ReadOnlyRootFilesystem: falsePtr,
 								RunAsNonRoot:           falsePtr,
 								RunAsUser:              &rootUserId,

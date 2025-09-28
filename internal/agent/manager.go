@@ -451,7 +451,7 @@ func (m *Manager) GetAvailableDevices(ctx context.Context, namespace string) ([]
 	var availableDevices []hsmv1alpha1.DiscoveredDevice
 	// Check all pools that are in Ready phase
 	for _, pool := range hsmPoolList.Items {
-		m.logger.Info("Checking HSMPool", "name", pool.Name, "namespace", pool.Namespace, "phase", pool.Status.Phase, "aggregatedDeviceCount", len(pool.Status.AggregatedDevices))
+		m.logger.Info("Checking HSMPool", "name", pool.Name, "phase", pool.Status.Phase, "aggregatedDeviceCount", len(pool.Status.AggregatedDevices))
 
 		if pool.Status.Phase != hsmv1alpha1.HSMPoolPhaseReady {
 			m.logger.Info("Skipping HSMPool - not ready", "name", pool.Name, "phase", pool.Status.Phase)

@@ -94,7 +94,6 @@ func Run(args []string) error {
 	setupLog.Info("Starting HSM device discovery agent",
 		"node", discoveryConfig.NodeName,
 		"pod", discoveryConfig.PodName,
-		"namespace", discoveryConfig.PodNamespace,
 		"sync-interval", syncInterval,
 		"detection-method", detectionMethod)
 
