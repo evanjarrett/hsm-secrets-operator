@@ -419,11 +419,12 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 
 		It("Should idempotently handle existing agent deployments", func() {
 			By("First reconciliation to create agent")
+			// Use a fixed agent image to ensure consistency between reconciliations
 			reconciler := &HSMPoolAgentReconciler{
-				Client:        k8sClient,
-				Scheme:        k8sClient.Scheme(),
-				ImageResolver: config.NewImageResolver(k8sClient),
-				AgentManager:  agentManager,
+				Client:       k8sClient,
+				Scheme:       k8sClient.Scheme(),
+				AgentImage:   "test-hsm-agent:latest", // Fixed image to prevent drift
+				AgentManager: agentManager,
 			}
 
 			_, err := reconciler.Reconcile(ctx, ctrl.Request{
