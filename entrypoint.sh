@@ -15,6 +15,13 @@ if [ "$1" = "agent" ]; then
         exit 1
     fi
 
+    # Try to trigger udev rules for USB devices
+    if command -v udevadm >/dev/null 2>&1; then
+        echo "Triggering udev rules for USB devices..."
+        udevadm trigger --subsystem-match=usb --action=add 2>/dev/null || true
+        udevadm settle --timeout=2 2>/dev/null || true
+    fi
+
     # Start pcscd with debug output
     echo "Starting pcscd..."
     pcscd -f -d -a &

@@ -613,7 +613,7 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsUser:    &pcscdUserId,
 						RunAsGroup:   &pcscdGroupId,
-						RunAsNonRoot: falsePtr,
+						RunAsNonRoot: truePtr,
 					},
 					ServiceAccountName: r.ServiceAccountName,
 					Containers: []corev1.Container{
@@ -676,6 +676,9 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 								RunAsUser:                &pcscdUserId,
 								Capabilities: &corev1.Capabilities{
 									Drop: []corev1.Capability{"ALL"},
+									Add: []corev1.Capability{
+										"DAC_OVERRIDE", // Allow bypassing file permission checks for USB devices
+									},
 								},
 								SeccompProfile: &corev1.SeccompProfile{
 									Type: corev1.SeccompProfileTypeRuntimeDefault,

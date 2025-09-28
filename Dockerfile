@@ -38,6 +38,12 @@ COPY --from=builder /workspace/web ./web/
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# Create USB device access groups and add user to them
+RUN addgroup -g 20 dialout && \
+    adduser 65532 dialout && \
+    addgroup -g 85 usb 2>/dev/null || true && \
+    adduser 65532 usb 2>/dev/null || true
+
 RUN mkdir -p /var/run/pcscd /var/lock/pcsc && \
     chown -R 65532:65532 /var/run/pcscd /var/lock/pcsc && \
     chmod 755 /var/run/pcscd /var/lock/pcsc
