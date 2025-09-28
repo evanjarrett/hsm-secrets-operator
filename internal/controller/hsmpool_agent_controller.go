@@ -531,7 +531,6 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 	}
 
 	targetNode := specificDevice.NodeName
-	devicePath := specificDevice.DevicePath
 	deviceName := hsmPool.OwnerReferences[0].Name
 
 	// Get agent image from config or fallback to auto-detection
@@ -545,13 +544,13 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 
 	var replicas int32 = 1
 	// var rootUserId int64 = 0
-	var pcscdUserId int64 = 100
-	var pcscdGroupId int64 = 101
+	var pcscdUserId int64 = 65532
+	var pcscdGroupId int64 = 65532
 	falsePtr := new(bool)
 	*falsePtr = false
 	truePtr := new(bool)
 	*truePtr = true
-	hostPath := corev1.HostPathCharDev
+	hostPathDirectory := corev1.HostPathDirectory
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -671,16 +670,16 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 							},
 							SecurityContext: &corev1.SecurityContext{
 								Privileged:               falsePtr,
-								AllowPrivilegeEscalation: truePtr,
-								// Capabilities: &corev1.Capabilities{
-								// 	Drop: []corev1.Capability{},
-								// 	Add: []corev1.Capability{
-								// 		"SYS_ADMIN",
-								// 	},
-								// },
-								ReadOnlyRootFilesystem: falsePtr,
-								RunAsNonRoot:           truePtr,
-								RunAsUser:              &pcscdUserId,
+								AllowPrivilegeEscalation: falsePtr,
+								ReadOnlyRootFilesystem:   falsePtr,
+								RunAsNonRoot:             truePtr,
+								RunAsUser:                &pcscdUserId,
+								Capabilities: &corev1.Capabilities{
+									Drop: []corev1.Capability{"ALL"},
+								},
+								SeccompProfile: &corev1.SeccompProfile{
+									Type: corev1.SeccompProfileTypeRuntimeDefault,
+								},
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
@@ -688,8 +687,9 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 									MountPath: "/tmp",
 								},
 								{
-									Name:      "hsm-device",
-									MountPath: "/dev/hsm",
+									Name:      "usb-bus",
+									MountPath: "/dev/bus/usb",
+									ReadOnly:  false,
 								},
 								{
 									Name:      "pcscd-run",
@@ -706,11 +706,11 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 							},
 						},
 						{
-							Name: "hsm-device",
+							Name: "usb-bus",
 							VolumeSource: corev1.VolumeSource{
 								HostPath: &corev1.HostPathVolumeSource{
-									Path: devicePath,
-									Type: &hostPath,
+									Path: "/dev/bus/usb",
+									Type: &hostPathDirectory,
 								},
 							},
 						},

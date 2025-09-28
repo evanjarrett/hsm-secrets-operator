@@ -30,13 +30,18 @@ COPY web/ web/
 RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o hsm-operator cmd/hsm-operator/main.go
 
 FROM alpine:3.22
-RUN apk add --no-cache opensc-dev ccid pcsc-lite openssl libtool libusb ca-certificates eudev polkit
+RUN apk add --no-cache opensc-dev ccid pcsc-lite openssl libtool libusb ca-certificates eudev
 
 WORKDIR /
 COPY --from=builder /workspace/hsm-operator .
 COPY --from=builder /workspace/web ./web/
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+
+RUN mkdir -p /var/run/pcscd /var/lock/pcsc && \
+    chown -R 65532:65532 /var/run/pcscd /var/lock/pcsc && \
+    chmod 755 /var/run/pcscd /var/lock/pcsc
+
 USER 65532:65532
 
 ENTRYPOINT ["/entrypoint.sh"]

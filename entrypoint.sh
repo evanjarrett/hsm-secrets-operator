@@ -1,8 +1,38 @@
 #!/bin/sh
 set -e
 
-pcscd -d -a &
-sleep 2
+# Debug: Show user and USB device permissions for agent mode only
+if [ "$1" = "agent" ]; then
+    echo "Starting pcscd as user: $(id)"
+    echo "Groups: $(groups)"
+    echo "USB device permissions:"
+    if [ -d /dev/bus/usb ]; then
+        ls -la /dev/bus/usb/ | head -20
+        echo "Checking for specific USB devices..."
+        find /dev/bus/usb -type c -exec ls -la {} \; 2>/dev/null | grep -E "20a0|4230" || echo "No HSM devices found by vendor/product ID yet"
+    else
+        echo "ERROR: /dev/bus/usb not mounted"
+        exit 1
+    fi
+
+    # Start pcscd with debug output
+    echo "Starting pcscd..."
+    pcscd -f -d -a &
+    PCSCD_PID=$!
+
+    sleep 3
+
+    # Verify pcscd started successfully
+    if ! kill -0 $PCSCD_PID 2>/dev/null; then
+        echo "ERROR: pcscd failed to start"
+        echo "Checking USB access permissions..."
+        # Try to access a USB device to see the actual error
+        cat /dev/bus/usb/001/001 > /dev/null 2>&1 || echo "Cannot read USB devices: $?"
+        exit 1
+    fi
+
+    echo "pcscd started successfully with PID $PCSCD_PID"
+fi
 
 # Entrypoint script for HSM Secrets Operator
 # Supports running manager, discovery, or agent binaries from the same container
