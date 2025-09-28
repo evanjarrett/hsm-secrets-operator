@@ -459,15 +459,31 @@ func (r *HSMPoolAgentReconciler) ensureAgentOnNode(ctx context.Context, hsmPool 
 				normalizedDesired := r.normalizeDeploymentSpec(desiredDeployment.Spec)
 
 				if !equality.Semantic.DeepEqual(normalizedExisting, normalizedDesired) {
-					logger.Info("Agent deployment spec differs from desired state, recreating",
+					logger.Info("Agent deployment spec differs from desired state",
 						"agent", agentName,
 						"node", device.NodeName,
 						"serial", device.SerialNumber)
 
+					// DEBUG: Log specific field differences to identify what's still causing issues
+					logger.Info("DEBUG: Spec comparison details",
+						"existingReplicas", normalizedExisting.Replicas,
+						"desiredReplicas", normalizedDesired.Replicas,
+						"existingProgressDeadline", normalizedExisting.ProgressDeadlineSeconds,
+						"desiredProgressDeadline", normalizedDesired.ProgressDeadlineSeconds,
+						"existingRevisionHistory", normalizedExisting.RevisionHistoryLimit,
+						"desiredRevisionHistory", normalizedDesired.RevisionHistoryLimit,
+						"existingStrategy", normalizedExisting.Strategy,
+						"desiredStrategy", normalizedDesired.Strategy)
+
+					// TEMPORARILY: Don't recreate, just log the differences for debugging
+					logger.Info("DEBUG: Skipping recreation to debug differences")
+					return nil
+
+					// TODO: Re-enable after identifying remaining differences
 					// Delete outdated deployment
-					if err := r.Delete(ctx, &deployment); err != nil && !errors.IsNotFound(err) {
-						return fmt.Errorf("failed to delete outdated agent: %w", err)
-					}
+					// if err := r.Delete(ctx, &deployment); err != nil && !errors.IsNotFound(err) {
+					// 	return fmt.Errorf("failed to delete outdated agent: %w", err)
+					// }
 					// Fall through to create with new spec
 				} else {
 					// Deployment matches desired state exactly
