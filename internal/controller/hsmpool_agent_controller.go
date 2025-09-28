@@ -527,6 +527,9 @@ func (r *HSMPoolAgentReconciler) deleteAgent(ctx context.Context, name, namespac
 func (r *HSMPoolAgentReconciler) normalizeDeploymentSpec(spec appsv1.DeploymentSpec) appsv1.DeploymentSpec {
 	// Make a deep copy to avoid modifying the original
 	normalized := spec.DeepCopy()
+	
+	normalized.ProgressDeadlineSeconds = nil 
+	normalized.RevisionHistoryLimit = nil
 
 	// Normalize pod template spec
 	podSpec := &normalized.Template.Spec
@@ -717,7 +720,7 @@ func (r *HSMPoolAgentReconciler) buildAgentDeployment(ctx context.Context, hsmPo
 								Privileged:               falsePtr,
 								AllowPrivilegeEscalation: falsePtr,
 								Capabilities: &corev1.Capabilities{
-									Add: []corev1.Capability{"DAC_OVERRIDE"},
+									Add: []corev1.Capability{"DAC_OVERRIDE", "SYS_RAWIO"},
 								},
 								ReadOnlyRootFilesystem: truePtr,
 								RunAsNonRoot:           truePtr,
