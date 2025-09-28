@@ -544,7 +544,7 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 	}
 
 	var replicas int32 = 1
-	//var rootUserId int64 = 0
+	// var rootUserId int64 = 0
 	var pcscdUserId int64 = 100
 	var pcscdGroupId int64 = 101
 	falsePtr := new(bool)
