@@ -206,7 +206,7 @@ func (r *DiscoveryDaemonSetReconciler) ensureDiscoveryDaemonSet(ctx context.Cont
 						{
 							Name:  "discovery",
 							Image: discoveryImage,
-							Args:  []string{"--mode", "discovery"},
+							Args:  []string{"--mode=discovery"},
 							Env: []corev1.EnvVar{
 								{
 									Name: "NODE_NAME",
