@@ -1,7 +1,7 @@
 set -e
 
 # Debug: Show user and USB device permissions for agent mode only
-if [ "$1" = "agent" ]; then
+if [ "$1" = "--mode=agent" ]; then
     echo "Starting pcscd as user: $(id)"
     echo "Groups: $(groups)"
     echo "USB device permissions:"
@@ -45,18 +45,6 @@ fi
 # Supports running manager, discovery, or agent binaries from the same container
 
 case "$1" in
-    "manager")
-        shift
-        exec /hsm-operator --mode=manager "$@"
-        ;;
-    "discovery")
-        shift
-        exec /hsm-operator --mode=discovery "$@"
-        ;;
-    "agent")
-        shift
-        exec /hsm-operator --mode=agent "$@"
-        ;;
     "--mode="*)
         # Direct mode flag usage (preferred)
         exec /hsm-operator "$@"

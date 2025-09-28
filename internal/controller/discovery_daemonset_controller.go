@@ -204,9 +204,9 @@ func (r *DiscoveryDaemonSetReconciler) ensureDiscoveryDaemonSet(ctx context.Cont
 					ServiceAccountName: r.ServiceAccountName,
 					Containers: []corev1.Container{
 						{
-							Name:    "discovery",
-							Image:   discoveryImage,
-							Args: []string{"--mode", "discovery"},
+							Name:  "discovery",
+							Image: discoveryImage,
+							Args:  []string{"--mode", "discovery"},
 							Env: []corev1.EnvVar{
 								{
 									Name: "NODE_NAME",

@@ -619,8 +619,8 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 						{
 							Name:  "agent",
 							Image: agentImage,
-							Args: r.buildAgentArgs(ctx, hsmPool, deviceName),
-							Env:  []corev1.EnvVar{},
+							Args:  r.buildAgentArgs(ctx, hsmPool, deviceName),
+							Env:   []corev1.EnvVar{},
 							Ports: []corev1.ContainerPort{
 								{
 									Name:          "grpc",
