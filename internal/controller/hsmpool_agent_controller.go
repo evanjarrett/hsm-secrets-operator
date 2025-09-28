@@ -527,8 +527,8 @@ func (r *HSMPoolAgentReconciler) deleteAgent(ctx context.Context, name, namespac
 func (r *HSMPoolAgentReconciler) normalizeDeploymentSpec(spec appsv1.DeploymentSpec) appsv1.DeploymentSpec {
 	// Make a deep copy to avoid modifying the original
 	normalized := spec.DeepCopy()
-	
-	normalized.ProgressDeadlineSeconds = nil 
+
+	normalized.ProgressDeadlineSeconds = nil
 	normalized.RevisionHistoryLimit = nil
 
 	// Normalize pod template spec
