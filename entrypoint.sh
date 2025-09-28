@@ -1,3 +1,4 @@
+#!/busybox/sh
 set -e
 
 # Debug: Show user and USB device permissions for agent mode only

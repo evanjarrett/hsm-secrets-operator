@@ -49,13 +49,15 @@ COPY --from=builder /etc/group /etc/group
 
 # Ensure nonroot user exists (distroless provides user 65532:65532)
 
-# Copy PKCS#11 and USB libraries using wildcard to match any architecture
-COPY --from=builder /usr/lib/*/opensc-pkcs11.so /usr/lib/pkcs11/opensc-pkcs11.so
-COPY --from=builder /usr/lib/*/libpcsclite.so.1 /usr/lib/
-COPY --from=builder /usr/lib/*/libusb-1.0.so.0 /usr/lib/
-COPY --from=builder /usr/lib/*/libudev.so.1 /usr/lib/
-COPY --from=builder /usr/lib/*/libcap.so.2 /usr/lib/
-COPY --from=builder /usr/lib/*/libgcc_s.so.1 /usr/lib/
+# Copy PKCS#11 and USB libraries with explicit architecture paths
+# Use find to locate the correct architecture-specific paths
+RUN mkdir -p /usr/lib/pkcs11
+COPY --from=builder /usr/lib/*/opensc-pkcs11.so /usr/lib/pkcs11/
+COPY --from=builder /usr/lib/*/libpcsclite.so.1* /usr/lib/
+COPY --from=builder /usr/lib/*/libusb-1.0.so.0* /usr/lib/
+COPY --from=builder /usr/lib/*/libudev.so.1* /usr/lib/
+COPY --from=builder /usr/lib/*/libcap.so.2* /usr/lib/
+COPY --from=builder /lib/*/libgcc_s.so.1* /usr/lib/
 
 # Copy essential binaries
 COPY --from=builder /usr/sbin/pcscd /usr/sbin/
@@ -83,4 +85,4 @@ FROM runtime
 
 # Debug image includes busybox shell for troubleshooting
 # Access via: kubectl exec -it pod -- /busybox/sh
-ENTRYPOINT ["/busybox/sh", "/entrypoint.sh"]
+ENTRYPOINT ["/entrypoint.sh"]
