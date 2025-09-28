@@ -136,7 +136,7 @@ var _ = Describe("DiscoveryDaemonSetReconciler", func() {
 			container := podSpec.Containers[0]
 			Expect(container.Name).To(Equal("discovery"))
 			Expect(container.Image).To(Equal(discoveryImage))
-			Expect(container.Command).To(Equal([]string{"/entrypoint.sh", "discovery"}))
+			Expect(container.Args).To(ContainElement("--mode=discovery"))
 
 			// Check environment variables
 			envVars := container.Env

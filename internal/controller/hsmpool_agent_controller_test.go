@@ -216,7 +216,7 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 			container := podSpec.Containers[0]
 			Expect(container.Name).To(Equal("agent"))
 			Expect(container.Image).To(Equal("test-agent:latest"))
-			Expect(container.Command).To(Equal([]string{"/entrypoint.sh", "agent"}))
+			Expect(container.Args).To(ContainElement("--mode=agent"))
 			Expect(container.Args).To(ContainElement("--device-name=" + hsmDeviceName))
 
 			// Note: Services are no longer created for gRPC agents - direct pod-to-pod communication is used
