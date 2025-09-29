@@ -80,19 +80,10 @@ COPY --from=builder /lib/*/libz.so.1* /usr/lib/
 COPY --from=builder /usr/sbin/pcscd /usr/sbin/
 COPY --from=builder /usr/bin/pkcs11-tool /usr/bin/
 
-# Copy udev rules for HSM devices (CCID support)
-COPY --from=builder /lib/udev/rules.d/92-libccid.rules /lib/udev/rules.d/
-
-# Copy CCID drivers for pcscd
-COPY --from=builder /usr/lib/pcsc /usr/lib/pcsc
-
-# Copy CCID configuration file (needed for Info.plist symlink)
-COPY --from=builder /etc/libccid_Info.plist /etc/
-
 # Copy CA certificates
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
-# Copy runtime directories
+# Copy runtime directories (but NOT pcsc drivers - avoiding CCID)
 COPY --from=builder /var/run/pcscd /run/pcscd
 COPY --from=builder /var/lock/pcsc /var/lock/pcsc
 
