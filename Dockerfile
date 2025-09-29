@@ -52,9 +52,19 @@ COPY --from=builder /etc/group /etc/group
 # Copy PKCS#11 and USB libraries with explicit architecture paths
 # Use find to locate the correct architecture-specific paths
 COPY --from=builder /usr/lib/*/opensc-pkcs11.so /usr/lib/pkcs11/
+COPY --from=builder /usr/lib/*/libopensc.so.8* /usr/lib/
 COPY --from=builder /usr/lib/*/libpcsclite.so.1* /usr/lib/
 COPY --from=builder /usr/lib/*/libusb-1.0.so.0* /usr/lib/
 COPY --from=builder /usr/lib/*/libudev.so.1* /usr/lib/
+COPY --from=builder /usr/lib/*/libglib-2.0.so.0* /lib/*/libglib-2.0.so.0* /usr/lib/
+COPY --from=builder /usr/lib/*/libgio-2.0.so.0* /lib/*/libgio-2.0.so.0* /usr/lib/
+COPY --from=builder /usr/lib/*/libgobject-2.0.so.0* /lib/*/libgobject-2.0.so.0* /usr/lib/
+COPY --from=builder /usr/lib/*/libgmodule-2.0.so.0* /lib/*/libgmodule-2.0.so.0* /usr/lib/
+COPY --from=builder /usr/lib/*/libmount.so.1* /lib/*/libmount.so.1* /usr/lib/
+COPY --from=builder /usr/lib/*/libselinux.so.1* /lib/*/libselinux.so.1* /usr/lib/
+COPY --from=builder /usr/lib/*/libffi.so.8* /lib/*/libffi.so.8* /usr/lib/
+COPY --from=builder /usr/lib/*/libpcre2-8.so.0* /lib/*/libpcre2-8.so.0* /usr/lib/
+COPY --from=builder /usr/lib/*/libblkid.so.1* /lib/*/libblkid.so.1* /usr/lib/
 COPY --from=builder /usr/lib/*/libcap.so.2* /usr/lib/
 COPY --from=builder /usr/lib/*/libsystemd.so.0* /lib/*/libsystemd.so.0* /usr/lib/
 COPY --from=builder /usr/lib/*/libgcrypt.so.20* /lib/*/libgcrypt.so.20* /usr/lib/
