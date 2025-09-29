@@ -2,7 +2,7 @@
 # Phase 2: Root + Distroless - compensates for root requirement with minimal attack surface
 
 # Stage 1: Go builder (also serves as dependency source)
-FROM golang:1.24-bookworm AS builder
+FROM golang:1.24-trixie AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
@@ -10,6 +10,7 @@ ARG TARGETARCH
 RUN apt-get update && apt-get install -y \
     opensc \
     pcscd \
+    libccid \
     libpcsclite1 \
     libusb-1.0-0 \
     udev \
@@ -19,17 +20,6 @@ RUN apt-get update && apt-get install -y \
     libusb-1.0-0-dev \
     wget \
     && rm -rf /var/lib/apt/lists/*
-
-# Extract newer libccid files from Debian Trixie (avoiding dependency conflicts)
-RUN echo "Extracting newer libccid 1.6.2 from Debian Trixie..." && \
-    wget -q http://deb.debian.org/debian/pool/main/c/ccid/libccid_1.6.2-1_amd64.deb && \
-    dpkg-deb -x libccid_1.6.2-1_amd64.deb /tmp/trixie-ccid && \
-    echo "Replacing CCID drivers with newer versions..." && \
-    cp -r /tmp/trixie-ccid/usr/lib/pcsc/* /usr/lib/pcsc/ 2>/dev/null || true && \
-    cp /tmp/trixie-ccid/etc/libccid_Info.plist /etc/ 2>/dev/null || true && \
-    cp /tmp/trixie-ccid/usr/lib/udev/rules.d/* /lib/udev/rules.d/ 2>/dev/null || true && \
-    rm -rf /tmp/trixie-ccid libccid_1.6.2-1_amd64.deb && \
-    echo "✅ CCID 1.6.2 files extracted and installed successfully"
 
 # Create necessary runtime directories
 RUN mkdir -p /run/pcscd /var/run/pcscd /var/lock/pcsc && \
@@ -52,41 +42,57 @@ COPY web/ web/
 # Build with CGO enabled for PKCS#11 support
 RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o hsm-operator cmd/hsm-operator/main.go
 
-# Stage 2: Base runtime stage with all files
-FROM gcr.io/distroless/cc-debian12:debug AS runtime
+# Collect all runtime dependencies recursively using ldd
+RUN echo "Discovering runtime dependencies (recursive)..." && \
+    mkdir -p /runtime-deps && \
+    touch /tmp/deps_initial.txt && \
+    # Get initial dependencies from main binaries
+    ldd /workspace/hsm-operator /usr/sbin/pcscd /usr/bin/pkcs11-tool /usr/lib/*/opensc-pkcs11.so 2>/dev/null | \
+        grep "=>" | awk '{print $3}' | grep -v "^$" >> /tmp/deps_initial.txt || true && \
+    ldd /workspace/hsm-operator 2>/dev/null | grep -o '/lib.*/ld-linux[^ ]*' >> /tmp/deps_initial.txt || true && \
+    # Now recursively check all those libraries for their dependencies
+    for lib in $(cat /tmp/deps_initial.txt); do \
+        if [ -f "$lib" ]; then \
+            ldd "$lib" 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "^$" || true; \
+        fi; \
+    done >> /tmp/deps_initial.txt && \
+    # Deduplicate and copy
+    sort -u /tmp/deps_initial.txt > /tmp/deps.txt && \
+    echo "Found $(wc -l < /tmp/deps.txt) unique library dependencies:" && \
+    cat /tmp/deps.txt && \
+    for lib in $(cat /tmp/deps.txt); do \
+        if [ -f "$lib" ]; then \
+            dir=$(dirname "$lib"); \
+            mkdir -p "/runtime-deps$dir"; \
+            cp -L "$lib" "/runtime-deps$lib"; \
+        fi; \
+    done && \
+    echo "Dependencies collected to /runtime-deps" && \
+    # Verify all binaries can find their dependencies
+    echo "Testing binaries for missing dependencies..." && \
+    for binary in /workspace/hsm-operator /usr/sbin/pcscd /usr/bin/pkcs11-tool; do \
+        echo "Testing $binary..."; \
+        ldd "$binary" 2>&1 | grep "not found" && echo "ERROR: Missing dependencies for $binary" && exit 1 || true; \
+    done && \
+    echo "All binaries have satisfied dependencies"
 
-# Copy essential system files and create nonroot user
+# Stage 2: Base runtime stage with all files
+FROM gcr.io/distroless/static-debian12:debug AS runtime
+
+# Copy essential system files
 COPY --from=builder /etc/passwd /etc/passwd
 COPY --from=builder /etc/group /etc/group
 
-# Ensure nonroot user exists (distroless provides user 65532:65532)
+# Copy all runtime library dependencies (auto-discovered via ldd)
+COPY --from=builder /runtime-deps /
 
-# Copy PKCS#11 and USB libraries with explicit architecture paths
-# Use find to locate the correct architecture-specific paths
+# Copy PKCS#11 library (not caught by ldd since it's dlopen'd at runtime)
 COPY --from=builder /usr/lib/*/opensc-pkcs11.so /usr/lib/pkcs11/
-COPY --from=builder /usr/lib/*/libopensc.so.8* /usr/lib/
+COPY --from=builder /usr/lib/*/libopensc.so.12* /usr/lib/
+# Copy libpcsclite (needed by pcscd but may not be in ldd output)
 COPY --from=builder /usr/lib/*/libpcsclite.so.1* /usr/lib/
+# Copy libusb (USB device access)
 COPY --from=builder /usr/lib/*/libusb-1.0.so.0* /usr/lib/
-COPY --from=builder /usr/lib/*/libudev.so.1* /usr/lib/
-COPY --from=builder /usr/lib/*/libglib-2.0.so.0* /lib/*/libglib-2.0.so.0* /usr/lib/
-COPY --from=builder /usr/lib/*/libgio-2.0.so.0* /lib/*/libgio-2.0.so.0* /usr/lib/
-COPY --from=builder /usr/lib/*/libgobject-2.0.so.0* /lib/*/libgobject-2.0.so.0* /usr/lib/
-COPY --from=builder /usr/lib/*/libgmodule-2.0.so.0* /lib/*/libgmodule-2.0.so.0* /usr/lib/
-COPY --from=builder /usr/lib/*/libmount.so.1* /lib/*/libmount.so.1* /usr/lib/
-COPY --from=builder /usr/lib/*/libselinux.so.1* /lib/*/libselinux.so.1* /usr/lib/
-COPY --from=builder /usr/lib/*/libffi.so.8* /lib/*/libffi.so.8* /usr/lib/
-COPY --from=builder /usr/lib/*/libpcre2-8.so.0* /lib/*/libpcre2-8.so.0* /usr/lib/
-COPY --from=builder /usr/lib/*/libblkid.so.1* /lib/*/libblkid.so.1* /usr/lib/
-COPY --from=builder /usr/lib/*/libcap.so.2* /usr/lib/
-COPY --from=builder /usr/lib/*/libsystemd.so.0* /lib/*/libsystemd.so.0* /usr/lib/
-COPY --from=builder /usr/lib/*/libgcrypt.so.20* /lib/*/libgcrypt.so.20* /usr/lib/
-COPY --from=builder /usr/lib/*/liblzma.so.5* /lib/*/liblzma.so.5* /usr/lib/
-COPY --from=builder /usr/lib/*/libzstd.so.1* /lib/*/libzstd.so.1* /usr/lib/
-COPY --from=builder /usr/lib/*/liblz4.so.1* /lib/*/liblz4.so.1* /usr/lib/
-COPY --from=builder /usr/lib/*/libgpg-error.so.0* /lib/*/libgpg-error.so.0* /usr/lib/
-COPY --from=builder /lib/*/libgcc_s.so.1* /usr/lib/
-# Copy zlib for pkcs11-tool
-COPY --from=builder /lib/*/libz.so.1* /usr/lib/
 
 # Copy essential binaries
 COPY --from=builder /usr/sbin/pcscd /usr/sbin/
@@ -111,6 +117,12 @@ COPY --from=builder /var/lock/pcsc /var/lock/pcsc
 # Copy application binary and entrypoint
 COPY --from=builder /workspace/hsm-operator /hsm-operator
 COPY --chmod=755 entrypoint.sh /entrypoint.sh
+
+# Runtime smoke tests - verify binaries work without missing libraries
+# Test pcscd
+RUN ["/usr/sbin/pcscd", "--version"]
+# Test hsm-operator
+RUN ["/hsm-operator", "--help"]
 
 # Default to distroless nonroot user (can be overridden by deployment securityContext)
 USER 65532:65532
