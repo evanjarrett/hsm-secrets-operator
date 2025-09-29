@@ -1,9 +1,6 @@
 #!/busybox/sh
 set -e
 
-# Disable polkit for pcscd (no D-Bus available in container)
-export PCSCLITE_NO_POLKIT=1
-
 # Debug: Show user and USB device permissions for agent mode only
 if [ "$1" = "--mode=agent" ]; then
     echo "Starting pcscd as user: $(id)"
@@ -47,9 +44,9 @@ if [ "$1" = "--mode=agent" ]; then
         echo "❌ CCID Info.plist not found at $CCID_CONFIG"
     fi
 
-    # Start pcscd with debug output
+    # Start pcscd with debug output and polkit disabled (no D-Bus in container)
     echo "Starting pcscd..."
-    pcscd -f -d -a &
+    pcscd -f -d -a --disable-polkit &
     PCSCD_PID=$!
 
     sleep 3
