@@ -56,12 +56,12 @@ COPY --from=builder /usr/lib/*/libpcsclite.so.1* /usr/lib/
 COPY --from=builder /usr/lib/*/libusb-1.0.so.0* /usr/lib/
 COPY --from=builder /usr/lib/*/libudev.so.1* /usr/lib/
 COPY --from=builder /usr/lib/*/libcap.so.2* /usr/lib/
-COPY --from=builder /usr/lib/*/libsystemd.so.0* /lib/x86_64-linux-gnu/libsystemd.so.0* /usr/lib/
-COPY --from=builder /usr/lib/*/libgcrypt.so.20* /lib/x86_64-linux-gnu/libgcrypt.so.20* /usr/lib/
-COPY --from=builder /usr/lib/*/liblzma.so.5* /lib/x86_64-linux-gnu/liblzma.so.5* /usr/lib/
-COPY --from=builder /usr/lib/*/libzstd.so.1* /lib/x86_64-linux-gnu/libzstd.so.1* /usr/lib/
-COPY --from=builder /usr/lib/*/liblz4.so.1* /lib/x86_64-linux-gnu/liblz4.so.1* /usr/lib/
-COPY --from=builder /usr/lib/*/libgpg-error.so.0* /lib/x86_64-linux-gnu/libgpg-error.so.0* /usr/lib/
+COPY --from=builder /usr/lib/*/libsystemd.so.0* /lib/*/libsystemd.so.0* /usr/lib/
+COPY --from=builder /usr/lib/*/libgcrypt.so.20* /lib/*/libgcrypt.so.20* /usr/lib/
+COPY --from=builder /usr/lib/*/liblzma.so.5* /lib/*/liblzma.so.5* /usr/lib/
+COPY --from=builder /usr/lib/*/libzstd.so.1* /lib/*/libzstd.so.1* /usr/lib/
+COPY --from=builder /usr/lib/*/liblz4.so.1* /lib/*/liblz4.so.1* /usr/lib/
+COPY --from=builder /usr/lib/*/libgpg-error.so.0* /lib/*/libgpg-error.so.0* /usr/lib/
 COPY --from=builder /lib/*/libgcc_s.so.1* /usr/lib/
 
 # Copy essential binaries
