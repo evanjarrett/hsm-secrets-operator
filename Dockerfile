@@ -17,11 +17,23 @@ RUN apt-get update && apt-get install -y \
     libudev-dev \
     libpcsclite-dev \
     libusb-1.0-0-dev \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
+# Extract newer libccid files from Debian Trixie (avoiding dependency conflicts)
+RUN echo "Extracting newer libccid 1.6.2 from Debian Trixie..." && \
+    wget -q http://deb.debian.org/debian/pool/main/c/ccid/libccid_1.6.2-1_amd64.deb && \
+    dpkg-deb -x libccid_1.6.2-1_amd64.deb /tmp/trixie-ccid && \
+    echo "Replacing CCID drivers with newer versions..." && \
+    cp -r /tmp/trixie-ccid/usr/lib/pcsc/* /usr/lib/pcsc/ 2>/dev/null || true && \
+    cp /tmp/trixie-ccid/etc/libccid_Info.plist /etc/ 2>/dev/null || true && \
+    cp /tmp/trixie-ccid/usr/lib/udev/rules.d/* /lib/udev/rules.d/ 2>/dev/null || true && \
+    rm -rf /tmp/trixie-ccid libccid_1.6.2-1_amd64.deb && \
+    echo "✅ CCID 1.6.2 files extracted and installed successfully"
+
 # Create necessary runtime directories
-RUN mkdir -p /run/pcscd /var/lock/pcsc && \
-    chmod 755 /run/pcscd /var/lock/pcsc
+RUN mkdir -p /run/pcscd /var/run/pcscd /var/lock/pcsc && \
+    chmod 755 /run/pcscd /var/run/pcscd /var/lock/pcsc
 
 WORKDIR /workspace
 # Copy the Go Modules manifests
@@ -83,7 +95,7 @@ COPY --from=builder /usr/bin/pkcs11-tool /usr/bin/
 # Copy udev rules for HSM devices (CCID support)
 COPY --from=builder /lib/udev/rules.d/92-libccid.rules /lib/udev/rules.d/
 
-# Copy CCID drivers for pcscd
+# Copy CCID drivers for pcscd (now using newer 1.6.2 version)
 COPY --from=builder /usr/lib/pcsc /usr/lib/pcsc
 
 # Copy CCID configuration file (needed for Info.plist symlink)

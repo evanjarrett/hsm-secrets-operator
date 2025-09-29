@@ -22,37 +22,26 @@ if [ "$1" = "--mode=agent" ]; then
         udevadm settle --timeout=2 2>/dev/null || true
     fi
 
-    # Apply CCID interface fix for Pico HSM
-    echo "Applying CCID interface fix for Pico HSM..."
+    # Debug: Display CCID driver version and configuration
+    echo "🔍 CCID Driver Information:"
 
-    # Check if we can modify the CCID configuration
     CCID_CONFIG="/usr/lib/pcsc/drivers/ifd-ccid.bundle/Contents/Info.plist"
     if [ -f "$CCID_CONFIG" ]; then
-        # Create backup
-        cp "$CCID_CONFIG" /tmp/Info.plist.backup
+        # Extract and display CCID version from plist file
+        CCID_VERSION=$(grep -A 1 "CFBundleShortVersionString" "$CCID_CONFIG" | grep "<string>" | sed 's/.*<string>\(.*\)<\/string>.*/\1/')
+        echo "📦 CCID Driver Version: $CCID_VERSION"
 
-        echo "Original CCID driver options:"
+        # Display current driver options (should be 0x0000 with newer driver)
+        echo "⚙️  Current CCID driver options:"
         grep -A 1 "ifdDriverOptions" "$CCID_CONFIG" || echo "Not found"
 
-        # Fix: Enable CCID Exchange option (0x01) for interface flexibility
-        # This makes CCID more permissive about interface selection
-        if grep -q "<string>0x0000</string>" "$CCID_CONFIG"; then
-            sed -i 's/<string>0x0000<\/string>/<string>0x0001<\/string>/' "$CCID_CONFIG"
-            echo "✅ Enabled DRIVER_OPTION_CCID_EXCHANGE_AUTHORIZED (0x01)"
-        else
-            echo "⚠️  CCID driver options already modified or not found"
-        fi
+        # Check if Pico HSM is explicitly supported
+        PICO_SUPPORT=$(grep -c "0x20A0" "$CCID_CONFIG" || echo "0")
+        echo "🔧 Pico HSM (0x20A0) device entries: $PICO_SUPPORT"
 
-        echo "Modified CCID driver options:"
-        grep -A 1 "ifdDriverOptions" "$CCID_CONFIG" || echo "Not found"
-
-        echo "CCID interface fix applied:"
-        echo "- Pico HSM interface 0 should now be tried first"
-        echo "- CCID will be more flexible about interface detection"
-        echo "- Debug environment variables: LIBCCID_ifdLogLevel=$LIBCCID_ifdLogLevel"
+        echo "✅ Using newer CCID driver - no patching required!"
     else
         echo "❌ CCID Info.plist not found at $CCID_CONFIG"
-        echo "Falling back to environment variables only"
     fi
 
     # Start pcscd with debug output
