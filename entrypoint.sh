@@ -1,6 +1,9 @@
 #!/busybox/sh
 set -e
 
+# Disable polkit for pcscd (no D-Bus available in container)
+export PCSCLITE_NO_POLKIT=1
+
 # Debug: Show user and USB device permissions for agent mode only
 if [ "$1" = "--mode=agent" ]; then
     echo "Starting pcscd as user: $(id)"

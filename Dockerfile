@@ -47,8 +47,8 @@ RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o hs
 # 3. strings scan discovered libraries → find dlopen'd libraries (like libgcc_s, libpcsclite_real)
 # 4. Repeat step 2-3 on newly discovered libraries until no new deps found
 RUN echo "Discovering runtime dependencies (iterative)..." && \
-    # Define binaries to scan
-    SCAN_BINARIES="/workspace/hsm-operator /usr/sbin/pcscd /usr/bin/pkcs11-tool" && \
+    # Define binaries to scan (includes CCID driver to catch libusb dependency)
+    SCAN_BINARIES="/workspace/hsm-operator /usr/sbin/pcscd /usr/bin/pkcs11-tool /usr/lib/pcsc/drivers/ifd-ccid.bundle/Contents/Linux/libccid.so" && \
     mkdir -p /runtime-deps && \
     touch /tmp/deps_all.txt /tmp/deps_previous.txt /tmp/deps_new.txt && \
     # Start with our binaries
