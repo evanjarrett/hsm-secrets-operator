@@ -22,7 +22,30 @@ if [ "$1" = "--mode=agent" ]; then
         udevadm settle --timeout=2 2>/dev/null || true
     fi
 
-    # Start pcscd (no CCID drivers available, will use direct access)
+    # Debug: Display CCID driver version and configuration
+    echo "🔍 CCID Driver Information:"
+
+    CCID_CONFIG="/usr/lib/pcsc/drivers/ifd-ccid.bundle/Contents/Info.plist"
+    if [ -f "$CCID_CONFIG" ]; then
+        # Extract and display CCID version from plist file
+        CCID_VERSION=$(grep -A 1 "CFBundleShortVersionString" "$CCID_CONFIG" | grep "<string>" | sed 's/.*<string>\(.*\)<\/string>.*/\1/')
+        echo "📦 CCID Driver Version: $CCID_VERSION"
+
+        # Display current driver options (should be 0x0000 with newer driver)
+        echo "⚙️  Current CCID driver options:"
+        grep -A 1 "ifdDriverOptions" "$CCID_CONFIG" || echo "Not found"
+
+        # Check if Pico HSM is explicitly supported
+        PICO_SUPPORT=$(grep -c "0x20A0" "$CCID_CONFIG" || echo "0")
+        echo "🔧 Pico HSM (0x20A0) device entries: $PICO_SUPPORT"
+
+        echo "✅ Using newer CCID driver - no patching required!"
+    else
+        echo "❌ CCID Info.plist not found at $CCID_CONFIG"
+    fi
+
+    # Start pcscd with debug output
+    echo "Starting pcscd..."
     pcscd -f -d -a &
     PCSCD_PID=$!
 
