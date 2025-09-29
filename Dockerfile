@@ -73,6 +73,8 @@ COPY --from=builder /usr/lib/*/libzstd.so.1* /lib/*/libzstd.so.1* /usr/lib/
 COPY --from=builder /usr/lib/*/liblz4.so.1* /lib/*/liblz4.so.1* /usr/lib/
 COPY --from=builder /usr/lib/*/libgpg-error.so.0* /lib/*/libgpg-error.so.0* /usr/lib/
 COPY --from=builder /lib/*/libgcc_s.so.1* /usr/lib/
+# Copy zlib for pkcs11-tool
+COPY --from=builder /lib/*/libz.so.1* /usr/lib/
 
 # Copy essential binaries
 COPY --from=builder /usr/sbin/pcscd /usr/sbin/
