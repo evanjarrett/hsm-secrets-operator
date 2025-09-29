@@ -84,6 +84,9 @@ COPY --from=builder /lib/udev/rules.d/92-libccid.rules /lib/udev/rules.d/
 # Copy CCID drivers for pcscd
 COPY --from=builder /usr/lib/pcsc /usr/lib/pcsc
 
+# Copy CCID configuration file (needed for Info.plist symlink)
+COPY --from=builder /etc/libccid_Info.plist /etc/
+
 # Copy CA certificates
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
