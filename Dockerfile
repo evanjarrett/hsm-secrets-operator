@@ -44,16 +44,31 @@ RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o hs
 
 # Collect all runtime dependencies recursively using ldd
 RUN echo "Discovering runtime dependencies (recursive)..." && \
+    # Define binaries and libraries to scan for dependencies
+    SCAN_BINARIES="/workspace/hsm-operator /usr/sbin/pcscd /usr/bin/pkcs11-tool" && \
+    SCAN_LIBRARIES="/usr/lib/*/opensc-pkcs11.so /usr/lib/*/libpcsclite.so.1" && \
+    SCAN_TARGETS="$SCAN_BINARIES $SCAN_LIBRARIES" && \
     mkdir -p /runtime-deps && \
     touch /tmp/deps_initial.txt && \
-    # Get initial dependencies from main binaries
-    ldd /workspace/hsm-operator /usr/sbin/pcscd /usr/bin/pkcs11-tool /usr/lib/*/opensc-pkcs11.so 2>/dev/null | \
-        grep "=>" | awk '{print $3}' | grep -v "^$" >> /tmp/deps_initial.txt || true && \
+    # Get initial dependencies from main binaries using ldd
+    echo "Running ldd on: $SCAN_TARGETS" && \
+    for target in $SCAN_TARGETS; do \
+        ldd $target 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "^$" || true; \
+    done >> /tmp/deps_initial.txt && \
     ldd /workspace/hsm-operator 2>/dev/null | grep -o '/lib.*/ld-linux[^ ]*' >> /tmp/deps_initial.txt || true && \
     # Now recursively check all those libraries for their dependencies
     for lib in $(cat /tmp/deps_initial.txt); do \
         if [ -f "$lib" ]; then \
             ldd "$lib" 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "^$" || true; \
+        fi; \
+    done >> /tmp/deps_initial.txt && \
+    # Find dlopen'd libraries by scanning for .so references in binaries
+    echo "Scanning for dlopen'd libraries in: $SCAN_TARGETS" && \
+    for target in $SCAN_TARGETS; do \
+        if [ -f "$target" ]; then \
+            strings "$target" 2>/dev/null | grep -E '\.so(\.[0-9]+)*$' | while read soname; do \
+                find /usr/lib /lib -name "$soname" 2>/dev/null || true; \
+            done; \
         fi; \
     done >> /tmp/deps_initial.txt && \
     # Deduplicate and copy
@@ -70,7 +85,7 @@ RUN echo "Discovering runtime dependencies (recursive)..." && \
     echo "Dependencies collected to /runtime-deps" && \
     # Verify all binaries can find their dependencies
     echo "Testing binaries for missing dependencies..." && \
-    for binary in /workspace/hsm-operator /usr/sbin/pcscd /usr/bin/pkcs11-tool; do \
+    for binary in $SCAN_BINARIES; do \
         echo "Testing $binary..."; \
         ldd "$binary" 2>&1 | grep "not found" && echo "ERROR: Missing dependencies for $binary" && exit 1 || true; \
     done && \
@@ -86,13 +101,10 @@ COPY --from=builder /etc/group /etc/group
 # Copy all runtime library dependencies (auto-discovered via ldd)
 COPY --from=builder /runtime-deps /
 
-# Copy PKCS#11 library (not caught by ldd since it's dlopen'd at runtime)
+# Copy PKCS#11 library (loaded via dlopen by Go app at runtime with user-specified path)
 COPY --from=builder /usr/lib/*/opensc-pkcs11.so /usr/lib/pkcs11/
-COPY --from=builder /usr/lib/*/libopensc.so.12* /usr/lib/
-# Copy libpcsclite (needed by pcscd but may not be in ldd output)
-COPY --from=builder /usr/lib/*/libpcsclite.so.1* /usr/lib/
-# Copy libusb (USB device access)
-COPY --from=builder /usr/lib/*/libusb-1.0.so.0* /usr/lib/
+# Note: Most other dlopen'd libraries (libpcsclite_real.so.1, libopensc.so.12, etc) are
+# auto-discovered via the enhanced dependency scanning that detects .so references in binaries
 
 # Copy essential binaries
 COPY --from=builder /usr/sbin/pcscd /usr/sbin/
@@ -101,7 +113,7 @@ COPY --from=builder /usr/bin/pkcs11-tool /usr/bin/
 # Copy udev rules for HSM devices (CCID support)
 COPY --from=builder /lib/udev/rules.d/92-libccid.rules /lib/udev/rules.d/
 
-# Copy CCID drivers for pcscd (now using newer 1.6.2 version)
+# Copy CCID drivers for pcscd (Debian Trixie provides v1.6.2 with native Pico HSM multi-interface support)
 COPY --from=builder /usr/lib/pcsc /usr/lib/pcsc
 
 # Copy CCID configuration file (needed for Info.plist symlink)

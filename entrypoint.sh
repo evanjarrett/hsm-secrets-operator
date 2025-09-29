@@ -31,7 +31,7 @@ if [ "$1" = "--mode=agent" ]; then
         CCID_VERSION=$(grep -A 1 "CFBundleShortVersionString" "$CCID_CONFIG" | grep "<string>" | sed 's/.*<string>\(.*\)<\/string>.*/\1/')
         echo "📦 CCID Driver Version: $CCID_VERSION"
 
-        # Display current driver options (should be 0x0000 with newer driver)
+        # Display current driver options
         echo "⚙️  Current CCID driver options:"
         grep -A 1 "ifdDriverOptions" "$CCID_CONFIG" || echo "Not found"
 
@@ -39,7 +39,7 @@ if [ "$1" = "--mode=agent" ]; then
         PICO_SUPPORT=$(grep -c "0x20A0" "$CCID_CONFIG" || echo "0")
         echo "🔧 Pico HSM (0x20A0) device entries: $PICO_SUPPORT"
 
-        echo "✅ Using newer CCID driver - no patching required!"
+        echo "✅ CCID $CCID_VERSION handles Pico HSM multi-interface device correctly"
     else
         echo "❌ CCID Info.plist not found at $CCID_CONFIG"
     fi
