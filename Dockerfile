@@ -79,14 +79,9 @@ RUN echo "Discovering runtime dependencies (iterative)..." && \
         comm -13 /tmp/deps_previous.txt /tmp/deps_all_sorted.txt > /tmp/deps_new.txt && \
         cp /tmp/deps_all_sorted.txt /tmp/deps_previous.txt; \
     done && \
-    # Final deduplication - remove duplicate paths (same inode, different path)
-    sort -u /tmp/deps_all.txt > /tmp/deps_sorted.txt && \
-    # Deduplicate by basename - prefer /usr/lib over /lib for consistency
-    awk '{print $0, $0}' /tmp/deps_sorted.txt | \
-        awk -F'/' '{print $(NF), $0}' | \
-        sort -t' ' -k1,1 -k2,2r | \
-        awk '!seen[$1]++ {print $2}' > /tmp/deps.txt && \
-    echo "Found $(wc -l < /tmp/deps.txt) unique library dependencies after $ITERATION iterations ($(wc -l < /tmp/deps_sorted.txt) before deduplication)" && \
+    # Final deduplication - just remove duplicate paths, keep both /lib and /usr/lib variants
+    sort -u /tmp/deps_all.txt > /tmp/deps.txt && \
+    echo "Found $(wc -l < /tmp/deps.txt) unique library paths after $ITERATION iterations" && \
     cat /tmp/deps.txt && \
     for lib in $(cat /tmp/deps.txt); do \
         if [ -f "$lib" ]; then \
@@ -107,7 +102,7 @@ RUN echo "Discovering runtime dependencies (iterative)..." && \
 # Stage 2: Base runtime stage with all files
 FROM gcr.io/distroless/static-debian12:debug AS runtime
 
-# Copy all runtime library dependencies (auto-discovered via ldd)
+# Copy all runtime library dependencies (auto-discovered via ldd, includes /lib64)
 COPY --from=builder /runtime-deps /
 
 # Copy PKCS#11 library (loaded via dlopen by Go app at runtime with user-specified path)
