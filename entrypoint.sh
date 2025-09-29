@@ -25,40 +25,34 @@ if [ "$1" = "--mode=agent" ]; then
     # Apply CCID interface fix for Pico HSM
     echo "Applying CCID interface fix for Pico HSM..."
 
-    # Backup original CCID configuration
-    if [ -f /usr/lib/pcsc/drivers/ifd-ccid.bundle/Contents/Info.plist ]; then
-        cp /usr/lib/pcsc/drivers/ifd-ccid.bundle/Contents/Info.plist /tmp/Info.plist.backup
+    # Check if we can modify the CCID configuration
+    CCID_CONFIG="/usr/lib/pcsc/drivers/ifd-ccid.bundle/Contents/Info.plist"
+    if [ -f "$CCID_CONFIG" ]; then
+        # Create backup
+        cp "$CCID_CONFIG" /tmp/Info.plist.backup
 
-        # Fix 1: Enable CCID Exchange option to allow interface flexibility
-        # This makes CCID try interface 0 first instead of expecting interface 1
-        sed -i 's/<string>0x0000<\/string>/<string>0x0001<\/string>/' \
-            /usr/lib/pcsc/drivers/ifd-ccid.bundle/Contents/Info.plist
+        echo "Original CCID driver options:"
+        grep -A 1 "ifdDriverOptions" "$CCID_CONFIG" || echo "Not found"
 
-        # Fix 2: Add flexible interface detection for Pico HSM
-        # Create a temporary script to patch CCID behavior at runtime
-        cat > /tmp/ccid-interface-patch.sh << 'EOF'
-#!/busybox/sh
-# Runtime patch for CCID interface detection
-# This allows CCID to try both interface 0 and 1 for Pico HSM
+        # Fix: Enable CCID Exchange option (0x01) for interface flexibility
+        # This makes CCID more permissive about interface selection
+        if grep -q "<string>0x0000</string>" "$CCID_CONFIG"; then
+            sed -i 's/<string>0x0000<\/string>/<string>0x0001<\/string>/' "$CCID_CONFIG"
+            echo "✅ Enabled DRIVER_OPTION_CCID_EXCHANGE_AUTHORIZED (0x01)"
+        else
+            echo "⚠️  CCID driver options already modified or not found"
+        fi
 
-# Method 1: Set environment variables that CCID respects
-export LIBCCID_ifdLogLevel=0x000F  # Maximum debug
-export PCSCLITE_DEBUG=3            # PCSCD debug
+        echo "Modified CCID driver options:"
+        grep -A 1 "ifdDriverOptions" "$CCID_CONFIG" || echo "Not found"
 
-# Method 2: If CCID fails on interface 1, restart and try interface 0
-# This is handled by our Info.plist modification above
-
-echo "CCID interface patch applied - will try interface 0 first, then 1"
-EOF
-        chmod +x /tmp/ccid-interface-patch.sh
-        /tmp/ccid-interface-patch.sh
-
-        echo "CCID configuration modified:"
-        echo "- Enabled DRIVER_OPTION_CCID_EXCHANGE_AUTHORIZED (0x01)"
-        echo "- Set maximum debug logging for interface detection"
-        echo "- CCID will now try interface 0 first (Pico HSM), then interface 1 (real Nitrokey)"
+        echo "CCID interface fix applied:"
+        echo "- Pico HSM interface 0 should now be tried first"
+        echo "- CCID will be more flexible about interface detection"
+        echo "- Debug environment variables: LIBCCID_ifdLogLevel=$LIBCCID_ifdLogLevel"
     else
-        echo "WARNING: CCID Info.plist not found, skipping interface fix"
+        echo "❌ CCID Info.plist not found at $CCID_CONFIG"
+        echo "Falling back to environment variables only"
     fi
 
     # Start pcscd with debug output
