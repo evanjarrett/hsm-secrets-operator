@@ -23,7 +23,6 @@ if [ "$1" = "--mode=agent" ]; then
     fi
 
     # Start pcscd with debug output
-    # Use /tmp for runtime files if root filesystem is readonly
     echo "Starting pcscd..."
     pcscd -f -d -a &
     PCSCD_PID=$!

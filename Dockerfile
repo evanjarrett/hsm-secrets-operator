@@ -20,8 +20,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Create necessary runtime directories
-RUN mkdir -p /var/run/pcscd /var/lock/pcsc && \
-    chmod 755 /var/run/pcscd /var/lock/pcsc
+RUN mkdir -p /run/pcscd /var/lock/pcsc && \
+    chmod 755 /run/pcscd /var/lock/pcsc
 
 WORKDIR /workspace
 # Copy the Go Modules manifests
@@ -78,7 +78,7 @@ COPY --from=builder /usr/lib/pcsc /usr/lib/pcsc
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
 # Copy runtime directories
-COPY --from=builder /var/run/pcscd /var/run/pcscd
+COPY --from=builder /var/run/pcscd /run/pcscd
 COPY --from=builder /var/lock/pcsc /var/lock/pcsc
 
 # Copy application binary and entrypoint

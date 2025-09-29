@@ -690,8 +690,13 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 								},
 								{
 									Name:      "pcscd-run",
-									MountPath: "/var/run/pcscd",
+									MountPath: "/run/pcscd",
 									ReadOnly:  false, // Required for pcscd socket
+								},
+								{
+									Name:      "pcscd-lock",
+									MountPath: "/var/lock/pcsc",
+									ReadOnly:  false, // Required for pcscd locking
 								},
 							},
 						},
@@ -714,6 +719,12 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 						},
 						{
 							Name: "pcscd-run",
+							VolumeSource: corev1.VolumeSource{
+								EmptyDir: &corev1.EmptyDirVolumeSource{},
+							},
+						},
+						{
+							Name: "pcscd-lock",
 							VolumeSource: corev1.VolumeSource{
 								EmptyDir: &corev1.EmptyDirVolumeSource{},
 							},
