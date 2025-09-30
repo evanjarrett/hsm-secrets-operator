@@ -39,10 +39,8 @@ spec:
       - name: manager
         image: {{ include "hsm-secrets-operator.image" . }}
         imagePullPolicy: {{ .Values.image.pullPolicy }}
-        command:
-        - /entrypoint.sh
-        - manager
         args:
+        - --mode=manager
         - --leader-elect={{ .Values.leaderElection.enabled }}
         {{- if .Values.config.verboseLogging }}
         - --zap-log-level=debug
