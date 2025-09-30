@@ -56,11 +56,21 @@ func (p *PCSCDManager) Start() error {
 
 	p.logger.Info("Starting pcscd daemon")
 
+	// Ensure runtime directories exist (volumes may be empty initially)
+	dirs := []string{"/run/pcscd", "/var/lock/pcsc"}
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			p.logger.Error(err, "Failed to create runtime directory", "dir", dir)
+			return fmt.Errorf("failed to create runtime directory %s: %w", dir, err)
+		}
+		p.logger.V(1).Info("Runtime directory ready", "dir", dir)
+	}
+
 	// Start pcscd with:
 	// -f: foreground mode (don't daemonize)
+	// -d: debug output (helps troubleshooting)
 	// --disable-polkit: disable PolicyKit (no D-Bus in container)
-	// Note: Removed -d and -a debug flags for production - add back if needed
-	p.cmd = exec.CommandContext(p.ctx, "/usr/sbin/pcscd", "-f", "--disable-polkit")
+	p.cmd = exec.CommandContext(p.ctx, "/usr/sbin/pcscd", "-f", "-d", "--disable-polkit")
 
 	// Pipe output to parent process for centralized logging
 	p.cmd.Stdout = os.Stdout

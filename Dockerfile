@@ -1,6 +1,3 @@
-# Multi-stage distroless Dockerfile for maximum security with USB access
-# Phase 2: Root + Distroless - compensates for root requirement with minimal attack surface
-
 # Stage 1: Go builder (also serves as dependency source)
 FROM golang:1.24-trixie AS builder
 ARG TARGETOS
@@ -19,10 +16,6 @@ RUN apt-get update && apt-get install -y \
     libpcsclite-dev \
     libusb-1.0-0-dev \
     && rm -rf /var/lib/apt/lists/*
-
-# Create necessary runtime directories
-RUN mkdir -p /run/pcscd /var/run/pcscd /var/lock/pcsc && \
-    chmod 755 /run/pcscd /var/run/pcscd /var/lock/pcsc
 
 # Create minimal /etc/passwd and /etc/group for nonroot user (65532:65532)
 RUN echo "nonroot:x:65532:65532:nonroot:/:" > /tmp/passwd && \
@@ -133,10 +126,6 @@ COPY --from=builder /etc/libccid_Info.plist /etc/
 
 # Copy CA certificates
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-
-# Copy runtime directories (pcscd will use these)
-COPY --from=builder /var/run/pcscd /run/pcscd
-COPY --from=builder /var/lock/pcsc /var/lock/pcsc
 
 # Copy application binary (manages pcscd lifecycle internally - no shell needed)
 COPY --from=builder /workspace/hsm-operator /hsm-operator
