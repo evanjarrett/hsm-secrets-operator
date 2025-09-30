@@ -66,6 +66,15 @@ func (p *PCSCDManager) Start() error {
 		p.logger.V(1).Info("Runtime directory ready", "dir", dir)
 	}
 
+	// Clean up stale socket file from previous runs
+	// pcscd will fail to start if the socket already exists
+	socketPath := "/run/pcscd/pcscd.comm"
+	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
+		p.logger.Error(err, "Failed to remove stale socket", "path", socketPath)
+		return fmt.Errorf("failed to remove stale socket %s: %w", socketPath, err)
+	}
+	p.logger.V(1).Info("Cleaned up stale socket", "path", socketPath)
+
 	// Start pcscd with:
 	// -f: foreground mode (don't daemonize)
 	// -d: debug output (helps troubleshooting)
@@ -147,24 +156,30 @@ func (p *PCSCDManager) Stop() error {
 }
 
 // waitForReady polls for pcscd readiness by checking if the socket exists.
-// PC/SC Lite creates a socket at /var/run/pcscd/pcscd.comm when ready.
+// PC/SC Lite creates a socket at /run/pcscd/pcscd.comm when ready.
 // Waits up to 5 seconds with 100ms polling interval.
 func (p *PCSCDManager) waitForReady() error {
 	const (
 		maxAttempts  = 50                     // 50 attempts
 		pollInterval = 100 * time.Millisecond // 100ms interval
-		socketPath   = "/var/run/pcscd/pcscd.comm"
 	)
 
-	p.logger.V(1).Info("Waiting for pcscd to be ready", "socket", socketPath)
+	// Check both possible socket locations (pcscd may use either)
+	// /run/pcscd is where our volume is mounted
+	// /var/run/pcscd is the legacy path (symlink on normal systems, but not in FROM scratch)
+	socketPaths := []string{"/run/pcscd/pcscd.comm", "/var/run/pcscd/pcscd.comm"}
 
-	for i := 0; i < maxAttempts; i++ {
-		// Check if the socket exists
-		if _, err := os.Stat(socketPath); err == nil {
-			p.logger.V(1).Info("pcscd socket detected", "attempts", i+1)
-			// Give it a tiny bit more time to fully initialize
-			time.Sleep(100 * time.Millisecond)
-			return nil
+	p.logger.V(1).Info("Waiting for pcscd to be ready", "paths", socketPaths)
+
+	for i := range maxAttempts {
+		// Check if the socket exists at either location
+		for _, socketPath := range socketPaths {
+			if _, err := os.Stat(socketPath); err == nil {
+				p.logger.Info("pcscd socket detected", "path", socketPath, "attempts", i+1)
+				// Give it a tiny bit more time to fully initialize
+				time.Sleep(100 * time.Millisecond)
+				return nil
+			}
 		}
 
 		// Check if process is still running
