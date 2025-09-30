@@ -50,8 +50,8 @@ func main() {
 	i := 0
 	for i < len(args) {
 		arg := args[i]
-		if strings.HasPrefix(arg, "--mode=") {
-			modeArg = strings.TrimPrefix(arg, "--mode=")
+		if after, ok := strings.CutPrefix(arg, "--mode="); ok {
+			modeArg = after
 			globalArgs = append(globalArgs, arg)
 			i++
 		} else if arg == "--mode" && i+1 < len(args) {
@@ -126,7 +126,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "agent":
-		if err := agent.Run(modeSpecificArgs); err != nil {
+		if err := agent.Run(modeSpecificArgs, logLevel); err != nil {
 			setupLog.Error(err, "Agent mode failed")
 			os.Exit(1)
 		}

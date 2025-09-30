@@ -29,7 +29,7 @@ import (
 
 func TestNewPCSCDManager(t *testing.T) {
 	logger := zap.New(zap.UseDevMode(true))
-	mgr := NewPCSCDManager(logger)
+	mgr := NewPCSCDManager(logger, false)
 
 	if mgr == nil {
 		t.Fatal("NewPCSCDManager returned nil")
@@ -69,7 +69,7 @@ func TestPCSCDManager_StartWithoutPCSCD(t *testing.T) {
 func TestPCSCDManager_MultipleStartAttempts(t *testing.T) {
 	// Test that calling Start() multiple times fails appropriately
 	logger := zap.New(zap.UseDevMode(true))
-	mgr := NewPCSCDManager(logger)
+	mgr := NewPCSCDManager(logger, false)
 
 	// Mock the cmd to prevent actual pcscd start
 	// In real implementation, we'd need dependency injection or interface
@@ -94,7 +94,7 @@ func TestPCSCDManager_MultipleStartAttempts(t *testing.T) {
 func TestPCSCDManager_StopWithoutStart(t *testing.T) {
 	// Test that Stop() is safe to call even if Start() was never called
 	logger := zap.New(zap.UseDevMode(true))
-	mgr := NewPCSCDManager(logger)
+	mgr := NewPCSCDManager(logger, false)
 
 	// Should not panic or error
 	err := mgr.Stop()
@@ -106,7 +106,7 @@ func TestPCSCDManager_StopWithoutStart(t *testing.T) {
 func TestPCSCDManager_ContextCancellation(t *testing.T) {
 	// Test that cancelling the context affects the manager
 	logger := zap.New(zap.UseDevMode(true))
-	mgr := NewPCSCDManager(logger)
+	mgr := NewPCSCDManager(logger, false)
 
 	// Verify context is not cancelled initially
 	select {
@@ -153,7 +153,7 @@ func TestPCSCDManager_Integration(t *testing.T) {
 	}
 
 	logger := getPCSCDTestLogger()
-	mgr := NewPCSCDManager(logger)
+	mgr := NewPCSCDManager(logger, false)
 
 	// Start pcscd
 	if err := mgr.Start(); err != nil {

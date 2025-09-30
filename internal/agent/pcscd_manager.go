@@ -34,15 +34,18 @@ type PCSCDManager struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	logger logr.Logger
+	debug  bool // Enable pcscd debug output (-d flag)
 }
 
 // NewPCSCDManager creates a new PCSCD manager instance.
-func NewPCSCDManager(logger logr.Logger) *PCSCDManager {
+// If debug is true, pcscd will be started with -d flag for verbose output.
+func NewPCSCDManager(logger logr.Logger, debug bool) *PCSCDManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &PCSCDManager{
 		ctx:    ctx,
 		cancel: cancel,
 		logger: logger.WithName("pcscd-manager"),
+		debug:  debug,
 	}
 }
 
@@ -63,7 +66,7 @@ func (p *PCSCDManager) Start() error {
 			p.logger.Error(err, "Failed to create runtime directory", "dir", dir)
 			return fmt.Errorf("failed to create runtime directory %s: %w", dir, err)
 		}
-		p.logger.V(1).Info("Runtime directory ready", "dir", dir)
+		p.logger.Info("Runtime directory ready", "dir", dir)
 	}
 
 	// Clean up stale socket file from previous runs
@@ -73,13 +76,18 @@ func (p *PCSCDManager) Start() error {
 		p.logger.Error(err, "Failed to remove stale socket", "path", socketPath)
 		return fmt.Errorf("failed to remove stale socket %s: %w", socketPath, err)
 	}
-	p.logger.V(1).Info("Cleaned up stale socket", "path", socketPath)
+	p.logger.Info("Cleaned up stale socket", "path", socketPath)
 
 	// Start pcscd with:
 	// -f: foreground mode (don't daemonize)
-	// -d: debug output (helps troubleshooting)
+	// -d: debug output (conditional on debug flag)
 	// --disable-polkit: disable PolicyKit (no D-Bus in container)
-	p.cmd = exec.CommandContext(p.ctx, "/usr/sbin/pcscd", "-f", "-d", "--disable-polkit")
+	args := []string{"-f", "--disable-polkit"}
+	if p.debug {
+		args = append(args, "-d")
+		p.logger.Info("Starting pcscd with debug output enabled")
+	}
+	p.cmd = exec.CommandContext(p.ctx, "/usr/sbin/pcscd", args...)
 
 	// Pipe output to parent process for centralized logging
 	p.cmd.Stdout = os.Stdout
@@ -169,7 +177,7 @@ func (p *PCSCDManager) waitForReady() error {
 	// /var/run/pcscd is the legacy path (symlink on normal systems, but not in FROM scratch)
 	socketPaths := []string{"/run/pcscd/pcscd.comm", "/var/run/pcscd/pcscd.comm"}
 
-	p.logger.V(1).Info("Waiting for pcscd to be ready", "paths", socketPaths)
+	p.logger.Info("Waiting for pcscd to be ready", "paths", socketPaths)
 
 	for i := range maxAttempts {
 		// Check if the socket exists at either location

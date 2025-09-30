@@ -50,7 +50,7 @@ func init() {
 }
 
 // Run starts the agent mode
-func Run(args []string) error {
+func Run(args []string, logLevel string) error {
 	// Create a new flag set for agent-specific flags
 	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
 
@@ -143,8 +143,10 @@ func Run(args []string) error {
 
 	if usePKCS11 {
 		// Start pcscd daemon before initializing PKCS#11 client
-		setupLog.Info("Starting pcscd daemon for hardware HSM support")
-		pcscdMgr := agent.NewPCSCDManager(setupLog)
+		// Enable debug output when log level is debug
+		debugMode := logLevel == "debug"
+		setupLog.Info("Starting pcscd daemon for hardware HSM support", "debug", debugMode)
+		pcscdMgr := agent.NewPCSCDManager(setupLog, debugMode)
 		if err := pcscdMgr.Start(); err != nil {
 			return fmt.Errorf("failed to start pcscd: %w", err)
 		}
