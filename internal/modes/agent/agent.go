@@ -142,6 +142,19 @@ func Run(args []string) error {
 	}
 
 	if usePKCS11 {
+		// Start pcscd daemon before initializing PKCS#11 client
+		setupLog.Info("Starting pcscd daemon for hardware HSM support")
+		pcscdMgr := agent.NewPCSCDManager(setupLog)
+		if err := pcscdMgr.Start(); err != nil {
+			return fmt.Errorf("failed to start pcscd: %w", err)
+		}
+		defer func() {
+			setupLog.Info("Stopping pcscd daemon")
+			if err := pcscdMgr.Stop(); err != nil {
+				setupLog.Error(err, "Failed to stop pcscd cleanly")
+			}
+		}()
+
 		// Create PIN provider for Kubernetes Secret access
 		pinProvider := hsm.NewKubernetesPINProvider(k8sClient, k8sTypedClient, agentConfig.DeviceName, agentConfig.PodNamespace)
 
