@@ -36,7 +36,8 @@ COPY internal/ internal/
 COPY web/ web/
 
 # Build with CGO enabled for PKCS#11 support
-RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o hsm-operator cmd/hsm-operator/main.go
+# Strip debug symbols to reduce binary size (-s -w)
+RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -ldflags="-s -w" -o hsm-operator cmd/hsm-operator/main.go
 
 # Collect all runtime dependencies using iterative discovery:
 # 1. Start with ldd on binaries → get compile-time linked libraries
@@ -76,18 +77,21 @@ RUN echo "Discovering runtime dependencies (iterative)..." && \
         comm -13 /tmp/deps_previous.txt /tmp/deps_all_sorted.txt > /tmp/deps_new.txt && \
         cp /tmp/deps_all_sorted.txt /tmp/deps_previous.txt; \
     done && \
-    # Final deduplication - just remove duplicate paths, keep both /lib and /usr/lib variants
+    # Copy all libraries except /lib/* paths (will be symlinked to /usr/lib)
     sort -u /tmp/deps_all.txt > /tmp/deps.txt && \
     echo "Found $(wc -l < /tmp/deps.txt) unique library paths after $ITERATION iterations" && \
     cat /tmp/deps.txt && \
     for lib in $(cat /tmp/deps.txt); do \
-        if [ -f "$lib" ]; then \
+        # Skip /lib/* paths (but not /lib64/* which is separate)
+        if [ -f "$lib" ] && ! echo "$lib" | grep -q "^/lib/"; then \
             dir=$(dirname "$lib"); \
             mkdir -p "/runtime-deps$dir"; \
             cp -L "$lib" "/runtime-deps$lib"; \
         fi; \
     done && \
-    echo "Dependencies collected to /runtime-deps" && \
+    # Create single directory-level symlink: /lib → /usr/lib
+    ln -s /usr/lib /runtime-deps/lib && \
+    echo "Dependencies collected to /runtime-deps (/lib symlinked to /usr/lib)" && \
     # Verify all binaries can find their dependencies
     echo "Testing binaries for missing dependencies..." && \
     for binary in $SCAN_BINARIES; do \
@@ -95,6 +99,11 @@ RUN echo "Discovering runtime dependencies (iterative)..." && \
         ldd "$binary" 2>&1 | grep "not found" && echo "ERROR: Missing dependencies for $binary" && exit 1 || true; \
     done && \
     echo "All binaries have satisfied dependencies"
+
+# Create symlinks for opensc-pkcs11.so for both architectures (FROM scratch has no shell)
+RUN mkdir -p /tmp/pkcs11-links/x86_64-linux-gnu /tmp/pkcs11-links/aarch64-linux-gnu && \
+    ln -s /usr/lib/pkcs11/opensc-pkcs11.so /tmp/pkcs11-links/x86_64-linux-gnu/opensc-pkcs11.so && \
+    ln -s /usr/lib/pkcs11/opensc-pkcs11.so /tmp/pkcs11-links/aarch64-linux-gnu/opensc-pkcs11.so
 
 # Stage 2: Ultra-minimal FROM scratch runtime (no shell, no distro)
 # Maximum security: smallest possible attack surface (~15MB vs ~30MB distroless)
@@ -108,8 +117,11 @@ COPY --from=builder /tmp/group /etc/group
 # Includes dynamic linker (ld-linux-*.so) for all architectures (x86_64, arm64, etc.)
 COPY --from=builder /runtime-deps /
 
-# Copy PKCS#11 library (loaded via dlopen by Go app at runtime with user-specified path)
+# Copy PKCS#11 library and symlinks for all architectures
+# Main copy: /usr/lib/pkcs11/ - actual file location
 COPY --from=builder /usr/lib/*/opensc-pkcs11.so /usr/lib/pkcs11/
+# Symlinks created in builder stage for pkcs11-tool default paths (works for both amd64 and arm64)
+COPY --from=builder /tmp/pkcs11-links/ /usr/lib/
 
 # Copy essential binaries
 COPY --from=builder /usr/sbin/pcscd /usr/sbin/
