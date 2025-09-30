@@ -38,6 +38,7 @@ The project uses a **unified binary** (`cmd/hsm-operator/main.go`) that operates
   - Dynamically deployed pods for direct HSM communication
   - gRPC server on port 9090 with HTTP health checks on port 8093
   - Real PKCS#11 client for production or MockClient for testing
+  - Manages pcscd daemon lifecycle internally via PCSCDManager (no shell scripts required)
 
 **Test Utility:**
 - **Test HSM Binary** (`cmd/test-hsm/main.go`): Standalone HSM operations testing and debugging
@@ -60,10 +61,18 @@ The project uses a **unified binary** (`cmd/hsm-operator/main.go`) that operates
 
 **gRPC Communication Architecture:**
 - Protocol definition in `api/proto/hsm/v1/hsm.proto` with 10 HSM operations
-- Manager ↔ Agent: gRPC for efficient, type-safe HSM operations  
+- Manager ↔ Agent: gRPC for efficient, type-safe HSM operations
 - Discovery → Manager: Pod annotations for race-free device reporting
 - **External → Manager**: REST API proxy routes to ALL agents for multi-device operations
 - Generated code: `api/proto/hsm/v1/hsm.pb.go` and `hsm_grpc.pb.go`
+
+**PCSCD Lifecycle Management:**
+- **PCSCDManager** (`internal/agent/pcscd_manager.go`): Go-native pcscd process management
+- Automatically started in agent mode when real PKCS#11 hardware is detected
+- Foreground mode with stdout/stderr piping for integrated logging
+- Graceful shutdown handling: SIGTERM → 5s timeout → SIGKILL fallback
+- Socket-based readiness detection (`/var/run/pcscd/pcscd.comm`)
+- Eliminates shell script dependency for maximum container security
 
 **Controller Hierarchy:**
 ```
@@ -133,17 +142,27 @@ make quality test         # Verify changes
 
 ### Docker & Deployment
 ```bash
-# Production image (agent has PKCS#11 support)
+# Production image (FROM scratch base - ultra-minimal ~15MB)
 make docker-build IMG=hsm-secrets-operator:latest
 
-# Production build only (testing handled via build tags)
+# Multi-arch build (supports amd64 and arm64)
+docker buildx build --platform linux/amd64,linux/arm64 -t hsm-secrets-operator:latest .
 
 # Deploy to cluster
 make deploy IMG=hsm-secrets-operator:latest
 
-# Generate installer bundle  
+# Generate installer bundle
 make build-installer IMG=hsm-secrets-operator:latest
 ```
+
+**Container Architecture:**
+- **Base Image**: FROM scratch (no distro, no shell - maximum security)
+- **Size**: ~15MB (vs ~30MB with distroless:debug)
+- **Security**: Minimal attack surface - only essential binaries and libraries
+- **Dependencies**: Auto-discovered via iterative ldd/strings analysis in builder stage
+- **Multi-arch**: Supports x86_64 and arm64 via dynamic linker auto-detection
+- **Process Management**: Direct binary execution with Go-managed pcscd lifecycle
+- **No Shell**: All process management handled in Go code (internal/agent/pcscd_manager.go)
 
 ## CRD Structure and Relationships
 

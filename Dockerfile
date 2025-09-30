@@ -99,10 +99,12 @@ RUN echo "Discovering runtime dependencies (iterative)..." && \
     done && \
     echo "All binaries have satisfied dependencies"
 
-# Stage 2: Base runtime stage with all files
-FROM gcr.io/distroless/static-debian12:debug AS runtime
+# Stage 2: Ultra-minimal FROM scratch runtime (no shell, no distro)
+# Maximum security: smallest possible attack surface (~15MB vs ~30MB distroless)
+FROM scratch
 
-# Copy all runtime library dependencies (auto-discovered via ldd, includes /lib64)
+# Copy all runtime library dependencies (auto-discovered via ldd/strings)
+# Includes dynamic linker (ld-linux-*.so) for all architectures (x86_64, arm64, etc.)
 COPY --from=builder /runtime-deps /
 
 # Copy PKCS#11 library (loaded via dlopen by Go app at runtime with user-specified path)
@@ -124,26 +126,12 @@ COPY --from=builder /etc/libccid_Info.plist /etc/
 # Copy CA certificates
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
-# Copy runtime directories
+# Copy runtime directories (pcscd will use these)
 COPY --from=builder /var/run/pcscd /run/pcscd
 COPY --from=builder /var/lock/pcsc /var/lock/pcsc
 
-# Copy application binary and entrypoint
+# Copy application binary (manages pcscd lifecycle internally - no shell needed)
 COPY --from=builder /workspace/hsm-operator /hsm-operator
-COPY --chmod=755 entrypoint.sh /entrypoint.sh
 
-# Runtime smoke tests - verify binaries work without missing libraries
-# Test pcscd
-RUN ["/usr/sbin/pcscd", "--version"]
-# Test hsm-operator
-RUN ["/hsm-operator", "--help"]
-
-# Default to distroless nonroot user (can be overridden by deployment securityContext)
-USER 65532:65532
-
-# Stage 3: Debug variant with shell (DEFAULT for testing)
-FROM runtime
-
-# Debug image includes busybox shell for troubleshooting
-# Access via: kubectl exec -it pod -- /busybox/sh
-ENTRYPOINT ["/entrypoint.sh"]
+# Direct binary execution - pcscd lifecycle managed by Go code in agent mode
+ENTRYPOINT ["/hsm-operator"]
