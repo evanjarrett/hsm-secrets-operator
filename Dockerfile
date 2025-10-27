@@ -39,6 +39,9 @@ COPY web/ web/
 # Strip debug symbols to reduce binary size (-s -w)
 RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -ldflags="-s -w" -o hsm-operator cmd/hsm-operator/main.go
 
+# Build test utility for manual testing/debugging
+RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -ldflags="-s -w" -o test cmd/test/main.go
+
 # Collect all runtime dependencies using iterative discovery:
 # 1. Start with ldd on binaries → get compile-time linked libraries
 # 2. Recursively: ldd on discovered libraries → get their dependencies
@@ -46,7 +49,7 @@ RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -ldfl
 # 4. Repeat step 2-3 on newly discovered libraries until no new deps found
 RUN echo "Discovering runtime dependencies (iterative)..." && \
     # Define binaries to scan (includes CCID driver to catch libusb dependency)
-    SCAN_BINARIES="/workspace/hsm-operator /usr/sbin/pcscd /usr/bin/pkcs11-tool /usr/lib/pcsc/drivers/ifd-ccid.bundle/Contents/Linux/libccid.so" && \
+    SCAN_BINARIES="/workspace/hsm-operator /workspace/test /usr/sbin/pcscd /usr/bin/pkcs11-tool /usr/lib/pcsc/drivers/ifd-ccid.bundle/Contents/Linux/libccid.so" && \
     mkdir -p /runtime-deps && \
     touch /tmp/deps_all.txt /tmp/deps_previous.txt /tmp/deps_new.txt && \
     # Start with our binaries
@@ -141,6 +144,9 @@ COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
 # Copy application binary (manages pcscd lifecycle internally - no shell needed)
 COPY --from=builder /workspace/hsm-operator /hsm-operator
+
+# Copy test utility for debugging and manual testing
+COPY --from=builder /workspace/test /test
 
 # Default to nonroot user for security (manager/discovery modes don't need root)
 # Agent mode overrides to root via Kubernetes securityContext for USB device access
