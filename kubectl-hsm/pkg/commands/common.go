@@ -181,7 +181,7 @@ func readFromFile(key, filename string) (map[string]any, error) {
 	}
 
 	ext := strings.ToLower(filepath.Ext(filename))
-	
+
 	// Auto-detect format based on file extension
 	switch ext {
 	case ".env":
@@ -196,7 +196,7 @@ func readFromFile(key, filename string) (map[string]any, error) {
 		if data, err := tryParseAsEnv(filename, content); err == nil {
 			return data, nil
 		}
-		
+
 		// Fall back to single key-value format
 		return readAsSingleKeyValue(key, filename, content)
 	}
@@ -208,13 +208,13 @@ func tryParseAsJson(content []byte) (map[string]any, error) {
 	if err := json.Unmarshal(content, &data); err != nil {
 		return nil, err
 	}
-	
+
 	// Check if this looks like secret data (not nested structures)
 	for key, value := range data {
 		if key == "" {
 			return nil, fmt.Errorf("empty key found")
 		}
-		
+
 		// Convert all values to strings, reject complex nested structures
 		switch v := value.(type) {
 		case string:
@@ -229,7 +229,7 @@ func tryParseAsJson(content []byte) (map[string]any, error) {
 			data[key] = fmt.Sprintf("%v", v)
 		}
 	}
-	
+
 	return data, nil
 }
 
@@ -237,7 +237,7 @@ func tryParseAsJson(content []byte) (map[string]any, error) {
 func tryParseAsEnv(filename string, content []byte) (map[string]any, error) {
 	lines := strings.Split(string(content), "\n")
 	hasKeyValuePairs := false
-	
+
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -248,11 +248,11 @@ func tryParseAsEnv(filename string, content []byte) (map[string]any, error) {
 			break
 		}
 	}
-	
+
 	if !hasKeyValuePairs {
 		return nil, fmt.Errorf("no KEY=VALUE pairs found")
 	}
-	
+
 	return readFromEnvContent(filename, content)
 }
 
@@ -323,7 +323,7 @@ func readFromJsonContent(filename string, content []byte) (map[string]any, error
 		if key == "" {
 			return nil, fmt.Errorf("empty key found in JSON file %s", filename)
 		}
-		
+
 		// Convert non-string values to strings
 		switch v := value.(type) {
 		case string:

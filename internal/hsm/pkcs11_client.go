@@ -232,8 +232,10 @@ func (c *PKCS11Client) WriteSecret(ctx context.Context, path string, data Secret
 		"path", path, "keys", len(data))
 
 	// First, delete any existing objects for this path to avoid duplicates
+	// IMPORTANT: Do not ignore errors here - if FindObjectsFinal fails in delete,
+	// the session will be in an invalid state and CreateObject will fail
 	if err := deleteSecretObjectsPKCS11(c.session, path); err != nil {
-		c.logger.V(1).Info("Failed to delete existing objects (may not exist)", "error", err)
+		return fmt.Errorf("failed to prepare HSM for write (delete existing objects): %w", err)
 	}
 
 	// Create data objects for each key-value pair

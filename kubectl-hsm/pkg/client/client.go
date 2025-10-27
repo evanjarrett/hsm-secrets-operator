@@ -270,6 +270,14 @@ func (c *Client) doRequest(ctx context.Context, method, path string, requestBody
 		return fmt.Errorf("failed to read response body: %w", err)
 	}
 
+	// Handle 401 Unauthorized - clear cached token
+	if resp.StatusCode == http.StatusUnauthorized {
+		if c.tokenManager != nil {
+			// Clear the cached token so next request gets a fresh one
+			_ = c.tokenManager.ClearCache()
+		}
+	}
+
 	var apiResp APIResponse
 	if err := json.Unmarshal(respBody, &apiResp); err != nil {
 		return fmt.Errorf("failed to parse API response: %w", err)
@@ -278,7 +286,12 @@ func (c *Client) doRequest(ctx context.Context, method, path string, requestBody
 	// Check if the API reported an error
 	if !apiResp.Success {
 		if apiResp.Error != nil {
-			return fmt.Errorf("API error (%s): %s", apiResp.Error.Code, apiResp.Error.Message)
+			errMsg := fmt.Sprintf("API error (%s): %s", apiResp.Error.Code, apiResp.Error.Message)
+			// Add helpful hint for authentication errors
+			if resp.StatusCode == http.StatusUnauthorized {
+				errMsg += "\n\nAuthentication token was invalid or expired. The cached token has been cleared.\nPlease retry your command to authenticate with a fresh token."
+			}
+			return fmt.Errorf("%s", errMsg)
 		}
 		return fmt.Errorf("API request failed: %s", apiResp.Message)
 	}

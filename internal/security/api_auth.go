@@ -214,14 +214,26 @@ func (a *APIAuthenticator) AuthMiddleware() gin.HandlerFunc {
 		authHeader := c.GetHeader(TokenHeader)
 		if authHeader == "" {
 			a.logger.Info("Missing authorization header", "path", c.Request.URL.Path, "client_ip", c.ClientIP())
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "missing authorization header"})
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"error": gin.H{
+					"code":    "MISSING_AUTH_HEADER",
+					"message": "missing authorization header",
+				},
+			})
 			c.Abort()
 			return
 		}
 
 		if !strings.HasPrefix(authHeader, BearerPrefix) {
 			a.logger.Info("Invalid authorization header format", "path", c.Request.URL.Path, "client_ip", c.ClientIP())
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid authorization header format"})
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"error": gin.H{
+					"code":    "INVALID_AUTH_FORMAT",
+					"message": "invalid authorization header format, expected 'Bearer <token>'",
+				},
+			})
 			c.Abort()
 			return
 		}
@@ -232,7 +244,16 @@ func (a *APIAuthenticator) AuthMiddleware() gin.HandlerFunc {
 		claims, err := a.ValidateToken(tokenString)
 		if err != nil {
 			a.logger.Info("Token validation failed", "error", err, "path", c.Request.URL.Path, "client_ip", c.ClientIP())
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"error": gin.H{
+					"code":    "INVALID_TOKEN",
+					"message": "authentication token is invalid or expired",
+					"details": gin.H{
+						"hint": "token may have expired, try clearing cache with: kubectl hsm auth clear",
+					},
+				},
+			})
 			c.Abort()
 			return
 		}
@@ -281,7 +302,16 @@ func (a *APIAuthenticator) HandleTokenGeneration() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req TokenRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request", "details": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"error": gin.H{
+					"code":    "INVALID_REQUEST",
+					"message": "invalid request body",
+					"details": gin.H{
+						"error": err.Error(),
+					},
+				},
+			})
 			return
 		}
 
@@ -289,7 +319,16 @@ func (a *APIAuthenticator) HandleTokenGeneration() gin.HandlerFunc {
 		token, err := a.GenerateToken(c.Request.Context(), req.K8sToken)
 		if err != nil {
 			a.logger.Info("Token generation failed", "error", err, "client_ip", c.ClientIP())
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "failed to generate token", "details": err.Error()})
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"error": gin.H{
+					"code":    "TOKEN_GENERATION_FAILED",
+					"message": "failed to generate authentication token",
+					"details": gin.H{
+						"error": err.Error(),
+					},
+				},
+			})
 			return
 		}
 

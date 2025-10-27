@@ -43,12 +43,12 @@ const (
 
 // TokenManager handles JWT token caching and automatic refresh
 type TokenManager struct {
-	baseURL       string
-	k8sClient     kubernetes.Interface
+	baseURL        string
+	k8sClient      kubernetes.Interface
 	serviceAccount string
-	namespace     string
-	httpClient    *http.Client
-	cachedToken   *CachedToken
+	namespace      string
+	httpClient     *http.Client
+	cachedToken    *CachedToken
 }
 
 // CachedToken represents a cached JWT token

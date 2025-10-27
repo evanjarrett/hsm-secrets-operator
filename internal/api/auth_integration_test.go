@@ -65,7 +65,9 @@ func TestJWTAuthenticationIntegration(t *testing.T) {
 		var response map[string]any
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
-		assert.Contains(t, response["error"], "invalid token")
+		errorObj, ok := response["error"].(map[string]any)
+		require.True(t, ok, "error should be an object")
+		assert.Contains(t, errorObj["message"], "invalid")
 	})
 
 	t.Run("Missing Authorization Header", func(t *testing.T) {
@@ -81,7 +83,9 @@ func TestJWTAuthenticationIntegration(t *testing.T) {
 		var response map[string]any
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
-		assert.Contains(t, response["error"], "missing authorization header")
+		errorObj, ok := response["error"].(map[string]any)
+		require.True(t, ok, "error should be an object")
+		assert.Contains(t, errorObj["message"], "missing authorization header")
 	})
 
 	t.Run("Malformed Authorization Header", func(t *testing.T) {
@@ -98,7 +102,9 @@ func TestJWTAuthenticationIntegration(t *testing.T) {
 		var response map[string]any
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		require.NoError(t, err)
-		assert.Contains(t, response["error"], "invalid authorization header format")
+		errorObj, ok := response["error"].(map[string]any)
+		require.True(t, ok, "error should be an object")
+		assert.Contains(t, errorObj["message"], "invalid authorization header format")
 	})
 
 	t.Run("Health Endpoint Accessible Without Auth", func(t *testing.T) {
@@ -141,7 +147,9 @@ func TestJWTAuthenticationIntegration(t *testing.T) {
 		require.NoError(t, err)
 
 		// Should contain details about the K8s token failure, not JWT auth failure
-		assert.Contains(t, response["error"], "failed to generate token")
+		errorObj, ok := response["error"].(map[string]any)
+		require.True(t, ok, "error should be an object")
+		assert.Contains(t, errorObj["message"], "failed to generate")
 	})
 
 	t.Run("JWT Authentication Enabled", func(t *testing.T) {

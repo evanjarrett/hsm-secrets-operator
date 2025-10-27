@@ -226,17 +226,19 @@ func findObjectsPKCS11(session *Session, path string) ([]pkcs11Object, error) {
 	if err := session.ctx.FindObjectsInit(session.session, template); err != nil {
 		return nil, fmt.Errorf("failed to initialize object search: %w", err)
 	}
-	defer func() {
-		if finalErr := session.ctx.FindObjectsFinal(session.session); finalErr != nil {
-			// Ignore finalize error but continue
-			_ = finalErr
-		}
-	}()
 
 	// Get all matching objects
-	objs, _, err := session.ctx.FindObjects(session.session, 1000) // Max 1000 objects
+	objs, _, err := session.ctx.FindObjects(session.session, 100) // Max 100 objects (reduced from 1000 to be less aggressive)
 	if err != nil {
+		// Always finalize before returning error
+		_ = session.ctx.FindObjectsFinal(session.session)
 		return nil, fmt.Errorf("failed to find objects: %w", err)
+	}
+
+	// CRITICAL: Must call FindObjectsFinal to release search operation
+	// If this fails, the session remains in search mode and CreateObject will fail
+	if err := session.ctx.FindObjectsFinal(session.session); err != nil {
+		return nil, fmt.Errorf("failed to finalize object search (session may be in invalid state): %w", err)
 	}
 
 	// Pre-allocate slice for better performance
@@ -334,20 +336,17 @@ func deleteSecretObjectsPKCS11(session *Session, path string) error {
 	if err := session.ctx.FindObjectsInit(session.session, template); err != nil {
 		return fmt.Errorf("failed to initialize object search: %w", err)
 	}
-	defer func() {
-		if finalErr := session.ctx.FindObjectsFinal(session.session); finalErr != nil {
-			// Ignore finalize error but continue
-			_ = finalErr
-		}
-	}()
 
 	// Get all matching objects
 	objs, _, err := session.ctx.FindObjects(session.session, 100) // Max 100 objects
 	if err != nil {
+		// Always finalize before returning error
+		_ = session.ctx.FindObjectsFinal(session.session)
 		return fmt.Errorf("failed to find objects: %w", err)
 	}
 
 	// Delete each object that matches our path
+	deletedCount := 0
 	for _, obj := range objs {
 		// Get the label to check if this object matches our path
 		labelAttr, err := session.ctx.GetAttributeValue(session.session, obj, []*pkcs11.Attribute{
@@ -371,6 +370,13 @@ func deleteSecretObjectsPKCS11(session *Session, path string) error {
 			// Log error but continue with other objects
 			continue
 		}
+		deletedCount++
+	}
+
+	// CRITICAL: Must call FindObjectsFinal to release search operation
+	// If this fails, the session remains in search mode and CreateObject will fail
+	if err := session.ctx.FindObjectsFinal(session.session); err != nil {
+		return fmt.Errorf("failed to finalize object search after deleting %d objects (session may be in invalid state): %w", deletedCount, err)
 	}
 
 	return nil

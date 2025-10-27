@@ -94,7 +94,6 @@ Examples:
 	return cmd
 }
 
-
 // RunWithCommandName executes the command with a specific command name for messaging
 func (opts *CreateOptions) RunWithCommandName(ctx context.Context, secretName, commandName string) error {
 	// Validate secret name
