@@ -22,7 +22,9 @@ func main() {
 	libraryPath := os.Getenv("PKCS11_LIBRARY")
 	if libraryPath == "" {
 		// Try common locations
-		if _, err := os.Stat("/usr/lib64/pkcs11/opensc-pkcs11.so"); err == nil {
+		if _, err := os.Stat("/usr/lib/pkcs11/opensc-pkcs11.so"); err == nil {
+			libraryPath = "/usr/lib/pkcs11/opensc-pkcs11.so" // Production container
+		} else if _, err := os.Stat("/usr/lib64/pkcs11/opensc-pkcs11.so"); err == nil {
 			libraryPath = "/usr/lib64/pkcs11/opensc-pkcs11.so" // Fedora/RHEL
 		} else if _, err := os.Stat("/usr/lib/x86_64-linux-gnu/pkcs11/opensc-pkcs11.so"); err == nil {
 			libraryPath = "/usr/lib/x86_64-linux-gnu/pkcs11/opensc-pkcs11.so" // Debian/Ubuntu
