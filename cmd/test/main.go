@@ -46,7 +46,11 @@ func main() {
 	if err := client.Initialize(ctx, config); err != nil {
 		log.Fatalf("Failed to initialize: %v", err)
 	}
-	defer client.Close()
+	defer func() {
+		if err := client.Close(); err != nil {
+			log.Fatalf("Failed to close client")
+		}
+	}()
 
 	// Execute operation
 	switch operation {
