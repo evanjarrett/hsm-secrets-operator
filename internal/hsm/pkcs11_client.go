@@ -234,9 +234,11 @@ func (c *PKCS11Client) WriteSecret(ctx context.Context, path string, data Secret
 	// First, delete any existing objects for this path to avoid duplicates
 	// IMPORTANT: Do not ignore errors here - if FindObjectsFinal fails in delete,
 	// the session will be in an invalid state and CreateObject will fail
+	c.logger.V(1).Info("Deleting existing objects before write", "path", path)
 	if err := deleteSecretObjectsPKCS11(c.session, path); err != nil {
 		return fmt.Errorf("failed to prepare HSM for write (delete existing objects): %w", err)
 	}
+	c.logger.V(1).Info("Successfully deleted existing objects", "path", path)
 
 	// Create data objects for each key-value pair
 	for key, value := range data {
@@ -277,6 +279,11 @@ func (c *PKCS11Client) writeMetadata(path string, metadata *SecretMetadata) erro
 	// Create metadata object label
 	metadataLabel := path + metadataKeySuffix
 
+	c.logger.V(1).Info("Creating metadata object",
+		"path", path,
+		"label", metadataLabel,
+		"metadataSize", len(metadataJSON))
+
 	// Create the metadata object via helper
 	handle, err := createObjectPKCS11(c.session, metadataLabel, metadataJSON)
 	if err != nil {
@@ -286,7 +293,10 @@ func (c *PKCS11Client) writeMetadata(path string, metadata *SecretMetadata) erro
 	// Cache the metadata object handle
 	c.dataObjects[metadataLabel] = handle
 
-	c.logger.V(2).Info("Created metadata object", "path", path, "label", metadataLabel)
+	c.logger.V(1).Info("Successfully created metadata object",
+		"path", path,
+		"label", metadataLabel,
+		"handle", handle)
 	return nil
 }
 

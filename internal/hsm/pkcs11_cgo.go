@@ -316,7 +316,13 @@ func createObjectPKCS11(session *Session, label string, value []byte) (ObjectHan
 
 	obj, err := session.ctx.CreateObject(session.session, template)
 	if err != nil {
-		return 0, fmt.Errorf("failed to create data object: %w", err)
+		// Enhanced error message with context
+		oidStatus := "none"
+		if derOID != nil {
+			oidStatus = fmt.Sprintf("%v (DER len=%d)", oid, len(derOID))
+		}
+		return 0, fmt.Errorf("failed to create data object (label=%s, dataType=%s, oid=%s, valueLen=%d): %w",
+			label, dataType, oidStatus, len(value), err)
 	}
 
 	return obj, nil
@@ -345,8 +351,14 @@ func deleteSecretObjectsPKCS11(session *Session, path string) error {
 		return fmt.Errorf("failed to find objects: %w", err)
 	}
 
-	// Delete each object that matches our path
-	deletedCount := 0
+	// CRITICAL: Collect object handles to delete WHILE in search mode
+	// We must call FindObjectsFinal BEFORE destroying objects
+	type objectToDelete struct {
+		handle ObjectHandle
+		label  string
+	}
+	objectsToDelete := make([]objectToDelete, 0)
+
 	for _, obj := range objs {
 		// Get the label to check if this object matches our path
 		labelAttr, err := session.ctx.GetAttributeValue(session.session, obj, []*pkcs11.Attribute{
@@ -361,22 +373,37 @@ func deleteSecretObjectsPKCS11(session *Session, path string) error {
 		}
 
 		label := string(labelAttr[0].Value)
-		// Only delete objects that match our path
+		// Only collect objects that match our path
 		if !strings.HasPrefix(label, path) {
 			continue
 		}
 
-		if err := session.ctx.DestroyObject(session.session, obj); err != nil {
-			// Log error but continue with other objects
-			continue
-		}
-		deletedCount++
+		objectsToDelete = append(objectsToDelete, objectToDelete{
+			handle: obj,
+			label:  label,
+		})
 	}
 
-	// CRITICAL: Must call FindObjectsFinal to release search operation
-	// If this fails, the session remains in search mode and CreateObject will fail
+	// CRITICAL: Must call FindObjectsFinal to exit search mode BEFORE destroying objects
+	// DestroyObject requires the session to be in normal mode, not search mode
 	if err := session.ctx.FindObjectsFinal(session.session); err != nil {
-		return fmt.Errorf("failed to finalize object search after deleting %d objects (session may be in invalid state): %w", deletedCount, err)
+		return fmt.Errorf("failed to finalize object search (session may be in invalid state): %w", err)
+	}
+
+	// Now destroy the collected objects (session is in normal mode)
+	deletedCount := 0
+	var deleteErrors []string
+	for _, obj := range objectsToDelete {
+		if err := session.ctx.DestroyObject(session.session, obj.handle); err != nil {
+			deleteErrors = append(deleteErrors, fmt.Sprintf("%s: %v", obj.label, err))
+		} else {
+			deletedCount++
+		}
+	}
+
+	// Report any delete failures
+	if len(deleteErrors) > 0 {
+		return fmt.Errorf("failed to delete %d of %d objects: %s", len(deleteErrors), len(objectsToDelete), strings.Join(deleteErrors, "; "))
 	}
 
 	return nil
