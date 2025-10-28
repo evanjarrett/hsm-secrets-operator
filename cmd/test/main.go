@@ -53,14 +53,22 @@ func main() {
 	// Get library path from environment or use default
 	libraryPath := os.Getenv("PKCS11_LIBRARY")
 	if libraryPath == "" {
-		// Try common locations
-		if _, err := os.Stat("/usr/lib/pkcs11/opensc-pkcs11.so"); err == nil {
-			libraryPath = "/usr/lib/pkcs11/opensc-pkcs11.so" // Production container
-		} else if _, err := os.Stat("/usr/lib64/pkcs11/opensc-pkcs11.so"); err == nil {
-			libraryPath = "/usr/lib64/pkcs11/opensc-pkcs11.so" // Fedora/RHEL
-		} else if _, err := os.Stat("/usr/lib/x86_64-linux-gnu/pkcs11/opensc-pkcs11.so"); err == nil {
-			libraryPath = "/usr/lib/x86_64-linux-gnu/pkcs11/opensc-pkcs11.so" // Debian/Ubuntu
-		} else {
+		// Try common locations (Debian/Ubuntu path first for trixie-slim)
+		libraryPaths := []string{
+			"/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so",        // Debian/Ubuntu (trixie-slim)
+			"/usr/lib/x86_64-linux-gnu/pkcs11/opensc-pkcs11.so", // Debian/Ubuntu (older)
+			"/usr/lib64/pkcs11/opensc-pkcs11.so",                // Fedora/RHEL
+			"/usr/lib/pkcs11/opensc-pkcs11.so",                  // Generic fallback
+		}
+		found := false
+		for _, path := range libraryPaths {
+			if _, err := os.Stat(path); err == nil {
+				libraryPath = path
+				found = true
+				break
+			}
+		}
+		if !found {
 			log.Fatal("Could not find PKCS#11 library. Set PKCS11_LIBRARY environment variable.")
 		}
 	}

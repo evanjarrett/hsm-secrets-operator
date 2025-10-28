@@ -28,7 +28,7 @@ spec:
   
   # PKCS#11 configuration per device
   pkcs11:
-    libraryPath: "/usr/local/lib/libsc-hsm-pkcs11.so"
+    libraryPath: "/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so"  # OpenSC library for Pico HSM
     slotId: 0
     pinSecret:
       name: "pico-hsm-pin"
@@ -59,7 +59,7 @@ spec:
   
   # PKCS#11 configuration
   pkcs11:
-    libraryPath: "/usr/lib/opensc-pkcs11.so"
+    libraryPath: "/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so"
     slotId: 0
     pinSecret:
       name: "smartcard-hsm-pin"

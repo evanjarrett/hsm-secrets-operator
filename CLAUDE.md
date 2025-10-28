@@ -324,13 +324,13 @@ AGENT_POD=$(kubectl get pods -l app.kubernetes.io/name=hsm-agent -o jsonpath='{.
 HSM_PIN=$(kubectl get secret hsm-pin -o jsonpath='{.data.pin}' | base64 -d)
 
 # List all secrets (requires PIN authentication)
-kubectl exec $AGENT_POD -- pkcs11-tool --module="/usr/lib/pkcs11/opensc-pkcs11.so" --login --pin="$HSM_PIN" --list-objects --type=data
+kubectl exec $AGENT_POD -- pkcs11-tool --module="/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so" --login --pin="$HSM_PIN" --list-objects --type=data
 
 # Read specific secret component
-kubectl exec $AGENT_POD -- pkcs11-tool --module="/usr/lib/pkcs11/opensc-pkcs11.so" --login --pin="$HSM_PIN" --read-object --type=data --label="my-secret/api_key"
+kubectl exec $AGENT_POD -- pkcs11-tool --module="/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so" --login --pin="$HSM_PIN" --read-object --type=data --label="my-secret/api_key"
 
 # HSM device info
-kubectl exec $AGENT_POD -- pkcs11-tool --module="/usr/lib/pkcs11/opensc-pkcs11.so" -I
+kubectl exec $AGENT_POD -- pkcs11-tool --module="/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so" -I
 ```
 
 **Secret Storage Structure:**
