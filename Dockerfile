@@ -1,9 +1,9 @@
-# Stage 1: Go builder (also serves as dependency source)
+# Stage 1: Go builder
 FROM golang:1.24-trixie AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
-# Install both runtime and development packages in single stage
+# Install runtime and build dependencies
 RUN apt-get update && apt-get install -y \
     opensc \
     pcscd \
@@ -42,15 +42,11 @@ RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -ldfl
 # Build test utility for manual testing/debugging
 RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -ldflags="-s -w" -o test cmd/test/main.go
 
-# No runtime dependency discovery needed - debian:trixie-slim has all required libs
-
 # Stage 2: Debian Trixie Slim (minimal but functional for USB hardware interaction)
 # Provides proper runtime environment for libudev USB device enumeration
-# Slightly larger than distroless (~140MB vs ~20MB) but required for CCID/USB reliability
 FROM debian:trixie-slim
 
 # Install only the essential runtime packages (minimal attack surface)
-# debian:trixie-slim already has libc, but we need USB/smartcard libraries
 RUN apt-get update && apt-get install -y --no-install-recommends \
     opensc \
     pcscd \
@@ -63,6 +59,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy minimal user/group files for nonroot user (secure by default)
 COPY --from=builder /tmp/passwd /etc/passwd
 COPY --from=builder /tmp/group /etc/group
+
+# Create runtime directories for pcscd with proper permissions
+# Agent mode requires root for USB device access (standard for HSM/smartcard ops)
+RUN mkdir -p /run/pcscd /var/lock/pcsc && \
+    chmod 755 /run/pcscd /var/lock/pcsc
 
 # Copy application binary (manages pcscd lifecycle internally - no shell needed)
 COPY --from=builder /workspace/hsm-operator /hsm-operator
