@@ -5,8 +5,12 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
+	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
+	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 func main() {
@@ -17,6 +21,28 @@ func main() {
 
 	operation := os.Args[1]
 	pin := os.Args[2]
+
+	// Set up logger
+	logger := ctrl.Log.WithName("test-hsm")
+
+	// Start pcscd daemon
+	logger.Info("Starting pcscd daemon")
+	pcscdMgr := agent.NewPCSCDManager(logger, true) // true = debug output enabled
+	if err := pcscdMgr.Start(); err != nil {
+		log.Fatalf("Failed to start pcscd: %v", err)
+	}
+	defer pcscdMgr.Stop()
+	logger.Info("pcscd daemon started successfully")
+
+	// Set up signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		logger.Info("Received shutdown signal, stopping pcscd")
+		pcscdMgr.Stop()
+		os.Exit(0)
+	}()
 
 	// Get library path from environment or use default
 	libraryPath := os.Getenv("PKCS11_LIBRARY")

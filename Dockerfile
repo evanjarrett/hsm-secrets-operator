@@ -42,105 +42,27 @@ RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -ldfl
 # Build test utility for manual testing/debugging
 RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -ldflags="-s -w" -o test cmd/test/main.go
 
-# Collect all runtime dependencies using iterative discovery:
-# 1. Start with ldd on binaries → get compile-time linked libraries
-# 2. Recursively: ldd on discovered libraries → get their dependencies
-# 3. strings scan discovered libraries → find dlopen'd libraries (like libgcc_s, libpcsclite_real)
-# 4. Repeat step 2-3 on newly discovered libraries until no new deps found
-RUN echo "Discovering runtime dependencies (iterative)..." && \
-    # Define binaries to scan (includes CCID driver to catch libusb dependency)
-    SCAN_BINARIES="/workspace/hsm-operator /workspace/test /usr/sbin/pcscd /usr/bin/pkcs11-tool /usr/lib/pcsc/drivers/ifd-ccid.bundle/Contents/Linux/libccid.so" && \
-    mkdir -p /runtime-deps && \
-    touch /tmp/deps_all.txt /tmp/deps_previous.txt /tmp/deps_new.txt && \
-    # Start with our binaries
-    echo "$SCAN_BINARIES" | tr ' ' '\n' > /tmp/deps_new.txt && \
-    ITERATION=0 && \
-    while [ -s /tmp/deps_new.txt ] && [ $ITERATION -lt 10 ]; do \
-        ITERATION=$((ITERATION + 1)) && \
-        NEW_COUNT=$(wc -l < /tmp/deps_new.txt) && \
-        echo "Iteration $ITERATION: Processing $NEW_COUNT new items..." && \
-        # Run ldd on new items
-        for item in $(cat /tmp/deps_new.txt); do \
-            if [ -f "$item" ]; then \
-                ldd "$item" 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "^$" || true; \
-                # Also get dynamic linker
-                ldd "$item" 2>/dev/null | grep -o '/lib.*/ld-linux[^ ]*' || true; \
-            fi; \
-        done >> /tmp/deps_all.txt && \
-        # Scan new items for dlopen'd libraries (strings method)
-        for item in $(cat /tmp/deps_new.txt); do \
-            if [ -f "$item" ]; then \
-                strings "$item" 2>/dev/null | grep -E '\.so(\.[0-9]+)*$' | while read soname; do \
-                    find /usr/lib /lib -name "$soname" 2>/dev/null || true; \
-                done; \
-            fi; \
-        done >> /tmp/deps_all.txt && \
-        # Find newly discovered deps (not in previous iterations)
-        sort -u /tmp/deps_all.txt > /tmp/deps_all_sorted.txt && \
-        comm -13 /tmp/deps_previous.txt /tmp/deps_all_sorted.txt > /tmp/deps_new.txt && \
-        cp /tmp/deps_all_sorted.txt /tmp/deps_previous.txt; \
-    done && \
-    # Copy all libraries except /lib/* paths (will be symlinked to /usr/lib)
-    sort -u /tmp/deps_all.txt > /tmp/deps.txt && \
-    echo "Found $(wc -l < /tmp/deps.txt) unique library paths after $ITERATION iterations" && \
-    cat /tmp/deps.txt && \
-    for lib in $(cat /tmp/deps.txt); do \
-        # Skip /lib/* paths (but not /lib64/* which is separate)
-        if [ -f "$lib" ] && ! echo "$lib" | grep -q "^/lib/"; then \
-            dir=$(dirname "$lib"); \
-            mkdir -p "/runtime-deps$dir"; \
-            cp -L "$lib" "/runtime-deps$lib"; \
-        fi; \
-    done && \
-    # Create single directory-level symlink: /lib → /usr/lib
-    ln -s /usr/lib /runtime-deps/lib && \
-    echo "Dependencies collected to /runtime-deps (/lib symlinked to /usr/lib)" && \
-    # Verify all binaries can find their dependencies
-    echo "Testing binaries for missing dependencies..." && \
-    for binary in $SCAN_BINARIES; do \
-        echo "Testing $binary..."; \
-        ldd "$binary" 2>&1 | grep "not found" && echo "ERROR: Missing dependencies for $binary" && exit 1 || true; \
-    done && \
-    echo "All binaries have satisfied dependencies"
+# No runtime dependency discovery needed - debian:trixie-slim has all required libs
 
-# Create symlinks for opensc-pkcs11.so for both architectures (FROM scratch has no shell)
-RUN mkdir -p /tmp/pkcs11-links/x86_64-linux-gnu /tmp/pkcs11-links/aarch64-linux-gnu && \
-    ln -s /usr/lib/pkcs11/opensc-pkcs11.so /tmp/pkcs11-links/x86_64-linux-gnu/opensc-pkcs11.so && \
-    ln -s /usr/lib/pkcs11/opensc-pkcs11.so /tmp/pkcs11-links/aarch64-linux-gnu/opensc-pkcs11.so
+# Stage 2: Debian Trixie Slim (minimal but functional for USB hardware interaction)
+# Provides proper runtime environment for libudev USB device enumeration
+# Slightly larger than distroless (~140MB vs ~20MB) but required for CCID/USB reliability
+FROM debian:trixie-slim
 
-# Stage 2: Ultra-minimal FROM scratch runtime (no shell, no distro)
-# Maximum security: smallest possible attack surface (~15MB vs ~30MB distroless)
-FROM scratch
+# Install only the essential runtime packages (minimal attack surface)
+# debian:trixie-slim already has libc, but we need USB/smartcard libraries
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    opensc \
+    pcscd \
+    libccid \
+    libpcsclite1 \
+    libusb-1.0-0 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy minimal user/group files for nonroot user (secure by default)
 COPY --from=builder /tmp/passwd /etc/passwd
 COPY --from=builder /tmp/group /etc/group
-
-# Copy all runtime library dependencies (auto-discovered via ldd/strings)
-# Includes dynamic linker (ld-linux-*.so) for all architectures (x86_64, arm64, etc.)
-COPY --from=builder /runtime-deps /
-
-# Copy PKCS#11 library and symlinks for all architectures
-# Main copy: /usr/lib/pkcs11/ - actual file location
-COPY --from=builder /usr/lib/*/opensc-pkcs11.so /usr/lib/pkcs11/
-# Symlinks created in builder stage for pkcs11-tool default paths (works for both amd64 and arm64)
-COPY --from=builder /tmp/pkcs11-links/ /usr/lib/
-
-# Copy essential binaries
-COPY --from=builder /usr/sbin/pcscd /usr/sbin/
-COPY --from=builder /usr/bin/pkcs11-tool /usr/bin/
-
-# Copy udev rules for HSM devices (CCID support)
-COPY --from=builder /lib/udev/rules.d/92-libccid.rules /lib/udev/rules.d/
-
-# Copy CCID drivers for pcscd (Debian Trixie provides v1.6.2 with native Pico HSM multi-interface support)
-COPY --from=builder /usr/lib/pcsc /usr/lib/pcsc
-
-# Copy CCID configuration file (needed for Info.plist symlink)
-COPY --from=builder /etc/libccid_Info.plist /etc/
-
-# Copy CA certificates
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
 # Copy application binary (manages pcscd lifecycle internally - no shell needed)
 COPY --from=builder /workspace/hsm-operator /hsm-operator
