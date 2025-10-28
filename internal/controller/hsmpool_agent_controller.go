@@ -664,10 +664,10 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 								},
 							},
 							SecurityContext: &corev1.SecurityContext{
-								Privileged:               truePtr,  // Still no privileged containers
-								AllowPrivilegeEscalation: truePtr,  // Still no privilege escalation
-								ReadOnlyRootFilesystem:   falsePtr, // Possible with distroless
-								RunAsNonRoot:             falsePtr, // Root required for USB
+								Privileged:               falsePtr, // No privileged container needed
+								AllowPrivilegeEscalation: falsePtr, // No privilege escalation needed
+								ReadOnlyRootFilesystem:   falsePtr, // pcscd needs writable /run and /var/lock
+								RunAsNonRoot:             falsePtr, // Root required for USB device access
 								RunAsUser:                &rootUserId,
 								SeccompProfile: &corev1.SeccompProfile{
 									Type: corev1.SeccompProfileTypeRuntimeDefault,

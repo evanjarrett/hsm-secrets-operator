@@ -31,7 +31,11 @@ func main() {
 	if err := pcscdMgr.Start(); err != nil {
 		log.Fatalf("Failed to start pcscd: %v", err)
 	}
-	defer pcscdMgr.Stop()
+	defer func() {
+		if err := pcscdMgr.Stop(); err != nil {
+			logger.Error(err, "Failed to stop pcscd")
+		}
+	}()
 	logger.Info("pcscd daemon started successfully")
 
 	// Set up signal handling for graceful shutdown
@@ -40,7 +44,9 @@ func main() {
 	go func() {
 		<-sigChan
 		logger.Info("Received shutdown signal, stopping pcscd")
-		pcscdMgr.Stop()
+		if err := pcscdMgr.Stop(); err != nil {
+			logger.Error(err, "Failed to stop pcscd during shutdown")
+		}
 		os.Exit(0)
 	}()
 
