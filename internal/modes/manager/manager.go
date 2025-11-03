@@ -248,7 +248,14 @@ func setupOperatorComponents() (string, string, error) {
 		setupLog.Error(err, "unable to get the current namespace")
 		return "", "", err
 	}
-	operatorName, _ := os.Hostname()
+
+	// Get operator name from environment variable (deployment name)
+	// Fallback to hostname for backward compatibility during local testing
+	operatorName := os.Getenv("OPERATOR_NAME")
+	if operatorName == "" {
+		operatorName, _ = os.Hostname()
+		setupLog.Info("OPERATOR_NAME not set, falling back to hostname", "hostname", operatorName)
+	}
 	setupLog.Info("Detected operator details", "namespace", operatorNamespace, "name", operatorName)
 
 	return operatorNamespace, operatorName, nil

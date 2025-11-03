@@ -67,6 +67,9 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: spec.serviceAccountName
+        # Inject operator deployment name for stable controller identification
+        - name: OPERATOR_NAME
+          value: {{ include "hsm-secrets-operator.controllerManagerName" . | quote }}
         ports:
         {{- if .Values.metrics.enabled }}
         - name: metrics
