@@ -22,6 +22,7 @@ import (
 	"flag"
 	"fmt"
 	"maps"
+	"sync"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -144,6 +145,11 @@ type DiscoveryAgent struct {
 	eventMonitoringActive bool
 	deviceCache           map[string][]hsmv1alpha1.DiscoveredDevice // Cache current device state per HSMDevice
 	deviceLookup          map[string]map[string]int                 // Fast lookup: HSMDevice -> (serial/path -> index)
+	deviceTypes           map[string]hsmv1alpha1.HSMDeviceType      // Cache: HSMDevice name -> device type
+
+	// Device plugin managers (one per device type)
+	devicePluginManagers map[hsmv1alpha1.HSMDeviceType]*discovery.HSMDeviceManager
+	devicePluginMutex    sync.RWMutex
 }
 
 // Run starts the discovery loop with event-driven monitoring
@@ -151,6 +157,10 @@ func (d *DiscoveryAgent) Run(ctx context.Context) error {
 	// Initialize device cache
 	d.deviceCache = make(map[string][]hsmv1alpha1.DiscoveredDevice)
 	d.deviceLookup = make(map[string]map[string]int)
+	d.deviceTypes = make(map[string]hsmv1alpha1.HSMDeviceType)
+
+	// Initialize device plugin managers map
+	d.devicePluginManagers = make(map[hsmv1alpha1.HSMDeviceType]*discovery.HSMDeviceManager)
 
 	// Step 1: Mandatory initial discovery to detect already-connected devices
 	d.logger.Info("Performing initial device discovery scan")
@@ -181,6 +191,7 @@ func (d *DiscoveryAgent) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			d.logger.Info("Discovery agent shutting down")
 			d.usbDiscoverer.StopEventMonitoring()
+			d.stopAllDevicePlugins()
 			return nil
 
 		case event, ok := <-eventChan:
@@ -237,6 +248,9 @@ func (d *DiscoveryAgent) processHSMDevice(ctx context.Context, hsmDevice *hsmv1a
 
 	d.logger.V(1).Info("Discovering devices", "hsmDevice", hsmDevice.Name, "node", d.nodeName)
 
+	// Cache the device type for use in event handlers
+	d.deviceTypes[hsmDevice.Name] = hsmDevice.Spec.DeviceType
+
 	// Perform local discovery
 	discoveredDevices, err := d.discoverDevicesForSpec(ctx, hsmDevice)
 	if err != nil {
@@ -251,6 +265,12 @@ func (d *DiscoveryAgent) processHSMDevice(ctx context.Context, hsmDevice *hsmv1a
 
 	// Update device cache
 	d.updateDeviceCache(hsmDevice.Name, discoveredDevices)
+
+	// Update device plugin with discovered devices
+	if err := d.updateDevicePlugin(hsmDevice, discoveredDevices); err != nil {
+		d.logger.Error(err, "Failed to update device plugin", "device", hsmDevice.Name)
+		// Continue - don't fail the entire discovery for device plugin issues
+	}
 
 	// Update pod annotation with discovery results
 	if err := d.updatePodAnnotation(ctx, hsmDevice.Name, discoveredDevices); err != nil {
@@ -526,6 +546,10 @@ func (d *DiscoveryAgent) handleDeviceAdd(ctx context.Context, event discovery.US
 		if err := d.updatePodAnnotation(ctx, event.HSMDeviceName, currentDevices); err != nil {
 			d.logger.Error(err, "Failed to update pod annotation after device reconnection")
 		}
+		// Update device plugin
+		if err := d.updateDevicePluginByName(event.HSMDeviceName, currentDevices); err != nil {
+			d.logger.Error(err, "Failed to update device plugin after device reconnection")
+		}
 		return
 	}
 
@@ -542,6 +566,11 @@ func (d *DiscoveryAgent) handleDeviceAdd(ctx context.Context, event discovery.US
 	// Update pod annotation
 	if err := d.updatePodAnnotation(ctx, event.HSMDeviceName, currentDevices); err != nil {
 		d.logger.Error(err, "Failed to update pod annotation after device add")
+	}
+
+	// Update device plugin
+	if err := d.updateDevicePluginByName(event.HSMDeviceName, currentDevices); err != nil {
+		d.logger.Error(err, "Failed to update device plugin after device add")
 	}
 }
 
@@ -583,6 +612,11 @@ func (d *DiscoveryAgent) handleDeviceRemove(ctx context.Context, event discovery
 	// Update pod annotation
 	if err := d.updatePodAnnotation(ctx, event.HSMDeviceName, currentDevices); err != nil {
 		d.logger.Error(err, "Failed to update pod annotation after device remove")
+	}
+
+	// Update device plugin
+	if err := d.updateDevicePluginByName(event.HSMDeviceName, currentDevices); err != nil {
+		d.logger.Error(err, "Failed to update device plugin after device remove")
 	}
 }
 
@@ -745,4 +779,79 @@ func (d *DiscoveryAgent) findDeviceIndex(hsmDeviceName string, device hsmv1alpha
 	}
 
 	return -1
+}
+
+// ensureDevicePluginForType creates or returns existing device plugin manager for a device type
+func (d *DiscoveryAgent) ensureDevicePluginForType(deviceType hsmv1alpha1.HSMDeviceType) (*discovery.HSMDeviceManager, error) {
+	d.devicePluginMutex.Lock()
+	defer d.devicePluginMutex.Unlock()
+
+	if manager, exists := d.devicePluginManagers[deviceType]; exists {
+		return manager, nil
+	}
+
+	// Create new device plugin manager
+	resourceName := string(deviceType)
+	manager := discovery.NewHSMDeviceManager(deviceType, resourceName)
+
+	// Start the device plugin
+	if err := manager.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start device plugin for %s: %w", deviceType, err)
+	}
+
+	d.devicePluginManagers[deviceType] = manager
+	d.logger.Info("Started device plugin", "deviceType", deviceType, "resource", manager.GetResourceName())
+
+	return manager, nil
+}
+
+// updateDevicePlugin updates the device plugin with discovered devices for a specific HSMDevice
+func (d *DiscoveryAgent) updateDevicePlugin(hsmDevice *hsmv1alpha1.HSMDevice, devices []hsmv1alpha1.DiscoveredDevice) error {
+	return d.updateDevicePluginByType(hsmDevice.Spec.DeviceType, devices)
+}
+
+// updateDevicePluginByName updates the device plugin using the cached device type for an HSMDevice name
+func (d *DiscoveryAgent) updateDevicePluginByName(hsmDeviceName string, devices []hsmv1alpha1.DiscoveredDevice) error {
+	deviceType, exists := d.deviceTypes[hsmDeviceName]
+	if !exists {
+		d.logger.V(1).Info("No cached device type for HSMDevice, skipping device plugin update",
+			"hsmDevice", hsmDeviceName)
+		return nil
+	}
+	return d.updateDevicePluginByType(deviceType, devices)
+}
+
+// updateDevicePluginByType updates the device plugin for a specific device type
+func (d *DiscoveryAgent) updateDevicePluginByType(deviceType hsmv1alpha1.HSMDeviceType, devices []hsmv1alpha1.DiscoveredDevice) error {
+	manager, err := d.ensureDevicePluginForType(deviceType)
+	if err != nil {
+		return err
+	}
+
+	// Filter to only devices on this node that are available
+	nodeDevices := make([]hsmv1alpha1.DiscoveredDevice, 0)
+	for _, device := range devices {
+		if device.NodeName == d.nodeName && device.Available {
+			nodeDevices = append(nodeDevices, device)
+		}
+	}
+
+	manager.UpdateDevices(nodeDevices)
+	d.logger.V(1).Info("Updated device plugin",
+		"deviceType", deviceType,
+		"nodeDevices", len(nodeDevices))
+
+	return nil
+}
+
+// stopAllDevicePlugins stops all running device plugins
+func (d *DiscoveryAgent) stopAllDevicePlugins() {
+	d.devicePluginMutex.Lock()
+	defer d.devicePluginMutex.Unlock()
+
+	for deviceType, manager := range d.devicePluginManagers {
+		d.logger.Info("Stopping device plugin", "deviceType", deviceType)
+		manager.Stop()
+	}
+	d.devicePluginManagers = make(map[hsmv1alpha1.HSMDeviceType]*discovery.HSMDeviceManager)
 }

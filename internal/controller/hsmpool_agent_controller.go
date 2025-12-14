@@ -519,6 +519,8 @@ func (r *HSMPoolAgentReconciler) deleteAgent(ctx context.Context, name, namespac
 
 // createAgentDeployment creates the HSM agent deployment for a specific device
 func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmPool *hsmv1alpha1.HSMPool, specificDevice *hsmv1alpha1.DiscoveredDevice, customAgentName string) error {
+	logger := log.FromContext(ctx)
+
 	if specificDevice == nil {
 		return fmt.Errorf("specificDevice is required")
 	}
@@ -532,6 +534,21 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 
 	targetNode := specificDevice.NodeName
 	deviceName := hsmPool.OwnerReferences[0].Name
+
+	// Fetch the HSMDevice to get the device type for extended resource requests
+	var hsmDevice hsmv1alpha1.HSMDevice
+	if err := r.Get(ctx, types.NamespacedName{Name: deviceName, Namespace: hsmPool.Namespace}, &hsmDevice); err != nil {
+		logger.Error(err, "Failed to get HSMDevice for agent deployment", "device", deviceName)
+		return fmt.Errorf("failed to get HSMDevice %s: %w", deviceName, err)
+	}
+
+	// Build extended resource name from device type (e.g., "hsm.j5t.io/picohsm")
+	extendedResourceName := corev1.ResourceName(
+		fmt.Sprintf("hsm.j5t.io/%s", strings.ToLower(string(hsmDevice.Spec.DeviceType))),
+	)
+	logger.V(1).Info("Using extended resource for agent",
+		"agent", agentName,
+		"resource", extendedResourceName)
 
 	// Get agent image from config or fallback to auto-detection
 	var agentImage string
@@ -657,10 +674,12 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 								Requests: corev1.ResourceList{
 									corev1.ResourceCPU:    resource.MustParse("100m"),
 									corev1.ResourceMemory: resource.MustParse("128Mi"),
+									extendedResourceName:  resource.MustParse("1"), // Request 1 HSM device
 								},
 								Limits: corev1.ResourceList{
 									corev1.ResourceCPU:    resource.MustParse("500m"),
 									corev1.ResourceMemory: resource.MustParse("256Mi"),
+									extendedResourceName:  resource.MustParse("1"), // Limit to 1 HSM device
 								},
 							},
 							SecurityContext: &corev1.SecurityContext{

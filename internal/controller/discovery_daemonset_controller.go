@@ -249,6 +249,15 @@ func (r *DiscoveryDaemonSetReconciler) ensureDiscoveryDaemonSet(ctx context.Cont
 									MountPath: "/run/udev",
 									ReadOnly:  true,
 								},
+								// Kubelet device plugin sockets for device plugin registration
+								{
+									Name:      "device-plugins",
+									MountPath: "/var/lib/kubelet/device-plugins",
+								},
+								{
+									Name:      "plugins-registry",
+									MountPath: "/var/lib/kubelet/plugins_registry",
+								},
 							},
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
@@ -274,12 +283,7 @@ func (r *DiscoveryDaemonSetReconciler) ensureDiscoveryDaemonSet(ctx context.Cont
 							Effect:   corev1.TaintEffectNoSchedule,
 						},
 					},
-					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot: &[]bool{true}[0],
-						RunAsUser:    &[]int64{65534}[0], // nobody user
-						RunAsGroup:   &[]int64{65534}[0], // nobody group
-						FSGroup:      &[]int64{65534}[0],
-					},
+					SecurityContext: r.getPodSecurityContext(isTestEnvironment),
 				},
 			},
 			UpdateStrategy: appsv1.DaemonSetUpdateStrategy{
@@ -508,29 +512,77 @@ func (r *DiscoveryDaemonSetReconciler) getVolumes(isTestEnvironment bool) []core
 					},
 				},
 			},
+			// Kubelet device plugin sockets for device plugin registration
+			corev1.Volume{
+				Name: "device-plugins",
+				VolumeSource: corev1.VolumeSource{
+					HostPath: &corev1.HostPathVolumeSource{
+						Path: "/var/lib/kubelet/device-plugins",
+						Type: &[]corev1.HostPathType{corev1.HostPathDirectoryOrCreate}[0],
+					},
+				},
+			},
+			corev1.Volume{
+				Name: "plugins-registry",
+				VolumeSource: corev1.VolumeSource{
+					HostPath: &corev1.HostPathVolumeSource{
+						Path: "/var/lib/kubelet/plugins_registry",
+						Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
+					},
+				},
+			},
 		)
 	}
 
 	return volumes
 }
 
-// getSecurityContext returns the appropriate security context based on environment
+// getSecurityContext returns the appropriate container security context based on environment
 func (r *DiscoveryDaemonSetReconciler) getSecurityContext(isTestEnvironment bool) *corev1.SecurityContext {
-	securityContext := &corev1.SecurityContext{
-		RunAsNonRoot:             &[]bool{true}[0],
+	if isTestEnvironment {
+		// Test environment: restrictive security context
+		return &corev1.SecurityContext{
+			RunAsNonRoot:             &[]bool{true}[0],
+			AllowPrivilegeEscalation: &[]bool{false}[0],
+			ReadOnlyRootFilesystem:   &[]bool{false}[0],
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"},
+			},
+			SeccompProfile: &corev1.SeccompProfile{
+				Type: corev1.SeccompProfileTypeRuntimeDefault,
+			},
+		}
+	}
+
+	// Production environment: need elevated privileges for device plugin
+	// Device plugins need to create Unix sockets and register with kubelet
+	return &corev1.SecurityContext{
+		RunAsNonRoot:             &[]bool{false}[0],
 		AllowPrivilegeEscalation: &[]bool{false}[0],
-		ReadOnlyRootFilesystem:   &[]bool{false}[0], // Need write access for termination log
+		ReadOnlyRootFilesystem:   &[]bool{false}[0],
 		Capabilities: &corev1.Capabilities{
 			Drop: []corev1.Capability{"ALL"},
 		},
 	}
+}
 
-	// Add seccomp profile for test environments to pass restricted pod security policy
+// getPodSecurityContext returns the appropriate pod security context based on environment
+func (r *DiscoveryDaemonSetReconciler) getPodSecurityContext(isTestEnvironment bool) *corev1.PodSecurityContext {
 	if isTestEnvironment {
-		securityContext.SeccompProfile = &corev1.SeccompProfile{
-			Type: corev1.SeccompProfileTypeRuntimeDefault,
+		// Test environment: non-root user
+		return &corev1.PodSecurityContext{
+			RunAsNonRoot: &[]bool{true}[0],
+			RunAsUser:    &[]int64{65534}[0], // nobody user
+			RunAsGroup:   &[]int64{65534}[0], // nobody group
+			FSGroup:      &[]int64{65534}[0],
 		}
 	}
 
-	return securityContext
+	// Production environment: run as root for device plugin socket access
+	// Device plugins need root to create sockets in /var/lib/kubelet/device-plugins/
+	return &corev1.PodSecurityContext{
+		RunAsNonRoot: &[]bool{false}[0],
+		RunAsUser:    &[]int64{0}[0], // root user
+		RunAsGroup:   &[]int64{0}[0], // root group
+	}
 }
