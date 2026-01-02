@@ -409,6 +409,46 @@ func deleteSecretObjectsPKCS11(session *Session, path string) error {
 	return nil
 }
 
+// deleteSecretKeyPKCS11 removes a single data object with the exact label
+func deleteSecretKeyPKCS11(session *Session, label string) error {
+	if session == nil {
+		return fmt.Errorf("session is nil")
+	}
+
+	// Find data objects with exact label match
+	template := []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_DATA),
+		pkcs11.NewAttribute(pkcs11.CKA_LABEL, label),
+	}
+
+	if err := session.ctx.FindObjectsInit(session.session, template); err != nil {
+		return fmt.Errorf("failed to initialize object search: %w", err)
+	}
+
+	// Find the object
+	objs, _, err := session.ctx.FindObjects(session.session, 1)
+	if err != nil {
+		_ = session.ctx.FindObjectsFinal(session.session)
+		return fmt.Errorf("failed to find object: %w", err)
+	}
+
+	// Must finalize search before destroying objects
+	if err := session.ctx.FindObjectsFinal(session.session); err != nil {
+		return fmt.Errorf("failed to finalize object search: %w", err)
+	}
+
+	if len(objs) == 0 {
+		return fmt.Errorf("key not found: %s", label)
+	}
+
+	// Destroy the object
+	if err := session.ctx.DestroyObject(session.session, objs[0]); err != nil {
+		return fmt.Errorf("failed to destroy object: %w", err)
+	}
+
+	return nil
+}
+
 // changePINPKCS11 changes the HSM PIN
 func changePINPKCS11(session *Session, oldPIN, newPIN string) error {
 	if session == nil {

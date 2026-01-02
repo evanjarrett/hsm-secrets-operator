@@ -582,6 +582,7 @@ func (x *ReadMetadataResponse) GetMetadata() *SecretMetadata {
 type DeleteSecretRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Key           string                 `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"` // Optional: delete specific key only, empty means delete entire secret
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -619,6 +620,13 @@ func (*DeleteSecretRequest) Descriptor() ([]byte, []int) {
 func (x *DeleteSecretRequest) GetPath() string {
 	if x != nil {
 		return x.Path
+	}
+	return ""
+}
+
+func (x *DeleteSecretRequest) GetKey() string {
+	if x != nil {
+		return x.Key
 	}
 	return ""
 }
@@ -1136,9 +1144,10 @@ const file_hsm_v1_hsm_proto_rawDesc = "" +
 	"\x13ReadMetadataRequest\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\"J\n" +
 	"\x14ReadMetadataResponse\x122\n" +
-	"\bmetadata\x18\x01 \x01(\v2\x16.hsm.v1.SecretMetadataR\bmetadata\")\n" +
+	"\bmetadata\x18\x01 \x01(\v2\x16.hsm.v1.SecretMetadataR\bmetadata\";\n" +
 	"\x13DeleteSecretRequest\x12\x12\n" +
-	"\x04path\x18\x01 \x01(\tR\x04path\"\x16\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12\x10\n" +
+	"\x03key\x18\x02 \x01(\tR\x03key\"\x16\n" +
 	"\x14DeleteSecretResponse\",\n" +
 	"\x12ListSecretsRequest\x12\x16\n" +
 	"\x06prefix\x18\x01 \x01(\tR\x06prefix\"+\n" +

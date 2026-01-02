@@ -216,6 +216,22 @@ func (c *GRPCClient) DeleteSecret(ctx context.Context, path string) error {
 	return nil
 }
 
+// DeleteSecretKey removes a specific key from the secret at the given path
+func (c *GRPCClient) DeleteSecretKey(ctx context.Context, path, key string) error {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	_, err := c.client.DeleteSecret(ctx, &hsmv1.DeleteSecretRequest{
+		Path: path,
+		Key:  key,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to delete secret key: %w", err)
+	}
+
+	return nil
+}
+
 // ListSecrets returns a list of secret paths
 func (c *GRPCClient) ListSecrets(ctx context.Context, prefix string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)

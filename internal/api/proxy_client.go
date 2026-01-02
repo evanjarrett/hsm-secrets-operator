@@ -606,6 +606,109 @@ func (p *ProxyClient) DeleteSecret(c *gin.Context) {
 	}
 }
 
+// DeleteSecretKey handles DELETE /hsm/secrets/:path/:key with mirroring support
+func (p *ProxyClient) DeleteSecretKey(c *gin.Context) {
+	path, ok := p.validatePathParam(c)
+	if !ok {
+		return
+	}
+
+	key := c.Param("key")
+	if key == "" {
+		p.server.sendError(c, http.StatusBadRequest, "missing_key", "Key parameter is required", nil)
+		return
+	}
+
+	// Get all available clients for mirroring delete
+	clients, ok := p.getAllAvailableGRPCClients(c)
+	if !ok {
+		return
+	}
+
+	// Delete key from all devices in parallel
+	results := p.deleteKeyFromAllDevices(c.Request.Context(), clients, path, key)
+
+	// Check results
+	successful := 0
+	var errors []string
+	deviceResults := make(map[string]any)
+
+	for deviceName, result := range results {
+		deviceResults[deviceName] = map[string]any{
+			"success": result.Error == nil,
+			"error": func() string {
+				if result.Error != nil {
+					return result.Error.Error()
+				}
+				return ""
+			}(),
+		}
+
+		if result.Error == nil {
+			successful++
+		} else {
+			errors = append(errors, fmt.Sprintf("%s: %v", deviceName, result.Error))
+			p.logger.Error(result.Error, "Failed to delete key from device", "device", deviceName, "path", path, "key", key)
+		}
+	}
+
+	// Consider the operation successful if we deleted from at least one device
+	if successful > 0 {
+		response := map[string]any{
+			"path":          path,
+			"key":           key,
+			"devices":       len(clients),
+			"deviceResults": deviceResults,
+		}
+		if len(errors) > 0 {
+			response["warnings"] = errors
+		}
+
+		statusCode := http.StatusOK
+		message := "Key deleted successfully"
+		if successful < len(clients) {
+			statusCode = http.StatusPartialContent
+			message = fmt.Sprintf("Key deleted from %d/%d devices", successful, len(clients))
+		}
+
+		p.server.sendResponse(c, statusCode, message, response)
+	} else {
+		// All devices failed
+		p.server.sendError(c, http.StatusInternalServerError, "delete_key_failed", "Failed to delete key from any HSM device", map[string]any{
+			"errors":        errors,
+			"deviceResults": deviceResults,
+			"path":          path,
+			"key":           key,
+		})
+	}
+}
+
+// deleteKeyFromAllDevices deletes a specific key from all devices in parallel
+func (p *ProxyClient) deleteKeyFromAllDevices(ctx context.Context, clients map[string]hsm.Client, path, key string) map[string]WriteResult {
+	results := make(map[string]WriteResult)
+	resultsMutex := sync.Mutex{}
+	wg := sync.WaitGroup{}
+
+	for deviceName, client := range clients {
+		wg.Add(1)
+		go func(deviceName string, client hsm.Client) {
+			defer wg.Done()
+
+			err := client.DeleteSecretKey(ctx, path, key)
+
+			resultsMutex.Lock()
+			results[deviceName] = WriteResult{
+				DeviceName: deviceName,
+				Error:      err,
+			}
+			resultsMutex.Unlock()
+		}(deviceName, client)
+	}
+
+	wg.Wait()
+	return results
+}
+
 // ReadMetadata handles GET /hsm/secrets/:path/metadata
 func (p *ProxyClient) ReadMetadata(c *gin.Context) {
 	path, ok := p.validatePathParam(c)

@@ -59,6 +59,7 @@ func (s *Server) setupProxyRoutes() {
 				secretsGroup.POST("/:path", s.proxyClient.WriteSecret)
 				secretsGroup.PUT("/:path", s.proxyClient.WriteSecret)
 				secretsGroup.DELETE("/:path", s.proxyClient.DeleteSecret)
+				secretsGroup.DELETE("/:path/:key", s.proxyClient.DeleteSecretKey)
 
 				// Secret metadata and checksum
 				secretsGroup.GET("/:path/metadata", s.proxyClient.ReadMetadata)

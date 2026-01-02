@@ -183,6 +183,11 @@ func (c *Client) DeleteSecret(ctx context.Context, name string) error {
 	return c.doRequest(ctx, "DELETE", fmt.Sprintf("/api/v1/hsm/secrets/%s", name), nil, nil)
 }
 
+// DeleteSecretKey deletes a specific key from a secret in the HSM
+func (c *Client) DeleteSecretKey(ctx context.Context, name, key string) error {
+	return c.doRequest(ctx, "DELETE", fmt.Sprintf("/api/v1/hsm/secrets/%s/%s", name, key), nil, nil)
+}
+
 // GetHealth checks the health status of the HSM operator
 func (c *Client) GetHealth(ctx context.Context) (*HealthStatus, error) {
 	var result HealthStatus

@@ -186,6 +186,29 @@ func (m *MockClient) DeleteSecret(ctx context.Context, path string) error {
 	return nil
 }
 
+// DeleteSecretKey removes a specific key from the secret at the given path
+func (m *MockClient) DeleteSecretKey(ctx context.Context, path, key string) error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	if !m.connected {
+		return fmt.Errorf("HSM not connected")
+	}
+
+	data, exists := m.secrets[path]
+	if !exists {
+		return fmt.Errorf("secret not found at path: %s", path)
+	}
+
+	if _, keyExists := data[key]; !keyExists {
+		return fmt.Errorf("key %q not found in secret %q", key, path)
+	}
+
+	delete(data, key)
+	m.logger.Info("Deleted key from mock HSM secret", "path", path, "key", key)
+	return nil
+}
+
 // ListSecrets returns a list of secret paths with the given prefix
 func (m *MockClient) ListSecrets(ctx context.Context, prefix string) ([]string, error) {
 	m.mutex.RLock()

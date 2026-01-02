@@ -48,6 +48,10 @@ func (cw *ClientWrapper) DeleteSecret(ctx context.Context, path string) error {
 	return cw.client.DeleteSecret(ctx, path)
 }
 
+func (cw *ClientWrapper) DeleteSecretKey(ctx context.Context, path, key string) error {
+	return cw.client.DeleteSecretKey(ctx, path, key)
+}
+
 func (cw *ClientWrapper) ListSecrets(ctx context.Context, prefix string) ([]string, error) {
 	return cw.client.ListSecrets(ctx, prefix)
 }

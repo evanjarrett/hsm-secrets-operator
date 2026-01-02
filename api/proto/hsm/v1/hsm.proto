@@ -92,6 +92,7 @@ message ReadMetadataResponse {
 
 message DeleteSecretRequest {
   string path = 1;
+  string key = 2;  // Optional: delete specific key only, empty means delete entire secret
 }
 
 message DeleteSecretResponse {}

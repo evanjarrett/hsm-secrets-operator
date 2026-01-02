@@ -68,6 +68,9 @@ type Client interface {
 	// DeleteSecret removes secret data from the specified HSM path
 	DeleteSecret(ctx context.Context, path string) error
 
+	// DeleteSecretKey removes a specific key from the secret at the given path
+	DeleteSecretKey(ctx context.Context, path, key string) error
+
 	// ListSecrets returns a list of secret paths
 	ListSecrets(ctx context.Context, prefix string) ([]string, error)
 

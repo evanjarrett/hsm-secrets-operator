@@ -6,6 +6,9 @@ kind: HSMSecret
 metadata:
   name: {{ .name }}
   namespace: {{ .namespace | default $.Release.Namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
   labels:
     {{- include "hsm-secrets-operator.labels" $ | nindent 4 }}
     app.kubernetes.io/component: hsmsecret
@@ -35,6 +38,9 @@ kind: HSMDevice
 metadata:
   name: {{ .name }}
   namespace: {{ .namespace | default $.Release.Namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
   labels:
     {{- include "hsm-secrets-operator.labels" $ | nindent 4 }}
     app.kubernetes.io/component: hsmdevice

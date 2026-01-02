@@ -267,6 +267,7 @@ func (s *GRPCServer) ReadMetadata(ctx context.Context, req *hsmv1.ReadMetadataRe
 }
 
 // DeleteSecret removes secret data from the specified HSM path
+// If req.Key is specified, only that key is deleted from the secret
 func (s *GRPCServer) DeleteSecret(ctx context.Context, req *hsmv1.DeleteSecretRequest) (*hsmv1.DeleteSecretResponse, error) {
 	if req.Path == "" {
 		return nil, status.Error(codes.InvalidArgument, "path is required")
@@ -276,6 +277,17 @@ func (s *GRPCServer) DeleteSecret(ctx context.Context, req *hsmv1.DeleteSecretRe
 		return nil, status.Error(codes.Unavailable, "HSM client not connected")
 	}
 
+	// If key is specified, delete only that key
+	if req.Key != "" {
+		if err := s.hsmClient.DeleteSecretKey(ctx, req.Path, req.Key); err != nil {
+			s.logger.Error(err, "Failed to delete secret key", "path", req.Path, "key", req.Key)
+			return nil, status.Errorf(codes.Internal, "failed to delete secret key: %v", err)
+		}
+		s.logger.V(1).Info("Successfully deleted secret key", "path", req.Path, "key", req.Key)
+		return &hsmv1.DeleteSecretResponse{}, nil
+	}
+
+	// Delete entire secret
 	if err := s.hsmClient.DeleteSecret(ctx, req.Path); err != nil {
 		s.logger.Error(err, "Failed to delete secret", "path", req.Path)
 		return nil, status.Errorf(codes.Internal, "failed to delete secret: %v", err)

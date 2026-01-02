@@ -358,6 +358,34 @@ func (c *PKCS11Client) DeleteSecret(ctx context.Context, path string) error {
 	return nil
 }
 
+// DeleteSecretKey removes a specific key from the secret at the given path
+func (c *PKCS11Client) DeleteSecretKey(ctx context.Context, path, key string) error {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	if !c.connected {
+		return fmt.Errorf("HSM not connected")
+	}
+
+	// Build the exact label for this key
+	label := path
+	if key != "" && key != defaultKeyName {
+		label = path + "/" + key
+	}
+
+	c.logger.Info("Deleting secret key from HSM", "path", path, "key", key, "label", label)
+
+	if err := deleteSecretKeyPKCS11(c.session, label); err != nil {
+		return fmt.Errorf("failed to delete secret key: %w", err)
+	}
+
+	// Remove from cache
+	delete(c.dataObjects, label)
+
+	c.logger.Info("Successfully deleted secret key from HSM", "path", path, "key", key)
+	return nil
+}
+
 // ListSecrets returns a list of secret paths with the given prefix
 func (c *PKCS11Client) ListSecrets(ctx context.Context, prefix string) ([]string, error) {
 	c.mutex.RLock()

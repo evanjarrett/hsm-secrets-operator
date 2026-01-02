@@ -91,7 +91,20 @@ func (opts *DeleteOptions) Run(ctx context.Context, secretName string) error {
 	}
 
 	if opts.Key != "" {
-		return fmt.Errorf("deleting individual keys is not yet supported - please delete the entire secret and recreate it")
+		// Confirm deletion unless force is specified
+		if !opts.Force {
+			if err := opts.confirmDeletion(secretName); err != nil {
+				return err
+			}
+		}
+
+		// Delete the specific key via native API
+		fmt.Printf("Deleting key '%s' from secret '%s'...\n", opts.Key, secretName)
+		if err := hsmClient.DeleteSecretKey(ctx, secretName, opts.Key); err != nil {
+			return fmt.Errorf("failed to delete key: %w", err)
+		}
+		fmt.Printf("Key '%s' deleted successfully from secret '%s'.\n", opts.Key, secretName)
+		return nil
 	}
 
 	// Confirm deletion unless force is specified

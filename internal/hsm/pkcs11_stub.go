@@ -56,6 +56,11 @@ func deleteSecretObjectsPKCS11(session *Session, path string) error {
 	return fmt.Errorf("PKCS#11 support requires CGO (set CGO_ENABLED=1 and rebuild)")
 }
 
+// deleteSecretKeyPKCS11 returns an error for non-CGO builds
+func deleteSecretKeyPKCS11(session *Session, label string) error {
+	return fmt.Errorf("PKCS#11 support requires CGO (set CGO_ENABLED=1 and rebuild)")
+}
+
 // changePINPKCS11 returns an error for non-CGO builds
 func changePINPKCS11(session *Session, oldPIN, newPIN string) error {
 	return fmt.Errorf("PKCS#11 support requires CGO (set CGO_ENABLED=1 and rebuild)")
