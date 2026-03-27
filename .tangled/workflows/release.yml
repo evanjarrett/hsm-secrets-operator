@@ -1,0 +1,32 @@
+when:
+  - event: ["push"]
+    tag: ["v*"]
+
+engine: kubernetes
+image: quay.io/buildah/stable:latest
+architecture: amd64
+
+environment:
+  IMAGE_REGISTRY: buoy.cr
+
+steps:
+  - name: Login to registry
+    command: |
+      echo "${APP_PASSWORD}" | buildah login \
+        -u "${TANGLED_REPO_HANDLE}" \
+        --password-stdin \
+        ${IMAGE_REGISTRY}
+
+  - name: Build and push image
+    command: |
+      buildah bud \
+        --tag ${IMAGE_REGISTRY}/${TANGLED_REPO_HANDLE}/${TANGLED_REPO_NAME}:${TANGLED_REF_NAME} \
+        --tag ${IMAGE_REGISTRY}/${TANGLED_REPO_HANDLE}/${TANGLED_REPO_NAME}:latest \
+        --file ./Dockerfile \
+        .
+
+      buildah push \
+        ${IMAGE_REGISTRY}/${TANGLED_REPO_HANDLE}/${TANGLED_REPO_NAME}:${TANGLED_REF_NAME}
+
+      buildah push \
+        ${IMAGE_REGISTRY}/${TANGLED_REPO_HANDLE}/${TANGLED_REPO_NAME}:latest
