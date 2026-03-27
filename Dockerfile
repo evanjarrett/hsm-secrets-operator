@@ -37,10 +37,10 @@ COPY web/ web/
 
 # Build with CGO enabled for PKCS#11 support
 # Strip debug symbols to reduce binary size (-s -w)
-RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -ldflags="-s -w" -o hsm-operator cmd/hsm-operator/main.go
+RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -tags udev -ldflags="-s -w" -o hsm-operator cmd/hsm-operator/main.go
 
 # Build test utility for manual testing/debugging
-RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -ldflags="-s -w" -o test cmd/test/main.go
+RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -tags udev -ldflags="-s -w" -o test cmd/test/main.go
 
 # Stage 2: Debian Trixie Slim (minimal but functional for USB hardware interaction)
 # Provides proper runtime environment for libudev USB device enumeration

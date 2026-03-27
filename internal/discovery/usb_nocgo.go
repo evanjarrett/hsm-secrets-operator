@@ -1,4 +1,4 @@
-//go:build !cgo
+//go:build !udev
 
 /*
 Copyright 2025.
