@@ -5,7 +5,7 @@ when:
     branch: ["main"]
 
 engine: kubernetes
-image: golang:1.24-trixie
+image: golang:1.26-trixie
 architecture: amd64
 
 steps:
@@ -15,10 +15,10 @@ steps:
     command: |
       apt-get update && apt-get install -y libudev-dev
       go mod download
-      go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.7.2
+      make install-linter
 
   - name: Run Linter
     environment:
       CGO_ENABLED: "1"
     command: |
-      golangci-lint run ./...
+      make lint

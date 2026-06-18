@@ -38,7 +38,7 @@ This architecture ensures that HSM operations only occur on nodes with physical 
 
 ### Prerequisites
 - Kubernetes v1.20+ cluster
-- Go 1.24+ (for building from source)
+- Go 1.26+ (for building from source)
 - Docker 17.03+ (for building images)
 - kubectl with cluster-admin privileges
 - HSM device (Pico HSM, SmartCard-HSM, YubiKey HSM, or compatible PKCS#11 device)
