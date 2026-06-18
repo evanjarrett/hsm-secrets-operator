@@ -235,11 +235,6 @@ func (r *DiscoveryDaemonSetReconciler) ensureDiscoveryDaemonSet(ctx context.Cont
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
-									Name:      "dev",
-									MountPath: "/dev",
-									ReadOnly:  true,
-								},
-								{
 									Name:      "sys",
 									MountPath: "/sys",
 									ReadOnly:  true,
@@ -464,12 +459,6 @@ func (r *DiscoveryDaemonSetReconciler) getVolumes(isTestEnvironment bool) []core
 		// In test environment, use emptyDir volumes for testing
 		volumes = append(volumes,
 			corev1.Volume{
-				Name: "dev",
-				VolumeSource: corev1.VolumeSource{
-					EmptyDir: &corev1.EmptyDirVolumeSource{},
-				},
-			},
-			corev1.Volume{
 				Name: "sys",
 				VolumeSource: corev1.VolumeSource{
 					EmptyDir: &corev1.EmptyDirVolumeSource{},
@@ -485,15 +474,6 @@ func (r *DiscoveryDaemonSetReconciler) getVolumes(isTestEnvironment bool) []core
 	} else {
 		// In production, add hostPath volumes for device discovery
 		volumes = append(volumes,
-			corev1.Volume{
-				Name: "dev",
-				VolumeSource: corev1.VolumeSource{
-					HostPath: &corev1.HostPathVolumeSource{
-						Path: "/dev",
-						Type: &[]corev1.HostPathType{corev1.HostPathDirectory}[0],
-					},
-				},
-			},
 			corev1.Volume{
 				Name: "sys",
 				VolumeSource: corev1.VolumeSource{

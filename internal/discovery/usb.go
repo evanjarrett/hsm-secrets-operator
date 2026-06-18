@@ -74,11 +74,6 @@ func NewUSBDiscoverer() *USBDiscoverer {
 	}
 }
 
-// NewUSBDiscovererWithMethod creates a new USB device discoverer (method parameter is ignored, kept for compatibility)
-func NewUSBDiscovererWithMethod(method string) *USBDiscoverer {
-	return NewUSBDiscoverer()
-}
-
 // DiscoverDevices finds USB devices matching the given specification
 func (u *USBDiscoverer) DiscoverDevices(ctx context.Context, spec *hsmv1alpha1.USBDeviceSpec) ([]USBDevice, error) {
 	u.logger.V(1).Info("Starting USB device discovery",

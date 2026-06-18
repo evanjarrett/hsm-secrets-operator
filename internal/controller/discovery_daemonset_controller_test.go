@@ -160,12 +160,10 @@ var _ = Describe("DiscoveryDaemonSetReconciler", func() {
 			Expect(podNameEnv.ValueFrom.FieldRef.FieldPath).To(Equal("metadata.name"))
 
 			// Check volumes - includes discovery volumes and kubelet device plugin volumes
-			Expect(podSpec.Volumes).To(HaveLen(5))
-			var devVolume, sysVolume, udevVolume, devicePluginsVolume, pluginsRegistryVolume *corev1.Volume
+			Expect(podSpec.Volumes).To(HaveLen(4))
+			var sysVolume, udevVolume, devicePluginsVolume, pluginsRegistryVolume *corev1.Volume
 			for i := range podSpec.Volumes {
 				switch podSpec.Volumes[i].Name {
-				case "dev":
-					devVolume = &podSpec.Volumes[i]
 				case "sys":
 					sysVolume = &podSpec.Volumes[i]
 				case "run-udev":
@@ -177,23 +175,20 @@ var _ = Describe("DiscoveryDaemonSetReconciler", func() {
 				}
 			}
 
-			Expect(devVolume).NotTo(BeNil())
 			Expect(sysVolume).NotTo(BeNil())
 			Expect(udevVolume).NotTo(BeNil())
 			Expect(devicePluginsVolume).NotTo(BeNil())
 			Expect(pluginsRegistryVolume).NotTo(BeNil())
 
 			// In CI environments, volumes use EmptyDir; in production they use HostPath
-			if devVolume.HostPath != nil {
+			if sysVolume.HostPath != nil {
 				// Production environment - expect HostPath volumes
-				Expect(devVolume.HostPath.Path).To(Equal("/dev"))
 				Expect(sysVolume.HostPath.Path).To(Equal("/sys"))
 				Expect(udevVolume.HostPath.Path).To(Equal("/run/udev"))
 				Expect(devicePluginsVolume.HostPath.Path).To(Equal("/var/lib/kubelet/device-plugins"))
 				Expect(pluginsRegistryVolume.HostPath.Path).To(Equal("/var/lib/kubelet/plugins_registry"))
 			} else {
 				// CI/test environment - expect EmptyDir volumes
-				Expect(devVolume.EmptyDir).NotTo(BeNil())
 				Expect(sysVolume.EmptyDir).NotTo(BeNil())
 				Expect(udevVolume.EmptyDir).NotTo(BeNil())
 			}

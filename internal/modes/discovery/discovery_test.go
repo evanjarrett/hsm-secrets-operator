@@ -433,40 +433,29 @@ func BenchmarkSchemeOperations(b *testing.B) {
 
 func TestDiscoveryFlagParsing(t *testing.T) {
 	tests := []struct {
-		name                    string
-		args                    []string
-		expectedNodeName        string
-		expectedPodName         string
-		expectedNamespace       string
-		expectedSyncInterval    time.Duration
-		expectedDetectionMethod string
-		expectError             bool
+		name                 string
+		args                 []string
+		expectedNodeName     string
+		expectedPodName      string
+		expectedNamespace    string
+		expectedSyncInterval time.Duration
+		expectError          bool
 	}{
 		{
-			name:                    "basic flags",
-			args:                    []string{"--node-name=worker-1", "--pod-name=discovery-pod"},
-			expectedNodeName:        "worker-1",
-			expectedPodName:         "discovery-pod",
-			expectedNamespace:       "", // default not set in flags
-			expectedSyncInterval:    30 * time.Second,
-			expectedDetectionMethod: "auto",
-			expectError:             false,
+			name:                 "basic flags",
+			args:                 []string{"--node-name=worker-1", "--pod-name=discovery-pod"},
+			expectedNodeName:     "worker-1",
+			expectedPodName:      "discovery-pod",
+			expectedNamespace:    "", // default not set in flags
+			expectedSyncInterval: 30 * time.Second,
+			expectError:          false,
 		},
 		{
-			name:                    "custom sync interval",
-			args:                    []string{"--node-name=worker-2", "--sync-interval=1m"},
-			expectedNodeName:        "worker-2",
-			expectedSyncInterval:    1 * time.Minute,
-			expectedDetectionMethod: "auto",
-			expectError:             false,
-		},
-		{
-			name:                    "sysfs detection method",
-			args:                    []string{"--node-name=control-plane", "--detection-method=sysfs"},
-			expectedNodeName:        "control-plane",
-			expectedDetectionMethod: "sysfs",
-			expectedSyncInterval:    30 * time.Second,
-			expectError:             false,
+			name:                 "custom sync interval",
+			args:                 []string{"--node-name=worker-2", "--sync-interval=1m"},
+			expectedNodeName:     "worker-2",
+			expectedSyncInterval: 1 * time.Minute,
+			expectError:          false,
 		},
 	}
 
@@ -479,13 +468,11 @@ func TestDiscoveryFlagParsing(t *testing.T) {
 			var podName string
 			var podNamespace string
 			var syncInterval time.Duration
-			var detectionMethod string
 
 			fs.StringVar(&nodeName, "node-name", "", "Node name")
 			fs.StringVar(&podName, "pod-name", "", "Pod name")
 			fs.StringVar(&podNamespace, "pod-namespace", "", "Pod namespace")
 			fs.DurationVar(&syncInterval, "sync-interval", 30*time.Second, "Sync interval")
-			fs.StringVar(&detectionMethod, "detection-method", "auto", "Detection method")
 
 			err := fs.Parse(tt.args)
 			if tt.expectError {
@@ -496,7 +483,6 @@ func TestDiscoveryFlagParsing(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedNodeName, nodeName)
 			assert.Equal(t, tt.expectedSyncInterval, syncInterval)
-			assert.Equal(t, tt.expectedDetectionMethod, detectionMethod)
 
 			if tt.expectedPodName != "" {
 				assert.Equal(t, tt.expectedPodName, podName)

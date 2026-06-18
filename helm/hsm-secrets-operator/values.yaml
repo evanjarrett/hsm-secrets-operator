@@ -97,20 +97,9 @@ discovery:
   # Sync interval for device discovery (e.g., "30s", "1m", "5m")
   syncInterval: "30s"
 
-  # Security context for discovery pods (non-privileged in new architecture)
-  podSecurityContext:
-    runAsUser: 65534
-    runAsGroup: 65534
-    runAsNonRoot: true
-
-  # Container security context for discovery pods
-  securityContext:
-    privileged: true
-    allowPrivilegeEscalation: true
-    capabilities:
-      drop: []
-      add:
-        - SYS_ADMIN
+  # NOTE: Discovery pod security context is set programmatically by the manager
+  # (internal/controller/discovery_daemonset_controller.go). Discovery runs
+  # unprivileged (udev/sysfs based); no privileged access is required.
 
 # API server configuration
 api:

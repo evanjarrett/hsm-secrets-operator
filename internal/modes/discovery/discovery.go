@@ -81,11 +81,8 @@ func Run(args []string) error {
 	fs := flag.NewFlagSet("discovery", flag.ContinueOnError)
 
 	var syncInterval time.Duration
-	var detectionMethod string
 
 	fs.DurationVar(&syncInterval, "sync-interval", 30*time.Second, "Interval for device discovery sync")
-	fs.StringVar(&detectionMethod, "detection-method", "auto",
-		"USB detection method: 'sysfs' (native), 'legacy' (privileged), or 'auto'")
 
 	// Parse discovery-specific flags from the remaining unparsed arguments
 	if err := fs.Parse(args); err != nil {
@@ -95,8 +92,7 @@ func Run(args []string) error {
 	setupLog.Info("Starting HSM device discovery agent",
 		"node", discoveryConfig.NodeName,
 		"pod", discoveryConfig.PodName,
-		"sync-interval", syncInterval,
-		"detection-method", detectionMethod)
+		"sync-interval", syncInterval)
 
 	// Create Kubernetes client
 	config := ctrl.GetConfigOrDie()
@@ -109,7 +105,7 @@ func Run(args []string) error {
 	}
 
 	// Initialize USB discoverer
-	usbDiscoverer := discovery.NewUSBDiscovererWithMethod(detectionMethod)
+	usbDiscoverer := discovery.NewUSBDiscoverer()
 
 	// Start discovery loop
 	ctx := ctrl.SetupSignalHandler()

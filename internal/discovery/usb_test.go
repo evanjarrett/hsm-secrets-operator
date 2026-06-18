@@ -33,26 +33,6 @@ func TestNewUSBDiscoverer(t *testing.T) {
 	assert.NotNil(t, discoverer.activeSpecs)
 }
 
-func TestNewUSBDiscovererWithMethod(t *testing.T) {
-	tests := []struct {
-		name   string
-		method string
-	}{
-		{"auto detection", "auto"},
-		{"sysfs detection", "sysfs"},
-		{"legacy detection", "legacy"},
-		{"custom method", "custom"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			discoverer := NewUSBDiscovererWithMethod(tt.method)
-			assert.NotNil(t, discoverer)
-			// Method parameter is ignored for compatibility, udev is always used
-		})
-	}
-}
-
 func TestUSBDevice(t *testing.T) {
 	device := USBDevice{
 		VendorID:     "20a0",
