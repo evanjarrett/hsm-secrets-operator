@@ -31,6 +31,10 @@ import (
 	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/hsm"
 )
 
+const (
+	labelApp = "app"
+)
+
 // ManagerInterface defines the interface for HSM agent management
 // This allows for easier testing with mocks
 type ManagerInterface interface {
@@ -258,7 +262,7 @@ func (m *Manager) waitForAgentReady(ctx context.Context, agentName, namespace st
 			pods := &corev1.PodList{}
 			err := m.List(ctx, pods,
 				client.InNamespace(namespace),
-				client.MatchingLabels{"app": agentName},
+				client.MatchingLabels{labelApp: agentName},
 			)
 			if err != nil {
 				continue
@@ -330,7 +334,7 @@ func (m *Manager) isAgentHealthy(ctx context.Context, agentInfo *AgentInfo) bool
 	pods := &corev1.PodList{}
 	err := m.List(ctx, pods,
 		client.InNamespace(agentInfo.Namespace),
-		client.MatchingLabels{"app": agentInfo.AgentName},
+		client.MatchingLabels{labelApp: agentInfo.AgentName},
 	)
 	if err != nil {
 		return false

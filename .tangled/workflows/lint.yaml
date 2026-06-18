@@ -13,7 +13,7 @@ steps:
     environment:
       CGO_ENABLED: "1"
     command: |
-      apt-get update && apt-get install -y libudev-dev
+      go version
       go mod download
       make install-linter
 

@@ -19,6 +19,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"time"
@@ -79,7 +80,7 @@ func (s *GRPCServer) Start(ctx context.Context) error {
 	}
 
 	// Configure server with security interceptors
-	var serverOptions []grpc.ServerOption
+	serverOptions := make([]grpc.ServerOption, 0, 3)
 
 	// Add security interceptors
 	serverOptions = append(serverOptions,
@@ -180,9 +181,7 @@ func (s *GRPCServer) ReadSecret(ctx context.Context, req *hsmv1.ReadSecretReques
 
 	// Convert hsm.SecretData to protobuf format
 	pbData := make(map[string][]byte)
-	for key, value := range data {
-		pbData[key] = value
-	}
+	maps.Copy(pbData, data)
 
 	s.logger.V(1).Info("Successfully read secret", "path", req.Path, "keys_count", len(pbData))
 
@@ -207,9 +206,7 @@ func (s *GRPCServer) WriteSecret(ctx context.Context, req *hsmv1.WriteSecretRequ
 
 	// Convert protobuf format to hsm.SecretData
 	hsmData := make(hsm.SecretData)
-	for key, value := range req.SecretData.Data {
-		hsmData[key] = value
-	}
+	maps.Copy(hsmData, req.SecretData.Data)
 
 	// Convert protobuf metadata to hsm.SecretMetadata
 	var metadata *hsm.SecretMetadata

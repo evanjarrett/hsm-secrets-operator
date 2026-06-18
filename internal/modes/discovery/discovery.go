@@ -67,6 +67,15 @@ type PodDiscoveryReport struct {
 const (
 	// DeviceReportAnnotation is the annotation key used by discovery pods
 	DeviceReportAnnotation = "hsm.j5t.io/device-report"
+
+	// keyVendorID is the DeviceInfo key for the USB vendor ID
+	keyVendorID = "vendor-id"
+	// keyProductID is the DeviceInfo key for the USB product ID
+	keyProductID = "product-id"
+	// discoveryTypeUSB is the discovery-type value for USB-discovered devices
+	discoveryTypeUSB = "usb"
+	// labelHostname is the well-known Kubernetes node hostname label
+	labelHostname = "kubernetes.io/hostname"
 )
 
 // Run starts the discovery mode
@@ -330,11 +339,11 @@ func (d *DiscoveryAgent) discoverUSBDevices(
 			LastSeen:     metav1.Now(),
 			Available:    true,
 			DeviceInfo: map[string]string{
-				"vendor-id":      usbDev.VendorID,
-				"product-id":     usbDev.ProductID,
+				keyVendorID:      usbDev.VendorID,
+				keyProductID:     usbDev.ProductID,
 				"manufacturer":   usbDev.Manufacturer,
 				"product":        usbDev.Product,
-				"discovery-type": "usb",
+				"discovery-type": discoveryTypeUSB,
 			},
 		}
 
@@ -386,7 +395,7 @@ func (d *DiscoveryAgent) shouldDiscoverOnNode(hsmDevice *hsmv1alpha1.HSMDevice) 
 	// This is a simplified check - in production, you'd want to fetch
 	// the actual node labels and compare them
 	for key, value := range hsmDevice.Spec.NodeSelector {
-		if key == "kubernetes.io/hostname" && value == d.nodeName {
+		if key == labelHostname && value == d.nodeName {
 			return true
 		}
 	}

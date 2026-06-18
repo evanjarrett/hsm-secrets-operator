@@ -83,14 +83,14 @@ func parseTimestampFromMetadata(metadata *hsm.SecretMetadata) int64 {
 	}
 
 	// Try RFC3339 timestamp first
-	if syncTimestamp, exists := metadata.Labels["sync.timestamp"]; exists {
+	if syncTimestamp, exists := metadata.Labels[metaSyncTimestamp]; exists {
 		if parsedTime, err := time.Parse(time.RFC3339, syncTimestamp); err == nil {
 			return parsedTime.Unix()
 		}
 	}
 
 	// Fall back to Unix timestamp in sync.version
-	if syncVersion, exists := metadata.Labels["sync.version"]; exists {
+	if syncVersion, exists := metadata.Labels[metaSyncVersion]; exists {
 		var timestamp int64
 		if n, err := fmt.Sscanf(syncVersion, "%d", &timestamp); n == 1 && err == nil {
 			return timestamp
@@ -105,7 +105,7 @@ func isSecretDeleted(metadata *hsm.SecretMetadata) bool {
 	if metadata == nil || metadata.Labels == nil {
 		return false
 	}
-	return metadata.Labels["sync.deleted"] == "true"
+	return metadata.Labels[metaSyncDeleted] == keyTrue
 }
 
 // parseVersionFromMetadata extracts the sync.version counter (0 if absent).
@@ -113,7 +113,7 @@ func parseVersionFromMetadata(metadata *hsm.SecretMetadata) int64 {
 	if metadata == nil || metadata.Labels == nil {
 		return 0
 	}
-	if syncVersion, exists := metadata.Labels["sync.version"]; exists {
+	if syncVersion, exists := metadata.Labels[metaSyncVersion]; exists {
 		var version int64
 		if n, err := fmt.Sscanf(syncVersion, "%d", &version); n == 1 && err == nil {
 			return version
@@ -167,7 +167,7 @@ func (p *ProxyClient) findConsensusChecksum(results []checksumResult, path strin
 
 	if decision.Diverged {
 		p.logger.Info("Checksum inconsistency detected, using resolver verdict",
-			"path", path,
+			keyPath, path,
 			"winner", decision.WinningChecksum,
 			"strategy", decision.Strategy,
 			"outliers", decision.Outliers,
@@ -180,7 +180,7 @@ func (p *ProxyClient) findConsensusChecksum(results []checksumResult, path strin
 // logMultiDeviceOperation logs when operations are performed across multiple devices with sync information
 func (p *ProxyClient) logMultiDeviceOperation(deviceNames []string, selectedDevice, operationName, path, syncDetails string) {
 	p.logger.Info(fmt.Sprintf("%s found on multiple devices, using most recent version", operationName),
-		"path", path,
+		keyPath, path,
 		"devices", deviceNames,
 		"selected", selectedDevice,
 		"syncDetails", syncDetails)
@@ -261,7 +261,7 @@ func (p *ProxyClient) findMostRecentMetadataResult(results []metadataResult, pat
 // validatePathParam validates the path parameter and sends error if missing
 // Returns (path, true) on success, or ("", false) if path is missing (error already sent to client)
 func (p *ProxyClient) validatePathParam(c *gin.Context) (string, bool) {
-	path := c.Param("path")
+	path := c.Param(keyPath)
 	if path == "" {
 		p.server.sendError(c, http.StatusBadRequest, "missing_path", "Secret path is required", nil)
 		return "", false
@@ -279,7 +279,7 @@ func (p *ProxyClient) getAllAvailableGRPCClients(c *gin.Context) (map[string]hsm
 	devices, err := p.server.getAllAvailableAgents(c.Request.Context(), namespace)
 	if err != nil {
 		p.server.sendError(c, http.StatusServiceUnavailable, "no_agents", "No HSM agents available", map[string]any{
-			"error": err.Error(),
+			keyError: err.Error(),
 		})
 		return nil, false
 	}
@@ -298,7 +298,7 @@ func (p *ProxyClient) getAllAvailableGRPCClients(c *gin.Context) (map[string]hsm
 		// Close existing client for this device if it exists but is not connected
 		if oldClient, exists := p.grpcClients[device.SerialNumber]; exists {
 			if closeErr := oldClient.Close(); closeErr != nil {
-				p.logger.V(1).Info("Error closing old gRPC client", "node", device.NodeName, "serialNumber", device.SerialNumber, "error", closeErr)
+				p.logger.V(1).Info("Error closing old gRPC client", "node", device.NodeName, "serialNumber", device.SerialNumber, keyError, closeErr)
 			}
 			delete(p.grpcClients, device.SerialNumber)
 		}
@@ -306,7 +306,7 @@ func (p *ProxyClient) getAllAvailableGRPCClients(c *gin.Context) (map[string]hsm
 		// Create new gRPC client
 		grpcClient, err := p.server.createGRPCClient(c.Request.Context(), device)
 		if err != nil {
-			p.logger.V(1).Info("Failed to create gRPC client", "node", device.NodeName, "serialNumber", device.SerialNumber, "error", err)
+			p.logger.V(1).Info("Failed to create gRPC client", "node", device.NodeName, "serialNumber", device.SerialNumber, keyError, err)
 			continue
 		}
 
@@ -352,7 +352,7 @@ func (p *ProxyClient) GetInfo(c *gin.Context) {
 		if result.err == nil {
 			deviceInfos[result.deviceName] = result.info
 		} else {
-			p.logger.V(1).Info("Failed to get info from device", "device", result.deviceName, "error", result.err)
+			p.logger.V(1).Info("Failed to get info from device", "device", result.deviceName, keyError, result.err)
 		}
 	}
 
@@ -392,7 +392,7 @@ func (p *ProxyClient) ListSecrets(c *gin.Context) {
 	for i := 0; i < len(clients); i++ {
 		result := <-resultsChan
 		if result.err != nil {
-			p.logger.V(1).Info("Failed to list secrets from device", "device", result.deviceName, "error", result.err)
+			p.logger.V(1).Info("Failed to list secrets from device", "device", result.deviceName, keyError, result.err)
 			continue
 		}
 
@@ -442,7 +442,7 @@ func (p *ProxyClient) ReadSecret(c *gin.Context) {
 			// Read metadata for timestamp comparison
 			metadata, metaErr := grpcClient.ReadMetadata(c.Request.Context(), path)
 			if metaErr != nil {
-				p.logger.V(1).Info("Failed to read metadata for version comparison", "device", deviceName, "path", path, "error", metaErr)
+				p.logger.V(1).Info("Failed to read metadata for version comparison", "device", deviceName, keyPath, path, keyError, metaErr)
 			}
 
 			resultsChan <- secretResult{
@@ -458,7 +458,7 @@ func (p *ProxyClient) ReadSecret(c *gin.Context) {
 	for i := 0; i < len(clients); i++ {
 		result := <-resultsChan
 		if result.err != nil {
-			p.logger.V(1).Info("Failed to read secret from device", "device", result.deviceName, "path", path, "error", result.err)
+			p.logger.V(1).Info("Failed to read secret from device", "device", result.deviceName, keyPath, path, keyError, result.err)
 			continue
 		}
 		successfulResults = append(successfulResults, result)
@@ -507,7 +507,7 @@ func (p *ProxyClient) WriteSecret(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		p.server.sendError(c, http.StatusBadRequest, "parse_error", "Failed to parse request body", map[string]any{
-			"error": err.Error(),
+			keyError: err.Error(),
 		})
 		return
 	}
@@ -536,8 +536,8 @@ func (p *ProxyClient) WriteSecret(c *gin.Context) {
 	// currently holds for this path. This makes "newest" correct regardless of
 	// wall-clock skew or multiple writer replicas, since it never depends on a
 	// clock to order writes.
-	metadata.Labels["sync.version"] = fmt.Sprintf("%d", p.nextVersion(c.Request.Context(), clients, path))
-	metadata.Labels["sync.timestamp"] = time.Now().Format(time.RFC3339)
+	metadata.Labels[metaSyncVersion] = fmt.Sprintf("%d", p.nextVersion(c.Request.Context(), clients, path))
+	metadata.Labels[metaSyncTimestamp] = time.Now().Format(time.RFC3339)
 
 	// Write to all devices in parallel
 	results := p.writeToAllDevices(c.Request.Context(), clients, path, data, metadata)
@@ -548,7 +548,7 @@ func (p *ProxyClient) WriteSecret(c *gin.Context) {
 		if result.Error == nil {
 			successful++
 		} else {
-			p.logger.Error(result.Error, "Failed to write to device", "device", deviceName, "path", path)
+			p.logger.Error(result.Error, "Failed to write to device", "device", deviceName, keyPath, path)
 		}
 	}
 
@@ -556,7 +556,7 @@ func (p *ProxyClient) WriteSecret(c *gin.Context) {
 	if successful > 0 {
 		if successful < len(clients) {
 			p.logger.Info("Secret written to subset of devices",
-				"path", path,
+				keyPath, path,
 				"successful", successful,
 				"total", len(clients))
 		}
@@ -596,8 +596,8 @@ func (p *ProxyClient) DeleteSecret(c *gin.Context) {
 
 	for deviceName, result := range results {
 		deviceResults[deviceName] = map[string]any{
-			"success": result.Error == nil,
-			"error": func() string {
+			keySuccess: result.Error == nil,
+			keyError: func() string {
 				if result.Error != nil {
 					return result.Error.Error()
 				}
@@ -609,7 +609,7 @@ func (p *ProxyClient) DeleteSecret(c *gin.Context) {
 			successful++
 		} else {
 			errors = append(errors, fmt.Sprintf("%s: %v", deviceName, result.Error))
-			p.logger.Error(result.Error, "Failed to delete from device", "device", deviceName, "path", path)
+			p.logger.Error(result.Error, "Failed to delete from device", "device", deviceName, keyPath, path)
 		}
 	}
 
@@ -635,9 +635,9 @@ func (p *ProxyClient) DeleteSecret(c *gin.Context) {
 	} else {
 		// All devices failed
 		p.server.sendError(c, http.StatusInternalServerError, "delete_failed", "Failed to delete secret from any HSM device", map[string]any{
-			"errors":        errors,
-			"deviceResults": deviceResults,
-			"path":          path,
+			keyErrors:        errors,
+			keyDeviceResults: deviceResults,
+			keyPath:          path,
 		})
 	}
 }
@@ -649,7 +649,7 @@ func (p *ProxyClient) DeleteSecretKey(c *gin.Context) {
 		return
 	}
 
-	key := c.Param("key")
+	key := c.Param(keyKey)
 	if key == "" {
 		p.server.sendError(c, http.StatusBadRequest, "missing_key", "Key parameter is required", nil)
 		return
@@ -671,8 +671,8 @@ func (p *ProxyClient) DeleteSecretKey(c *gin.Context) {
 
 	for deviceName, result := range results {
 		deviceResults[deviceName] = map[string]any{
-			"success": result.Error == nil,
-			"error": func() string {
+			keySuccess: result.Error == nil,
+			keyError: func() string {
 				if result.Error != nil {
 					return result.Error.Error()
 				}
@@ -684,17 +684,17 @@ func (p *ProxyClient) DeleteSecretKey(c *gin.Context) {
 			successful++
 		} else {
 			errors = append(errors, fmt.Sprintf("%s: %v", deviceName, result.Error))
-			p.logger.Error(result.Error, "Failed to delete key from device", "device", deviceName, "path", path, "key", key)
+			p.logger.Error(result.Error, "Failed to delete key from device", "device", deviceName, keyPath, path, keyKey, key)
 		}
 	}
 
 	// Consider the operation successful if we deleted from at least one device
 	if successful > 0 {
 		response := map[string]any{
-			"path":          path,
-			"key":           key,
-			"devices":       len(clients),
-			"deviceResults": deviceResults,
+			keyPath:          path,
+			keyKey:           key,
+			"devices":        len(clients),
+			keyDeviceResults: deviceResults,
 		}
 		if len(errors) > 0 {
 			response["warnings"] = errors
@@ -711,10 +711,10 @@ func (p *ProxyClient) DeleteSecretKey(c *gin.Context) {
 	} else {
 		// All devices failed
 		p.server.sendError(c, http.StatusInternalServerError, "delete_key_failed", "Failed to delete key from any HSM device", map[string]any{
-			"errors":        errors,
-			"deviceResults": deviceResults,
-			"path":          path,
-			"key":           key,
+			keyErrors:        errors,
+			keyDeviceResults: deviceResults,
+			keyPath:          path,
+			keyKey:           key,
 		})
 	}
 }
@@ -775,7 +775,7 @@ func (p *ProxyClient) ReadMetadata(c *gin.Context) {
 	for i := 0; i < len(clients); i++ {
 		result := <-resultsChan
 		if result.err != nil {
-			p.logger.V(1).Info("Failed to read metadata from device", "device", result.deviceName, "path", path, "error", result.err)
+			p.logger.V(1).Info("Failed to read metadata from device", "device", result.deviceName, keyPath, path, keyError, result.err)
 			continue
 		}
 		successfulResults = append(successfulResults, result)
@@ -822,7 +822,7 @@ func (p *ProxyClient) GetChecksum(c *gin.Context) {
 	for i := 0; i < len(clients); i++ {
 		result := <-resultsChan
 		if result.err != nil {
-			p.logger.V(1).Info("Failed to get checksum from device", "device", result.deviceName, "path", path, "error", result.err)
+			p.logger.V(1).Info("Failed to get checksum from device", "device", result.deviceName, keyPath, path, keyError, result.err)
 			continue
 		}
 		successfulResults = append(successfulResults, result)
@@ -902,7 +902,7 @@ func (p *ProxyClient) CleanupDisconnectedClients() {
 		if !client.IsConnected() {
 			p.logger.V(1).Info("Removing disconnected gRPC client", "device", deviceName)
 			if closeErr := client.Close(); closeErr != nil {
-				p.logger.V(1).Info("Error closing disconnected gRPC client", "device", deviceName, "error", closeErr)
+				p.logger.V(1).Info("Error closing disconnected gRPC client", "device", deviceName, keyError, closeErr)
 			}
 			delete(p.grpcClients, deviceName)
 		}
@@ -955,9 +955,9 @@ func (p *ProxyClient) tombstoneDeleteFromAllDevices(ctx context.Context, clients
 	// Create tombstone metadata
 	tombstoneMetadata := &hsm.SecretMetadata{
 		Labels: map[string]string{
-			"sync.deleted":   "true",
-			"sync.timestamp": time.Now().Format(time.RFC3339),
-			"sync.version":   "0",
+			metaSyncDeleted:   keyTrue,
+			metaSyncTimestamp: time.Now().Format(time.RFC3339),
+			metaSyncVersion:   "0",
 		},
 	}
 
@@ -972,7 +972,7 @@ func (p *ProxyClient) tombstoneDeleteFromAllDevices(ctx context.Context, clients
 			if deleteErr := client.DeleteSecret(ctx, path); deleteErr != nil {
 				// If delete fails, still try to write tombstone metadata
 				p.logger.V(1).Info("Failed to delete secret data, will still create tombstone",
-					"device", deviceName, "path", path, "error", deleteErr)
+					"device", deviceName, keyPath, path, keyError, deleteErr)
 			}
 
 			// Write tombstone metadata (empty data with deletion markers)
@@ -999,21 +999,21 @@ func (p *ProxyClient) ChangePIN(c *gin.Context) {
 	// Parse request body
 	var req ChangePINRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		p.server.sendError(c, http.StatusBadRequest, "invalid_request", "Invalid request format", map[string]any{"error": err.Error()})
+		p.server.sendError(c, http.StatusBadRequest, "invalid_request", "Invalid request format", map[string]any{keyError: err.Error()})
 		return
 	}
 
 	// Validate request
 	if req.OldPIN == "" {
-		p.server.sendError(c, http.StatusBadRequest, "missing_old_pin", "Missing old PIN", map[string]any{"error": "old_pin is required"})
+		p.server.sendError(c, http.StatusBadRequest, "missing_old_pin", "Missing old PIN", map[string]any{keyError: "old_pin is required"})
 		return
 	}
 	if req.NewPIN == "" {
-		p.server.sendError(c, http.StatusBadRequest, "missing_new_pin", "Missing new PIN", map[string]any{"error": "new_pin is required"})
+		p.server.sendError(c, http.StatusBadRequest, "missing_new_pin", "Missing new PIN", map[string]any{keyError: "new_pin is required"})
 		return
 	}
 	if req.OldPIN == req.NewPIN {
-		p.server.sendError(c, http.StatusBadRequest, "invalid_pin_change", "Invalid PIN change", map[string]any{"error": "new PIN must be different from old PIN"})
+		p.server.sendError(c, http.StatusBadRequest, "invalid_pin_change", "Invalid PIN change", map[string]any{keyError: "new PIN must be different from old PIN"})
 		return
 	}
 
@@ -1044,14 +1044,14 @@ func (p *ProxyClient) ChangePIN(c *gin.Context) {
 	if len(errors) > 0 {
 		if successCount == 0 {
 			// All devices failed
-			p.server.sendError(c, http.StatusInternalServerError, "pin_change_failed", "PIN change failed on all devices", map[string]any{"errors": errors})
+			p.server.sendError(c, http.StatusInternalServerError, "pin_change_failed", "PIN change failed on all devices", map[string]any{keyErrors: errors})
 		} else {
 			// Some devices succeeded, some failed
 			response := map[string]any{
 				"success_count": successCount,
 				"total_count":   len(clients),
-				"errors":        errors,
-				"message":       "PIN changed successfully on some devices, but failed on others. Manual intervention may be required.",
+				keyErrors:       errors,
+				keyMessage:      "PIN changed successfully on some devices, but failed on others. Manual intervention may be required.",
 			}
 			p.server.sendResponse(c, http.StatusPartialContent, "Partial PIN change success", response)
 		}
@@ -1062,7 +1062,7 @@ func (p *ProxyClient) ChangePIN(c *gin.Context) {
 	response := map[string]any{
 		"success_count": successCount,
 		"total_count":   len(clients),
-		"message":       "PIN changed successfully on all HSM devices",
+		keyMessage:      "PIN changed successfully on all HSM devices",
 	}
 
 	p.logger.Info("PIN change completed successfully on all devices", "deviceCount", successCount)

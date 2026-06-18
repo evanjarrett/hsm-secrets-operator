@@ -95,9 +95,9 @@ func (r *DiscoveryDaemonSetReconciler) ensureHSMPool(ctx context.Context, hsmDev
 			Name:      poolName,
 			Namespace: hsmDevice.Namespace,
 			Labels: map[string]string{
-				"app.kubernetes.io/name":      "hsm-secrets-operator",
-				"app.kubernetes.io/component": "pool",
-				"hsm.j5t.io/device":           hsmDevice.Name,
+				labelAppName:      appNameHSMOperator,
+				labelAppComponent: componentPool,
+				labelHSMDevice:    hsmDevice.Name,
 			},
 		},
 		Spec: hsmv1alpha1.HSMPoolSpec{
@@ -116,7 +116,7 @@ func (r *DiscoveryDaemonSetReconciler) ensureHSMPool(ctx context.Context, hsmDev
 
 	if errors.IsNotFound(err) {
 		// Create new HSMPool
-		logger.Info("Creating HSMPool for HSMDevice", "device", hsmDevice.Name, "pool", poolName)
+		logger.Info("Creating HSMPool for HSMDevice", "device", hsmDevice.Name, componentPool, poolName)
 		if err := r.Create(ctx, desired); err != nil {
 			return fmt.Errorf("failed to create HSMPool: %w", err)
 		}
@@ -146,7 +146,7 @@ func (r *DiscoveryDaemonSetReconciler) ensureHSMPool(ctx context.Context, hsmDev
 	}
 
 	if needsUpdate {
-		logger.Info("Updating HSMPool for HSMDevice", "device", hsmDevice.Name, "pool", poolName)
+		logger.Info("Updating HSMPool for HSMDevice", "device", hsmDevice.Name, componentPool, poolName)
 		if err := r.Update(ctx, existing); err != nil {
 			return fmt.Errorf("failed to update HSMPool: %w", err)
 		}
@@ -179,32 +179,32 @@ func (r *DiscoveryDaemonSetReconciler) ensureDiscoveryDaemonSet(ctx context.Cont
 			Name:      daemonSetName,
 			Namespace: hsmDevice.Namespace,
 			Labels: map[string]string{
-				"app.kubernetes.io/name":      "hsm-secrets-operator",
-				"app.kubernetes.io/component": "discovery",
-				"hsm.j5t.io/device":           hsmDevice.Name,
+				labelAppName:      appNameHSMOperator,
+				labelAppComponent: componentDiscovery,
+				labelHSMDevice:    hsmDevice.Name,
 			},
 		},
 		Spec: appsv1.DaemonSetSpec{
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
-					"app.kubernetes.io/name":      "hsm-secrets-operator",
-					"app.kubernetes.io/component": "discovery",
-					"hsm.j5t.io/device":           hsmDevice.Name,
+					labelAppName:      appNameHSMOperator,
+					labelAppComponent: componentDiscovery,
+					labelHSMDevice:    hsmDevice.Name,
 				},
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
-						"app.kubernetes.io/name":      "hsm-secrets-operator",
-						"app.kubernetes.io/component": "discovery",
-						"hsm.j5t.io/device":           hsmDevice.Name,
+						labelAppName:      appNameHSMOperator,
+						labelAppComponent: componentDiscovery,
+						labelHSMDevice:    hsmDevice.Name,
 					},
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: r.ServiceAccountName,
 					Containers: []corev1.Container{
 						{
-							Name:  "discovery",
+							Name:  componentDiscovery,
 							Image: discoveryImage,
 							Args:  []string{"--mode=discovery"},
 							Env: []corev1.EnvVar{
@@ -235,22 +235,22 @@ func (r *DiscoveryDaemonSetReconciler) ensureDiscoveryDaemonSet(ctx context.Cont
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
-									Name:      "sys",
+									Name:      volumeNameSys,
 									MountPath: "/sys",
 									ReadOnly:  true,
 								},
 								{
-									Name:      "run-udev",
+									Name:      volumeNameRunUdev,
 									MountPath: "/run/udev",
 									ReadOnly:  true,
 								},
 								// Kubelet device plugin sockets for device plugin registration
 								{
-									Name:      "device-plugins",
+									Name:      volumeNameDevicePlugins,
 									MountPath: "/var/lib/kubelet/device-plugins",
 								},
 								{
-									Name:      "plugins-registry",
+									Name:      volumeNamePluginsRegistry,
 									MountPath: "/var/lib/kubelet/plugins_registry",
 								},
 							},
@@ -368,14 +368,14 @@ func (r *DiscoveryDaemonSetReconciler) findDevicesForDaemonSet(ctx context.Conte
 	}
 
 	// Check if this is a discovery DaemonSet
-	deviceName, exists := daemonSet.Labels["hsm.j5t.io/device"]
+	deviceName, exists := daemonSet.Labels[labelHSMDevice]
 	if !exists {
 		return nil
 	}
 
 	// Check if this has the discovery component label
-	component, exists := daemonSet.Labels["app.kubernetes.io/component"]
-	if !exists || component != "discovery" {
+	component, exists := daemonSet.Labels[labelAppComponent]
+	if !exists || component != componentDiscovery {
 		return nil
 	}
 
@@ -398,14 +398,14 @@ func (r *DiscoveryDaemonSetReconciler) findDevicesForHSMPool(ctx context.Context
 	}
 
 	// Check if this is a pool managed by this controller
-	deviceName, exists := hsmPool.Labels["hsm.j5t.io/device"]
+	deviceName, exists := hsmPool.Labels[labelHSMDevice]
 	if !exists {
 		return nil
 	}
 
 	// Check if this has the pool component label
-	component, exists := hsmPool.Labels["app.kubernetes.io/component"]
-	if !exists || component != "pool" {
+	component, exists := hsmPool.Labels[labelAppComponent]
+	if !exists || component != componentPool {
 		return nil
 	}
 
@@ -459,13 +459,13 @@ func (r *DiscoveryDaemonSetReconciler) getVolumes(isTestEnvironment bool) []core
 		// In test environment, use emptyDir volumes for testing
 		volumes = append(volumes,
 			corev1.Volume{
-				Name: "sys",
+				Name: volumeNameSys,
 				VolumeSource: corev1.VolumeSource{
 					EmptyDir: &corev1.EmptyDirVolumeSource{},
 				},
 			},
 			corev1.Volume{
-				Name: "run-udev",
+				Name: volumeNameRunUdev,
 				VolumeSource: corev1.VolumeSource{
 					EmptyDir: &corev1.EmptyDirVolumeSource{},
 				},
@@ -475,7 +475,7 @@ func (r *DiscoveryDaemonSetReconciler) getVolumes(isTestEnvironment bool) []core
 		// In production, add hostPath volumes for device discovery
 		volumes = append(volumes,
 			corev1.Volume{
-				Name: "sys",
+				Name: volumeNameSys,
 				VolumeSource: corev1.VolumeSource{
 					HostPath: &corev1.HostPathVolumeSource{
 						Path: "/sys",
@@ -484,7 +484,7 @@ func (r *DiscoveryDaemonSetReconciler) getVolumes(isTestEnvironment bool) []core
 				},
 			},
 			corev1.Volume{
-				Name: "run-udev",
+				Name: volumeNameRunUdev,
 				VolumeSource: corev1.VolumeSource{
 					HostPath: &corev1.HostPathVolumeSource{
 						Path: "/run/udev",
@@ -494,7 +494,7 @@ func (r *DiscoveryDaemonSetReconciler) getVolumes(isTestEnvironment bool) []core
 			},
 			// Kubelet device plugin sockets for device plugin registration
 			corev1.Volume{
-				Name: "device-plugins",
+				Name: volumeNameDevicePlugins,
 				VolumeSource: corev1.VolumeSource{
 					HostPath: &corev1.HostPathVolumeSource{
 						Path: "/var/lib/kubelet/device-plugins",
@@ -503,7 +503,7 @@ func (r *DiscoveryDaemonSetReconciler) getVolumes(isTestEnvironment bool) []core
 				},
 			},
 			corev1.Volume{
-				Name: "plugins-registry",
+				Name: volumeNamePluginsRegistry,
 				VolumeSource: corev1.VolumeSource{
 					HostPath: &corev1.HostPathVolumeSource{
 						Path: "/var/lib/kubelet/plugins_registry",

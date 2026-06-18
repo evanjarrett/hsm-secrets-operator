@@ -159,7 +159,7 @@ func (s *Server) handleMirrorSync(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil && err.Error() != "EOF" {
 		s.sendError(c, http.StatusBadRequest, "invalid_request", "Invalid request body", map[string]any{
-			"error": err.Error(),
+			keyError: err.Error(),
 		})
 		return
 	}
@@ -188,7 +188,7 @@ func (s *Server) handleMirrorSync(c *gin.Context) {
 		"triggered": true,
 		"reason":    reason,
 		"force":     req.Force,
-		"message":   "Mirror synchronization triggered successfully",
+		keyMessage:  "Mirror synchronization triggered successfully",
 	}
 
 	s.sendResponse(c, http.StatusOK, "Mirror sync triggered", response)
@@ -243,7 +243,7 @@ func (s *Server) corsMiddleware() gin.HandlerFunc {
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
-		if c.Request.Method == "OPTIONS" {
+		if c.Request.Method == methodOptions {
 			c.AbortWithStatus(204)
 			return
 		}

@@ -304,7 +304,7 @@ func (r *HSMPoolReconciler) updatePoolStatus(ctx context.Context, hsmPool *hsmv1
 	if errorMsg != "" {
 		conditionStatus = metav1.ConditionFalse
 		message = errorMsg
-		reason = "Error"
+		reason = phaseError
 	}
 
 	// Find or create condition
@@ -378,7 +378,7 @@ func (r *HSMPoolReconciler) findPoolsForPod(ctx context.Context, obj client.Obje
 		return nil
 	}
 
-	if pod.Labels["app.kubernetes.io/component"] != "discovery" {
+	if pod.Labels[labelAppComponent] != componentDiscovery {
 		return nil
 	}
 

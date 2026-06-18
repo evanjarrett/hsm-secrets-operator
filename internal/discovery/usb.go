@@ -30,6 +30,10 @@ import (
 	hsmv1alpha1 "tangled.org/evan.jarrett.net/hsm-secrets-operator/api/v1alpha1"
 )
 
+const (
+	picoHSMVendorID = "20a0" // Pico HSM vendor ID
+)
+
 // USBDevice represents a discovered USB device
 type USBDevice struct {
 	VendorID     string
@@ -145,7 +149,7 @@ func (u *USBDiscoverer) matchesSpec(device USBDevice, spec *hsmv1alpha1.USBDevic
 func GetWellKnownHSMSpecs() map[hsmv1alpha1.HSMDeviceType]*hsmv1alpha1.USBDeviceSpec {
 	return map[hsmv1alpha1.HSMDeviceType]*hsmv1alpha1.USBDeviceSpec{
 		hsmv1alpha1.HSMDeviceTypePicoHSM: {
-			VendorID:  "20a0", // Pico HSM vendor ID
+			VendorID:  picoHSMVendorID,
 			ProductID: "4230", // Pico HSM product ID
 		},
 		hsmv1alpha1.HSMDeviceTypeSmartCardHSM: {

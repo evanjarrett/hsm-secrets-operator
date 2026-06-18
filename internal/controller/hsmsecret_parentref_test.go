@@ -24,10 +24,6 @@ import (
 	hsmv1alpha1 "tangled.org/evan.jarrett.net/hsm-secrets-operator/api/v1alpha1"
 )
 
-func stringPtr(s string) *string {
-	return &s
-}
-
 func TestShouldHandleSecret(t *testing.T) {
 	reconciler := &HSMSecretReconciler{
 		OperatorNamespace: "hsm-operator-system",
@@ -62,7 +58,7 @@ func TestShouldHandleSecret(t *testing.T) {
 				Spec: hsmv1alpha1.HSMSecretSpec{
 					ParentRef: &hsmv1alpha1.ParentReference{
 						Name:      "hsm-secrets-operator-controller-manager",
-						Namespace: stringPtr("hsm-operator-system"),
+						Namespace: new("hsm-operator-system"),
 					},
 				},
 			},
@@ -78,7 +74,7 @@ func TestShouldHandleSecret(t *testing.T) {
 				Spec: hsmv1alpha1.HSMSecretSpec{
 					ParentRef: &hsmv1alpha1.ParentReference{
 						Name:      "other-operator",
-						Namespace: stringPtr("hsm-operator-system"),
+						Namespace: new("hsm-operator-system"),
 					},
 				},
 			},
@@ -94,7 +90,7 @@ func TestShouldHandleSecret(t *testing.T) {
 				Spec: hsmv1alpha1.HSMSecretSpec{
 					ParentRef: &hsmv1alpha1.ParentReference{
 						Name:      "hsm-secrets-operator-controller-manager",
-						Namespace: stringPtr("other-operator-system"),
+						Namespace: new("other-operator-system"),
 					},
 				},
 			},

@@ -91,7 +91,7 @@ func (r *HSMPoolAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if hsmPool.Status.Phase == hsmv1alpha1.HSMPoolPhaseReady && len(hsmPool.Status.AggregatedDevices) > 0 {
 		// Ensure owner reference exists and get the HSMDevice
 		if len(hsmPool.OwnerReferences) == 0 {
-			logger.Error(fmt.Errorf("no owner references"), "HSMPool has no owner references", "pool", hsmPool.Name)
+			logger.Error(fmt.Errorf("no owner references"), "HSMPool has no owner references", componentPool, hsmPool.Name)
 			return ctrl.Result{}, nil
 		}
 
@@ -284,7 +284,7 @@ func (r *HSMPoolAgentReconciler) cleanupAgentDeploymentsByPattern(ctx context.Co
 	// Find and delete deployments that match this device
 	for _, deployment := range deploymentList.Items {
 		// Check if this is an agent deployment for this device
-		if deviceName, exists := deployment.Labels["hsm.j5t.io/device"]; exists && deviceName == hsmDevice.Name {
+		if deviceName, exists := deployment.Labels[labelHSMDevice]; exists && deviceName == hsmDevice.Name {
 			if err := r.Delete(ctx, &deployment); err != nil && !errors.IsNotFound(err) {
 				logger.Error(err, "Failed to delete agent deployment", "deployment", deployment.Name)
 			} else {
@@ -434,7 +434,7 @@ func (r *HSMPoolAgentReconciler) ensureAgentOnNode(ctx context.Context, hsmPool 
 		// Deployment exists - check if it's on the right node
 		if !r.isDeploymentOnNode(&deployment, device.NodeName) {
 			logger.Info("Agent on wrong node, recreating",
-				"agent", agentName,
+				componentAgent, agentName,
 				"currentNode", r.getDeploymentNode(&deployment),
 				"targetNode", device.NodeName,
 				"serial", device.SerialNumber)
@@ -457,7 +457,7 @@ func (r *HSMPoolAgentReconciler) ensureAgentOnNode(ctx context.Context, hsmPool 
 
 			if needsUpdate {
 				logger.Info("Agent needs updating, recreating",
-					"agent", agentName,
+					componentAgent, agentName,
 					"node", device.NodeName,
 					"serial", device.SerialNumber)
 
@@ -468,7 +468,7 @@ func (r *HSMPoolAgentReconciler) ensureAgentOnNode(ctx context.Context, hsmPool 
 			} else {
 				// Agent is up to date
 				logger.V(1).Info("Agent deployment is up to date",
-					"agent", agentName,
+					componentAgent, agentName,
 					"node", device.NodeName,
 					"serial", device.SerialNumber)
 				return nil
@@ -480,7 +480,7 @@ func (r *HSMPoolAgentReconciler) ensureAgentOnNode(ctx context.Context, hsmPool 
 
 	// Create agent deployment
 	logger.Info("Creating agent deployment",
-		"agent", agentName,
+		componentAgent, agentName,
 		"node", device.NodeName,
 		"serial", device.SerialNumber)
 
@@ -490,7 +490,7 @@ func (r *HSMPoolAgentReconciler) ensureAgentOnNode(ctx context.Context, hsmPool 
 // isDeploymentOnNode checks if a deployment is pinned to the specified node
 func (r *HSMPoolAgentReconciler) isDeploymentOnNode(deployment *appsv1.Deployment, nodeName string) bool {
 	if deployment.Spec.Template.Spec.NodeSelector != nil {
-		return deployment.Spec.Template.Spec.NodeSelector["kubernetes.io/hostname"] == nodeName
+		return deployment.Spec.Template.Spec.NodeSelector[labelHostname] == nodeName
 	}
 	return false
 }
@@ -498,7 +498,7 @@ func (r *HSMPoolAgentReconciler) isDeploymentOnNode(deployment *appsv1.Deploymen
 // getDeploymentNode returns the node name that a deployment is pinned to
 func (r *HSMPoolAgentReconciler) getDeploymentNode(deployment *appsv1.Deployment) string {
 	if deployment.Spec.Template.Spec.NodeSelector != nil {
-		return deployment.Spec.Template.Spec.NodeSelector["kubernetes.io/hostname"]
+		return deployment.Spec.Template.Spec.NodeSelector[labelHostname]
 	}
 	return ""
 }
@@ -547,7 +547,7 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 		fmt.Sprintf("hsm.j5t.io/%s", strings.ToLower(string(hsmDevice.Spec.DeviceType))),
 	)
 	logger.V(1).Info("Using extended resource for agent",
-		"agent", agentName,
+		componentAgent, agentName,
 		"resource", extendedResourceName)
 
 	// Get agent image from config or fallback to auto-detection
@@ -573,40 +573,40 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 			Name:      agentName,
 			Namespace: hsmPool.Namespace,
 			Labels: map[string]string{
-				"app":                         agentName,
-				"app.kubernetes.io/component": "hsm-agent",
-				"app.kubernetes.io/instance":  agentName,
-				"app.kubernetes.io/name":      "hsm-agent",
-				"app.kubernetes.io/part-of":   "hsm-secrets-operator",
-				"hsm.j5t.io/device":           deviceName,
-				"hsm.j5t.io/serial-number":    specificDevice.SerialNumber,
-				"hsm.j5t.io/device-path":      sanitizeLabelValue(specificDevice.DevicePath),
+				labelApp:                     agentName,
+				labelAppComponent:            AgentNamePrefix,
+				"app.kubernetes.io/instance": agentName,
+				labelAppName:                 AgentNamePrefix,
+				"app.kubernetes.io/part-of":  appNameHSMOperator,
+				labelHSMDevice:               deviceName,
+				"hsm.j5t.io/serial-number":   specificDevice.SerialNumber,
+				"hsm.j5t.io/device-path":     sanitizeLabelValue(specificDevice.DevicePath),
 			},
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
-					"app": agentName,
+					labelApp: agentName,
 				},
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
-						"app":                         agentName,
-						"app.kubernetes.io/component": "hsm-agent",
-						"app.kubernetes.io/instance":  agentName,
-						"app.kubernetes.io/name":      "hsm-agent",
-						"app.kubernetes.io/part-of":   "hsm-secrets-operator",
-						"hsm.j5t.io/device":           deviceName,
-						"hsm.j5t.io/serial-number":    specificDevice.SerialNumber,
-						"hsm.j5t.io/device-path":      sanitizeLabelValue(specificDevice.DevicePath),
+						labelApp:                     agentName,
+						labelAppComponent:            AgentNamePrefix,
+						"app.kubernetes.io/instance": agentName,
+						labelAppName:                 AgentNamePrefix,
+						"app.kubernetes.io/part-of":  appNameHSMOperator,
+						labelHSMDevice:               deviceName,
+						"hsm.j5t.io/serial-number":   specificDevice.SerialNumber,
+						"hsm.j5t.io/device-path":     sanitizeLabelValue(specificDevice.DevicePath),
 					},
 				},
 				Spec: corev1.PodSpec{
 					// Pin to the specific node with the HSM device
 					NodeSelector: map[string]string{
-						"kubernetes.io/hostname": targetNode,
+						labelHostname: targetNode,
 					},
 					// Affinity for better scheduling
 					Affinity: &corev1.Affinity{
@@ -616,7 +616,7 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 									{
 										MatchExpressions: []corev1.NodeSelectorRequirement{
 											{
-												Key:      "kubernetes.io/hostname",
+												Key:      labelHostname,
 												Operator: corev1.NodeSelectorOpIn,
 												Values:   []string{targetNode},
 											},
@@ -634,7 +634,7 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 					ServiceAccountName: r.ServiceAccountName,
 					Containers: []corev1.Container{
 						{
-							Name:  "agent",
+							Name:  componentAgent,
 							Image: agentImage,
 							Args:  r.buildAgentArgs(ctx, hsmPool, deviceName),
 							Env:   []corev1.EnvVar{},
@@ -806,7 +806,7 @@ func (r *HSMPoolAgentReconciler) deploymentNeedsUpdateForDevice(deployment *apps
 	nodeMatches := false
 	for _, term := range nodeSelector.NodeSelectorTerms {
 		for _, expr := range term.MatchExpressions {
-			if expr.Key == "kubernetes.io/hostname" && expr.Operator == corev1.NodeSelectorOpIn {
+			if expr.Key == labelHostname && expr.Operator == corev1.NodeSelectorOpIn {
 				if slices.Contains(expr.Values, aggregatedDevice.NodeName) {
 					nodeMatches = true
 				}
@@ -820,7 +820,7 @@ func (r *HSMPoolAgentReconciler) deploymentNeedsUpdateForDevice(deployment *apps
 
 	// Check device path in volume mounts
 	for _, vol := range deployment.Spec.Template.Spec.Volumes {
-		if vol.Name == "hsm-device" && vol.HostPath != nil {
+		if vol.Name == volumeNameHSMDevice && vol.HostPath != nil {
 			if vol.HostPath.Path != aggregatedDevice.DevicePath {
 				return true // Device path changed
 			}
@@ -924,7 +924,7 @@ func (r *HSMPoolAgentReconciler) findPoolsForDeployment(ctx context.Context, obj
 	}
 
 	// Check if this is an HSM agent deployment
-	deviceName, exists := deployment.Labels["hsm.j5t.io/device"]
+	deviceName, exists := deployment.Labels[labelHSMDevice]
 	if !exists {
 		return nil
 	}

@@ -43,6 +43,15 @@ const (
 	BearerPrefix = "Bearer "
 )
 
+// JSON response field keys
+const (
+	keySuccess = "success"
+	keyError   = "error"
+	keyCode    = "code"
+	keyMessage = "message"
+	keyDetails = "details"
+)
+
 // Claims represents JWT claims for API authentication
 type Claims struct {
 	ServiceAccount string `json:"sub"`
@@ -215,10 +224,10 @@ func (a *APIAuthenticator) AuthMiddleware() gin.HandlerFunc {
 		if authHeader == "" {
 			a.logger.Info("Missing authorization header", "path", c.Request.URL.Path, "client_ip", c.ClientIP())
 			c.JSON(http.StatusUnauthorized, gin.H{
-				"success": false,
-				"error": gin.H{
-					"code":    "MISSING_AUTH_HEADER",
-					"message": "missing authorization header",
+				keySuccess: false,
+				keyError: gin.H{
+					keyCode:    "MISSING_AUTH_HEADER",
+					keyMessage: "missing authorization header",
 				},
 			})
 			c.Abort()
@@ -228,10 +237,10 @@ func (a *APIAuthenticator) AuthMiddleware() gin.HandlerFunc {
 		if !strings.HasPrefix(authHeader, BearerPrefix) {
 			a.logger.Info("Invalid authorization header format", "path", c.Request.URL.Path, "client_ip", c.ClientIP())
 			c.JSON(http.StatusUnauthorized, gin.H{
-				"success": false,
-				"error": gin.H{
-					"code":    "INVALID_AUTH_FORMAT",
-					"message": "invalid authorization header format, expected 'Bearer <token>'",
+				keySuccess: false,
+				keyError: gin.H{
+					keyCode:    "INVALID_AUTH_FORMAT",
+					keyMessage: "invalid authorization header format, expected 'Bearer <token>'",
 				},
 			})
 			c.Abort()
@@ -245,11 +254,11 @@ func (a *APIAuthenticator) AuthMiddleware() gin.HandlerFunc {
 		if err != nil {
 			a.logger.Info("Token validation failed", "error", err, "path", c.Request.URL.Path, "client_ip", c.ClientIP())
 			c.JSON(http.StatusUnauthorized, gin.H{
-				"success": false,
-				"error": gin.H{
-					"code":    "INVALID_TOKEN",
-					"message": "authentication token is invalid or expired",
-					"details": gin.H{
+				keySuccess: false,
+				keyError: gin.H{
+					keyCode:    "INVALID_TOKEN",
+					keyMessage: "authentication token is invalid or expired",
+					keyDetails: gin.H{
 						"hint": "token may have expired, try clearing cache with: kubectl hsm auth clear",
 					},
 				},
@@ -303,12 +312,12 @@ func (a *APIAuthenticator) HandleTokenGeneration() gin.HandlerFunc {
 		var req TokenRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"success": false,
-				"error": gin.H{
-					"code":    "INVALID_REQUEST",
-					"message": "invalid request body",
-					"details": gin.H{
-						"error": err.Error(),
+				keySuccess: false,
+				keyError: gin.H{
+					keyCode:    "INVALID_REQUEST",
+					keyMessage: "invalid request body",
+					keyDetails: gin.H{
+						keyError: err.Error(),
 					},
 				},
 			})
@@ -320,12 +329,12 @@ func (a *APIAuthenticator) HandleTokenGeneration() gin.HandlerFunc {
 		if err != nil {
 			a.logger.Info("Token generation failed", "error", err, "client_ip", c.ClientIP())
 			c.JSON(http.StatusUnauthorized, gin.H{
-				"success": false,
-				"error": gin.H{
-					"code":    "TOKEN_GENERATION_FAILED",
-					"message": "failed to generate authentication token",
-					"details": gin.H{
-						"error": err.Error(),
+				keySuccess: false,
+				keyError: gin.H{
+					keyCode:    "TOKEN_GENERATION_FAILED",
+					keyMessage: "failed to generate authentication token",
+					keyDetails: gin.H{
+						keyError: err.Error(),
 					},
 				},
 			})

@@ -19,10 +19,10 @@ package api
 import (
 	"context"
 
-	"tangled.org/evan.jarrett.net/hsm-secrets-operator/api/v1alpha1"
-	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/hsm"
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/mock"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/api/v1alpha1"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/hsm"
 )
 
 // MockAgentManager provides a mock implementation of the agent manager interface

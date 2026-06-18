@@ -19,6 +19,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -129,9 +130,7 @@ func (c *GRPCClient) ReadSecret(ctx context.Context, path string) (hsm.SecretDat
 	// Convert protobuf format to hsm.SecretData
 	secretData := make(hsm.SecretData)
 	if resp.SecretData != nil {
-		for key, value := range resp.SecretData.Data {
-			secretData[key] = value
-		}
+		maps.Copy(secretData, resp.SecretData.Data)
 	}
 
 	return secretData, nil
@@ -144,9 +143,7 @@ func (c *GRPCClient) WriteSecret(ctx context.Context, path string, data hsm.Secr
 
 	// Convert hsm.SecretData to protobuf format
 	pbData := make(map[string][]byte)
-	for key, value := range data {
-		pbData[key] = value
-	}
+	maps.Copy(pbData, data)
 
 	req := &hsmv1.WriteSecretRequest{
 		Path: path,

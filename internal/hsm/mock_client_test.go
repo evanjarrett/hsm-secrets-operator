@@ -419,7 +419,7 @@ func TestMockClientDataRaceProtection(t *testing.T) {
 
 	// Writer goroutine
 	go func() {
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			data := SecretData{"key": []byte("value")}
 			_ = client.WriteSecret(ctx, "concurrent/test", data, nil)
 		}
@@ -428,7 +428,7 @@ func TestMockClientDataRaceProtection(t *testing.T) {
 
 	// Reader goroutine
 	go func() {
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			_, _ = client.ReadSecret(ctx, "concurrent/test")
 			_, _ = client.ListSecrets(ctx, "concurrent/")
 		}

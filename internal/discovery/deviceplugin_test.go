@@ -445,7 +445,7 @@ func TestUpdateDevicesRaceCondition(t *testing.T) {
 
 	// Goroutine 1: Update devices
 	go func() {
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			discoveredDevices := []hsmv1alpha1.DiscoveredDevice{
 				{
 					DevicePath:   "/dev/ttyUSB0",
@@ -461,7 +461,7 @@ func TestUpdateDevicesRaceCondition(t *testing.T) {
 
 	// Goroutine 2: Read devices
 	go func() {
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			manager.GetAvailableDevices()
 			manager.GetDevicesForNode("worker-1")
 		}
@@ -505,7 +505,7 @@ func BenchmarkGetAvailableDevices(b *testing.B) {
 
 	// Set up test data
 	discoveredDevices := make([]hsmv1alpha1.DiscoveredDevice, 100)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		discoveredDevices[i] = hsmv1alpha1.DiscoveredDevice{
 			DevicePath:   "/dev/ttyUSB0",
 			SerialNumber: "TEST123",

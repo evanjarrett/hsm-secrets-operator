@@ -83,7 +83,7 @@ func (s *Server) setupProxyRoutes() {
 func (s *Server) handleInfo(c *gin.Context) {
 	info := map[string]any{
 		"service":     "HSM Secrets Operator API",
-		"version":     "v1alpha1",
+		keyVersion:    "v1alpha1",
 		"mode":        "proxy",
 		"description": "Proxies HSM operations to agent pods",
 	}

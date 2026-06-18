@@ -8,9 +8,9 @@ import (
 	"os/signal"
 	"syscall"
 
+	ctrl "sigs.k8s.io/controller-runtime"
 	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/agent"
 	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/hsm"
-	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 func main() {

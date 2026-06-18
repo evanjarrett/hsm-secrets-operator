@@ -89,10 +89,6 @@ var _ = Describe("HSMSecret Controller", func() {
 	})
 })
 
-func testStringPtr(s string) *string {
-	return &s
-}
-
 // Unit tests for the refactored HSMSecretReconciler using standard Go testing
 func TestHSMSecretReconciler_Reconcile(t *testing.T) {
 	scheme := runtime.NewScheme()
@@ -128,7 +124,7 @@ func TestHSMSecretReconciler_Reconcile(t *testing.T) {
 					AutoSync: true,
 					ParentRef: &hsmv1alpha1.ParentReference{
 						Name:      "test-operator",
-						Namespace: testStringPtr("test-namespace"),
+						Namespace: new("test-namespace"),
 					},
 				},
 			},
@@ -208,7 +204,7 @@ func TestHSMSecretReconciler_ReconcileWithAgentManager(t *testing.T) {
 				AutoSync: true,
 				ParentRef: &hsmv1alpha1.ParentReference{
 					Name:      "test-operator",
-					Namespace: testStringPtr("test-namespace"),
+					Namespace: new("test-namespace"),
 				},
 			},
 		}

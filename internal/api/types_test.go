@@ -385,7 +385,7 @@ func BenchmarkCreateSecretRequest(b *testing.B) {
 
 func BenchmarkSecretList(b *testing.B) {
 	secrets := make([]SecretInfo, 1000)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		secrets[i] = SecretInfo{
 			Label: "secret-" + string(rune(i)),
 			ID:    uint32(i),

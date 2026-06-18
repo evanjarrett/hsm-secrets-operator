@@ -26,6 +26,11 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
+const (
+	keyUsername = "username"
+	keyPassword = "password"
+)
+
 // MockClient implements the Client interface for testing
 type MockClient struct {
 	logger    logr.Logger
@@ -55,15 +60,15 @@ func (m *MockClient) Initialize(ctx context.Context, config Config) error {
 
 	// Pre-populate with some test data
 	m.secrets["secrets/default/test-secret"] = SecretData{
-		"username": []byte("testuser"),
-		"password": []byte("testpass123"),
+		keyUsername: []byte("testuser"),
+		keyPassword: []byte("testpass123"),
 	}
 
 	m.secrets["secrets/production/database-credentials"] = SecretData{
-		"host":     []byte("db.example.com"),
-		"username": []byte("produser"),
-		"password": []byte("prod-secret-password"),
-		"database": []byte("application"),
+		"host":      []byte("db.example.com"),
+		keyUsername: []byte("produser"),
+		keyPassword: []byte("prod-secret-password"),
+		"database":  []byte("application"),
 	}
 
 	m.logger.Info("Mock HSM client initialized", "secretCount", len(m.secrets))

@@ -424,7 +424,7 @@ func (r *HSMSecretReconciler) buildSecret(hsmSecret *hsmv1alpha1.HSMSecret, secr
 
 	// Build labels starting with default operator labels
 	labels := map[string]string{
-		"managed-by": "hsm-secrets-operator",
+		"managed-by": appNameHSMOperator,
 		"hsm-path":   strings.ReplaceAll(hsmSecret.Name, "/", "_"),
 	}
 
@@ -469,7 +469,7 @@ func (r *HSMSecretReconciler) updateSecretWithMetadata(secret *corev1.Secret, hs
 	}
 
 	// Ensure essential operator labels are present
-	secret.Labels["managed-by"] = "hsm-secrets-operator"
+	secret.Labels["managed-by"] = appNameHSMOperator
 	secret.Labels["hsm-path"] = strings.ReplaceAll(hsmSecret.Name, "/", "_")
 
 	// Apply metadata to labels and annotations
