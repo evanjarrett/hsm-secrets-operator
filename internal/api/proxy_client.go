@@ -27,6 +27,7 @@ import (
 	"github.com/go-logr/logr"
 
 	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/reconcile"
 )
 
 // WriteResult represents the result of writing to a single device
@@ -107,47 +108,73 @@ func isSecretDeleted(metadata *hsm.SecretMetadata) bool {
 	return metadata.Labels["sync.deleted"] == "true"
 }
 
-// findConsensusChecksum finds the most common checksum among results and logs inconsistencies
-func (p *ProxyClient) findConsensusChecksum(results []checksumResult, path string) (string, error) {
+// parseVersionFromMetadata extracts the sync.version counter (0 if absent).
+func parseVersionFromMetadata(metadata *hsm.SecretMetadata) int64 {
+	if metadata == nil || metadata.Labels == nil {
+		return 0
+	}
+	if syncVersion, exists := metadata.Labels["sync.version"]; exists {
+		var version int64
+		if n, err := fmt.Sscanf(syncVersion, "%d", &version); n == 1 && err == nil {
+			return version
+		}
+	}
+	return 0
+}
+
+// nextVersion returns one greater than the highest sync.version any device
+// currently holds for path (so a fresh secret starts at 1). Read errors are
+// treated as version 0 — a missing or unreachable device must not lower the
+// counter.
+func (p *ProxyClient) nextVersion(ctx context.Context, clients map[string]hsm.Client, path string) int64 {
+	var maxVersion int64
+	for _, grpcClient := range clients {
+		metadata, err := grpcClient.ReadMetadata(ctx, path)
+		if err != nil {
+			continue
+		}
+		if v := parseVersionFromMetadata(metadata); v > maxVersion {
+			maxVersion = v
+		}
+	}
+	return maxVersion + 1
+}
+
+// findConsensusChecksum resolves the authoritative checksum across devices using
+// the shared reconcile strategy (majority for 3+ devices, last-write-wins for
+// 1-2). deviceCount is the number of available agents, not just the responders.
+func (p *ProxyClient) findConsensusChecksum(results []checksumResult, path string, deviceCount int) (string, error) {
 	if len(results) == 0 {
 		return "", fmt.Errorf("checksum not found on any HSM device")
 	}
 
-	// Count occurrences of each checksum
-	checksumCounts := make(map[string]int)
+	// Checksum reads carry no version metadata, so observations vote purely on
+	// the checksum value; majority (3+) still works, and 1-2 ties fall back to a
+	// deterministic device-id ordering inside the resolver.
+	obs := make([]reconcile.DeviceObservation, 0, len(results))
 	for _, result := range results {
-		checksumCounts[result.checksum]++
+		obs = append(obs, reconcile.DeviceObservation{
+			DeviceID: result.deviceName,
+			Present:  true,
+			Checksum: result.checksum,
+		})
 	}
 
-	// Find the most common checksum (consensus)
-	// In case of ties, prefer the first occurrence for deterministic behavior
-	var consensusChecksum string
-	var maxCount int
-	for _, result := range results {
-		count := checksumCounts[result.checksum]
-		if count > maxCount {
-			consensusChecksum = result.checksum
-			maxCount = count
-		}
+	decision := reconcile.Resolve(obs, deviceCount)
+	if !decision.Found {
+		return "", fmt.Errorf("checksum not found on any HSM device")
 	}
 
-	// Log checksum inconsistencies
-	if len(checksumCounts) > 1 {
-		inconsistentDevices := make([]string, 0)
-		for _, result := range results {
-			if result.checksum != consensusChecksum {
-				inconsistentDevices = append(inconsistentDevices, result.deviceName)
-			}
-		}
-		p.logger.Info("Checksum inconsistency detected, using consensus",
+	if decision.Diverged {
+		p.logger.Info("Checksum inconsistency detected, using resolver verdict",
 			"path", path,
-			"consensus", consensusChecksum,
-			"consensus_count", maxCount,
-			"total_devices", len(results),
-			"inconsistent_devices", inconsistentDevices)
+			"winner", decision.WinningChecksum,
+			"strategy", decision.Strategy,
+			"outliers", decision.Outliers,
+			"total_devices", deviceCount)
 	}
 
-	return consensusChecksum, nil
+	return decision.WinningChecksum, nil
 }
 
 // logMultiDeviceOperation logs when operations are performed across multiple devices with sync information
@@ -159,39 +186,44 @@ func (p *ProxyClient) logMultiDeviceOperation(deviceNames []string, selectedDevi
 		"syncDetails", syncDetails)
 }
 
-// findMostRecentSecretResult finds the most recent secret result based on metadata timestamps
-func (p *ProxyClient) findMostRecentSecretResult(results []secretResult, path string) (hsm.SecretData, error) {
+// findMostRecentSecretResult resolves the authoritative secret data across
+// devices using the shared reconcile strategy (majority for 3+ devices,
+// last-write-wins for 1-2). deviceCount is the number of available agents.
+func (p *ProxyClient) findMostRecentSecretResult(results []secretResult, path string, deviceCount int) (hsm.SecretData, error) {
 	if len(results) == 0 {
 		return nil, fmt.Errorf("secret not found on any HSM device")
 	}
 
-	// Find most recent version based on metadata timestamps
-	bestResult := results[0]
-	bestTimestamp := parseTimestampFromMetadata(bestResult.metadata)
-
-	for _, result := range results[1:] {
-		timestamp := parseTimestampFromMetadata(result.metadata)
-		if timestamp > bestTimestamp {
-			bestResult = result
-			bestTimestamp = timestamp
-		}
+	obs := make([]reconcile.DeviceObservation, 0, len(results))
+	dataByDevice := make(map[string]hsm.SecretData, len(results))
+	deviceNames := make([]string, 0, len(results))
+	for _, result := range results {
+		dataByDevice[result.deviceName] = result.data
+		deviceNames = append(deviceNames, result.deviceName)
+		tombstone := isSecretDeleted(result.metadata)
+		obs = append(obs, reconcile.DeviceObservation{
+			DeviceID:  result.deviceName,
+			Present:   !tombstone,
+			Tombstone: tombstone,
+			Checksum:  hsm.CalculateChecksum(result.data),
+			Version:   parseVersionFromMetadata(result.metadata),
+			Timestamp: parseTimestampFromMetadata(result.metadata),
+		})
 	}
 
-	// Log sync issues when multiple devices have different versions
-	if len(results) > 1 {
-		deviceNames := make([]string, len(results))
-		for i, result := range results {
-			deviceNames[i] = result.deviceName
-		}
-		p.logMultiDeviceOperation(deviceNames, bestResult.deviceName, "Secret", path, fmt.Sprintf("timestamp: %d", bestTimestamp))
+	decision := reconcile.Resolve(obs, deviceCount)
+
+	if decision.Diverged {
+		p.logMultiDeviceOperation(deviceNames, decision.WinningDeviceID, "Secret", path,
+			fmt.Sprintf("strategy: %s, outliers: %v", decision.Strategy, decision.Outliers))
 	}
 
-	// Check if the most recent result is a tombstone (deleted secret)
-	if isSecretDeleted(bestResult.metadata) {
+	// Not found, or the winning copy is a tombstone (deleted secret).
+	if !decision.Found || decision.Deleted {
 		return nil, fmt.Errorf("secret not found on any HSM device")
 	}
 
-	return bestResult.data, nil
+	return dataByDevice[decision.WinningDeviceID], nil
 }
 
 // findMostRecentMetadataResult finds the most recent metadata result based on timestamps
@@ -432,8 +464,8 @@ func (p *ProxyClient) ReadSecret(c *gin.Context) {
 		successfulResults = append(successfulResults, result)
 	}
 
-	// Use helper to find most recent result based on timestamps
-	data, err := p.findMostRecentSecretResult(successfulResults, path)
+	// Resolve the authoritative copy across devices (deviceCount = available agents)
+	data, err := p.findMostRecentSecretResult(successfulResults, path, len(clients))
 	if err != nil {
 		p.server.sendError(c, http.StatusNotFound, "secret_not_found", err.Error(), nil)
 		return
@@ -500,7 +532,11 @@ func (p *ProxyClient) WriteSecret(c *gin.Context) {
 	if metadata.Labels == nil {
 		metadata.Labels = make(map[string]string)
 	}
-	metadata.Labels["sync.version"] = fmt.Sprintf("%d", time.Now().Unix())
+	// Monotonic version: one greater than the highest version any device
+	// currently holds for this path. This makes "newest" correct regardless of
+	// wall-clock skew or multiple writer replicas, since it never depends on a
+	// clock to order writes.
+	metadata.Labels["sync.version"] = fmt.Sprintf("%d", p.nextVersion(c.Request.Context(), clients, path))
 	metadata.Labels["sync.timestamp"] = time.Now().Format(time.RFC3339)
 
 	// Write to all devices in parallel
@@ -792,8 +828,8 @@ func (p *ProxyClient) GetChecksum(c *gin.Context) {
 		successfulResults = append(successfulResults, result)
 	}
 
-	// Use helper to find consensus checksum
-	consensusChecksum, err := p.findConsensusChecksum(successfulResults, path)
+	// Resolve the authoritative checksum across devices (deviceCount = available agents)
+	consensusChecksum, err := p.findConsensusChecksum(successfulResults, path, len(clients))
 	if err != nil {
 		p.server.sendError(c, http.StatusNotFound, "checksum_not_found", err.Error(), nil)
 		return

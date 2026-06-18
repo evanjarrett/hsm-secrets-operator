@@ -31,6 +31,7 @@ import (
 	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/api"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/mirror"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/trigger"
 )
 
 // APIServerRunnable starts the REST API server
@@ -188,8 +189,9 @@ func (mmr *MirrorManagerRunnable) Start(ctx context.Context) error {
 		"periodicInterval", mmr.periodicInterval,
 		"debounceWindow", mmr.debounceWindow)
 
-	// Set global reference for API access
-	api.SetMirrorTrigger(mmr)
+	// Register the mirror trigger so the API handler and the HSMSecret
+	// controller can request syncs without importing this package.
+	trigger.Set(mmr)
 
 	// Create mirror manager
 	mirrorManager := mirror.NewMirrorManager(mmr.k8sClient, mmr.agentManager, mmr.logger, mmr.operatorNamespace)

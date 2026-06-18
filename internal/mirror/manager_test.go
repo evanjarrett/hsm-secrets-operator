@@ -410,13 +410,13 @@ func TestCreateMirrorPlanForSecret(t *testing.T) {
 			inventory: &SecretInventory{
 				SecretPath: "secret1",
 				DeviceStates: map[string]*SecretState{
-					"device1": {Present: true, Version: 5, HasMetadata: true, Timestamp: baseTime},
-					"device2": {Present: true, Version: 5, HasMetadata: true, Timestamp: baseTime.Add(-1 * time.Hour)},
+					"device1": {Present: true, Version: 5, HasMetadata: true, Checksum: "csA", Timestamp: baseTime},
+					"device2": {Present: true, Version: 5, HasMetadata: true, Checksum: "csA", Timestamp: baseTime.Add(-1 * time.Hour)},
 				},
 			},
 			expectedPlan: &SecretMirrorPlan{
 				SecretPath:    "secret1",
-				SourceDevice:  "device1", // Most recent timestamp
+				SourceDevice:  "device1", // Same content; lowest device id is the deterministic source
 				SourceVersion: 5,
 				TargetDevices: []string{},
 				MirrorType:    MirrorTypeSkip,
@@ -428,7 +428,7 @@ func TestCreateMirrorPlanForSecret(t *testing.T) {
 			inventory: &SecretInventory{
 				SecretPath: "secret1",
 				DeviceStates: map[string]*SecretState{
-					"device1": {Present: true, Version: 3, HasMetadata: true, Timestamp: baseTime},
+					"device1": {Present: true, Version: 3, HasMetadata: true, Checksum: "csA", Timestamp: baseTime},
 					"device2": {Present: false},
 					"device3": {Present: false},
 				},
@@ -446,10 +446,11 @@ func TestCreateMirrorPlanForSecret(t *testing.T) {
 			secretPath: "secret1",
 			inventory: &SecretInventory{
 				SecretPath: "secret1",
+				// Distinct content per device (no majority among 3) -> last-write-wins picks highest version.
 				DeviceStates: map[string]*SecretState{
-					"device1": {Present: true, Version: 5, HasMetadata: true, Timestamp: baseTime},
-					"device2": {Present: true, Version: 3, HasMetadata: true, Timestamp: baseTime.Add(-1 * time.Hour)},
-					"device3": {Present: true, Version: 4, HasMetadata: true, Timestamp: baseTime.Add(-30 * time.Minute)},
+					"device1": {Present: true, Version: 5, HasMetadata: true, Checksum: "csNew", Timestamp: baseTime},
+					"device2": {Present: true, Version: 3, HasMetadata: true, Checksum: "csOld2", Timestamp: baseTime.Add(-1 * time.Hour)},
+					"device3": {Present: true, Version: 4, HasMetadata: true, Checksum: "csOld3", Timestamp: baseTime.Add(-30 * time.Minute)},
 				},
 			},
 			expectedPlan: &SecretMirrorPlan{
@@ -465,10 +466,11 @@ func TestCreateMirrorPlanForSecret(t *testing.T) {
 			secretPath: "secret1",
 			inventory: &SecretInventory{
 				SecretPath: "secret1",
+				// Same content everywhere; device2/device3 just lack sync metadata.
 				DeviceStates: map[string]*SecretState{
-					"device1": {Present: true, Version: 3, HasMetadata: true, Timestamp: baseTime},
-					"device2": {Present: true, Version: 0, HasMetadata: false, Timestamp: baseTime.Add(-1 * time.Hour)},
-					"device3": {Present: true, Version: 0, HasMetadata: false, Timestamp: baseTime.Add(-2 * time.Hour)},
+					"device1": {Present: true, Version: 3, HasMetadata: true, Checksum: "csA", Timestamp: baseTime},
+					"device2": {Present: true, Version: 0, HasMetadata: false, Checksum: "csA", Timestamp: baseTime.Add(-1 * time.Hour)},
+					"device3": {Present: true, Version: 0, HasMetadata: false, Checksum: "csA", Timestamp: baseTime.Add(-2 * time.Hour)},
 				},
 			},
 			expectedPlan: &SecretMirrorPlan{
@@ -485,8 +487,8 @@ func TestCreateMirrorPlanForSecret(t *testing.T) {
 			inventory: &SecretInventory{
 				SecretPath: "secret1",
 				DeviceStates: map[string]*SecretState{
-					"device1": {Present: true, Version: 5, HasMetadata: true, Timestamp: baseTime},
-					"device2": {Present: true, Version: 2, HasMetadata: true, Timestamp: baseTime.Add(-2 * time.Hour)},
+					"device1": {Present: true, Version: 5, HasMetadata: true, Checksum: "csNew", Timestamp: baseTime},
+					"device2": {Present: true, Version: 2, HasMetadata: true, Checksum: "csOld", Timestamp: baseTime.Add(-2 * time.Hour)},
 					"device3": {Present: false}, // Needs creation
 				},
 			},
@@ -503,10 +505,11 @@ func TestCreateMirrorPlanForSecret(t *testing.T) {
 			secretPath: "secret1",
 			inventory: &SecretInventory{
 				SecretPath: "secret1",
+				// Distinct content (no majority among 3) -> last-write-wins by version.
 				DeviceStates: map[string]*SecretState{
-					"device1": {Present: true, Version: 3, HasMetadata: true, Timestamp: baseTime},
-					"device2": {Present: true, Version: 5, HasMetadata: true, Timestamp: baseTime.Add(-1 * time.Hour)}, // Older but higher version
-					"device3": {Present: true, Version: 4, HasMetadata: true, Timestamp: baseTime.Add(-30 * time.Minute)},
+					"device1": {Present: true, Version: 3, HasMetadata: true, Checksum: "csA", Timestamp: baseTime},
+					"device2": {Present: true, Version: 5, HasMetadata: true, Checksum: "csB", Timestamp: baseTime.Add(-1 * time.Hour)}, // Older ts but higher version
+					"device3": {Present: true, Version: 4, HasMetadata: true, Checksum: "csC", Timestamp: baseTime.Add(-30 * time.Minute)},
 				},
 			},
 			expectedPlan: &SecretMirrorPlan{
@@ -522,17 +525,19 @@ func TestCreateMirrorPlanForSecret(t *testing.T) {
 			secretPath: "secret1",
 			inventory: &SecretInventory{
 				SecretPath: "secret1",
+				// device1 and device2 share a version but hold different content (a real
+				// conflict): the newer timestamp wins and BOTH other copies are corrected.
 				DeviceStates: map[string]*SecretState{
-					"device1": {Present: true, Version: 3, HasMetadata: true, Timestamp: baseTime.Add(-1 * time.Hour)},
-					"device2": {Present: true, Version: 3, HasMetadata: true, Timestamp: baseTime}, // Most recent
-					"device3": {Present: true, Version: 2, HasMetadata: true, Timestamp: baseTime.Add(-2 * time.Hour)},
+					"device1": {Present: true, Version: 3, HasMetadata: true, Checksum: "csA", Timestamp: baseTime.Add(-1 * time.Hour)},
+					"device2": {Present: true, Version: 3, HasMetadata: true, Checksum: "csB", Timestamp: baseTime}, // Most recent
+					"device3": {Present: true, Version: 2, HasMetadata: true, Checksum: "csC", Timestamp: baseTime.Add(-2 * time.Hour)},
 				},
 			},
 			expectedPlan: &SecretMirrorPlan{
 				SecretPath:    "secret1",
 				SourceDevice:  "device2", // Most recent timestamp for same version
 				SourceVersion: 3,
-				TargetDevices: []string{"device3"},
+				TargetDevices: []string{"device1", "device3"}, // both disagree with the winner
 				MirrorType:    MirrorTypeUpdate,
 			},
 		},
@@ -542,9 +547,9 @@ func TestCreateMirrorPlanForSecret(t *testing.T) {
 			inventory: &SecretInventory{
 				SecretPath: "secret1",
 				DeviceStates: map[string]*SecretState{
-					"device1": {Present: true, Version: 5, HasMetadata: true, Timestamp: baseTime},
+					"device1": {Present: true, Version: 5, HasMetadata: true, Checksum: "csNew", Timestamp: baseTime},
 					"device2": {Present: false, Error: assert.AnError}, // Has error, should be skipped
-					"device3": {Present: true, Version: 3, HasMetadata: true, Timestamp: baseTime.Add(-1 * time.Hour)},
+					"device3": {Present: true, Version: 3, HasMetadata: true, Checksum: "csOld", Timestamp: baseTime.Add(-1 * time.Hour)},
 				},
 			},
 			expectedPlan: &SecretMirrorPlan{
@@ -561,8 +566,8 @@ func TestCreateMirrorPlanForSecret(t *testing.T) {
 			inventory: &SecretInventory{
 				SecretPath: "secret1",
 				DeviceStates: map[string]*SecretState{
-					"device1": {Present: true, Version: 0, HasMetadata: false, Timestamp: baseTime},
-					"device2": {Present: true, Version: 0, HasMetadata: false, Timestamp: baseTime.Add(-1 * time.Hour)},
+					"device1": {Present: true, Version: 0, HasMetadata: false, Checksum: "csA", Timestamp: baseTime},
+					"device2": {Present: true, Version: 0, HasMetadata: false, Checksum: "csA", Timestamp: baseTime.Add(-1 * time.Hour)},
 					"device3": {Present: false},
 				},
 			},
@@ -689,8 +694,8 @@ func TestCreateMirrorPlans(t *testing.T) {
 		"secret1": {
 			SecretPath: "secret1",
 			DeviceStates: map[string]*SecretState{
-				"device1": {Present: true, Version: 5, HasMetadata: true, Timestamp: baseTime},
-				"device2": {Present: true, Version: 3, HasMetadata: true, Timestamp: baseTime.Add(-1 * time.Hour)},
+				"device1": {Present: true, Version: 5, HasMetadata: true, Checksum: "csNew", Timestamp: baseTime},
+				"device2": {Present: true, Version: 3, HasMetadata: true, Checksum: "csOld", Timestamp: baseTime.Add(-1 * time.Hour)},
 			},
 		},
 		"secret2": {
@@ -791,13 +796,15 @@ func TestConflictResolutionVersionPrecedence(t *testing.T) {
 
 	baseTime := time.Now()
 
-	// Test version-based conflict resolution
+	// Test version-based conflict resolution. With three distinct contents there
+	// is no majority, so the resolver falls back to last-write-wins (highest
+	// version), independent of timestamp.
 	inventory := &SecretInventory{
 		SecretPath: "conflicted-secret",
 		DeviceStates: map[string]*SecretState{
-			"device1": {Present: true, Version: 10, HasMetadata: true, Timestamp: baseTime.Add(-2 * time.Hour)}, // Oldest timestamp but highest version
-			"device2": {Present: true, Version: 5, HasMetadata: true, Timestamp: baseTime.Add(-1 * time.Hour)},  // Middle timestamp, lower version
-			"device3": {Present: true, Version: 8, HasMetadata: true, Timestamp: baseTime},                      // Most recent timestamp, middle version
+			"device1": {Present: true, Version: 10, HasMetadata: true, Checksum: "csA", Timestamp: baseTime.Add(-2 * time.Hour)}, // Oldest timestamp but highest version
+			"device2": {Present: true, Version: 5, HasMetadata: true, Checksum: "csB", Timestamp: baseTime.Add(-1 * time.Hour)},  // Middle timestamp, lower version
+			"device3": {Present: true, Version: 8, HasMetadata: true, Checksum: "csC", Timestamp: baseTime},                      // Most recent timestamp, middle version
 		},
 	}
 
@@ -808,6 +815,35 @@ func TestConflictResolutionVersionPrecedence(t *testing.T) {
 	assert.Equal(t, int64(10), plan.SourceVersion)
 	assert.Equal(t, MirrorTypeUpdate, plan.MirrorType)
 	assert.ElementsMatch(t, []string{"device2", "device3"}, plan.TargetDevices)
+}
+
+// TestConflictResolutionMajority verifies that with 3+ devices a content
+// majority wins even against a higher-version outlier, and that the outlier is
+// the only device targeted for correction.
+func TestConflictResolutionMajority(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = hsmv1alpha1.AddToScheme(scheme)
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+	mockAgentManager := NewMockAgentManager()
+	mirrorManager := NewMirrorManager(client, mockAgentManager, logr.Discard(), "test-namespace")
+
+	baseTime := time.Now()
+
+	inventory := &SecretInventory{
+		SecretPath: "conflicted-secret",
+		DeviceStates: map[string]*SecretState{
+			"device1": {Present: true, Version: 1, HasMetadata: true, Checksum: "csMajority", Timestamp: baseTime},
+			"device2": {Present: true, Version: 1, HasMetadata: true, Checksum: "csMajority", Timestamp: baseTime},
+			"device3": {Present: true, Version: 99, HasMetadata: true, Checksum: "csOutlier", Timestamp: baseTime}, // newer but minority
+		},
+	}
+
+	plan := mirrorManager.createMirrorPlanForSecret("conflicted-secret", inventory, logr.Discard())
+
+	assert.NotNil(t, plan)
+	assert.Contains(t, []string{"device1", "device2"}, plan.SourceDevice, "majority value should win over a higher-version outlier")
+	assert.Equal(t, MirrorTypeUpdate, plan.MirrorType)
+	assert.ElementsMatch(t, []string{"device3"}, plan.TargetDevices, "only the outlier needs correcting")
 }
 
 // Test error handling in readSecretWithMetadata

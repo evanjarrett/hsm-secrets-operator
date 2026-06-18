@@ -45,6 +45,49 @@ type SecretMetadata struct {
 	Source      string            `json:"source,omitempty"`
 }
 
+// Sync metadata label keys used for cross-device reconciliation.
+const (
+	LabelSyncVersion   = "sync.version"   // monotonic write counter
+	LabelSyncTimestamp = "sync.timestamp" // RFC3339 write time (secondary tie-break)
+	LabelSyncDeleted   = "sync.deleted"   // "true" marks a tombstone
+)
+
+// MetadataVersion returns the sync.version counter, or 0 if absent/unparseable.
+func MetadataVersion(m *SecretMetadata) int64 {
+	if m == nil || m.Labels == nil {
+		return 0
+	}
+	if v, ok := m.Labels[LabelSyncVersion]; ok {
+		var version int64
+		if n, err := fmt.Sscanf(v, "%d", &version); n == 1 && err == nil {
+			return version
+		}
+	}
+	return 0
+}
+
+// MetadataTimestamp returns the write time as unix seconds, preferring the
+// RFC3339 sync.timestamp and falling back to sync.version. 0 if absent.
+func MetadataTimestamp(m *SecretMetadata) int64 {
+	if m == nil || m.Labels == nil {
+		return 0
+	}
+	if ts, ok := m.Labels[LabelSyncTimestamp]; ok {
+		if parsed, err := time.Parse(time.RFC3339, ts); err == nil {
+			return parsed.Unix()
+		}
+	}
+	return MetadataVersion(m)
+}
+
+// MetadataDeleted reports whether the metadata marks a tombstone (deleted secret).
+func MetadataDeleted(m *SecretMetadata) bool {
+	if m == nil || m.Labels == nil {
+		return false
+	}
+	return m.Labels[LabelSyncDeleted] == "true"
+}
+
 // Client defines the interface for HSM operations
 type Client interface {
 	// Initialize establishes connection to the HSM

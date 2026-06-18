@@ -28,6 +28,7 @@ import (
 
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/reconcile"
 )
 
 // AgentManagerInterface defines the interface for HSM agent management used by mirror
@@ -229,109 +230,99 @@ func (mm *MirrorManager) createMirrorPlans(inventory map[string]*SecretInventory
 	return plans
 }
 
-// createMirrorPlanForSecret creates a sync plan for a specific secret across all devices
+// createMirrorPlanForSecret creates a sync plan for a specific secret across all devices.
+//
+// The authoritative source is chosen by the shared reconcile strategy (majority
+// for 3+ devices, last-write-wins for 1-2) so the mirror agrees with what the
+// readers resolve. Crucially, target selection is driven by the resolver's
+// Outliers — a device that disagrees with the winner must be corrected even if
+// it carries a higher version (which the old version-only comparison missed).
 func (mm *MirrorManager) createMirrorPlanForSecret(secretPath string, inventory *SecretInventory, logger logr.Logger) *SecretMirrorPlan {
-	// Find the authoritative source device (highest version, most recent timestamp)
-	var sourceDevice string
-	var sourceVersion int64 = -1
-	var sourceTimestamp time.Time
 	var devicesWithSecret []string
 	var devicesNeedingSecret []string
 	var devicesNeedingMetadata []string
 
-	// Analyze all device states for this secret
+	obs := make([]reconcile.DeviceObservation, 0, len(inventory.DeviceStates))
+	respondingDevices := 0
+
+	// Analyze all device states for this secret and build resolver observations.
 	for deviceName, state := range inventory.DeviceStates {
 		if state.Error != nil {
 			logger.V(1).Info("Device has error, skipping", "device", deviceName, "secret", secretPath, "error", state.Error)
 			continue
 		}
+		respondingDevices++
 
 		if state.Present {
 			devicesWithSecret = append(devicesWithSecret, deviceName)
-
-			// Check if this device has the most authoritative version
-			if state.HasMetadata {
-				if state.Version > sourceVersion ||
-					(state.Version == sourceVersion && state.Timestamp.After(sourceTimestamp)) {
-					sourceDevice = deviceName
-					sourceVersion = state.Version
-					sourceTimestamp = state.Timestamp
-				}
-			} else {
-				// Secret exists but lacks metadata - needs restoration
+			if !state.HasMetadata {
+				// Secret exists but lacks metadata - needs restoration regardless
+				// of whether its value agrees with the winner.
 				devicesNeedingMetadata = append(devicesNeedingMetadata, deviceName)
-
-				// If no source found yet and this device has the secret, it could be the source
-				// We'll use timestamp as fallback (creation time from our scan)
-				if sourceDevice == "" {
-					sourceDevice = deviceName
-					sourceVersion = 0 // Will trigger metadata creation
-					sourceTimestamp = state.Timestamp
-				}
 			}
+			obs = append(obs, reconcile.DeviceObservation{
+				DeviceID:  deviceName,
+				Present:   true,
+				Checksum:  state.Checksum,
+				Version:   state.Version,
+				Timestamp: state.Timestamp.Unix(),
+			})
 		} else {
-			// Device doesn't have this secret
+			// Device doesn't have this secret - it abstains but needs a copy.
 			devicesNeedingSecret = append(devicesNeedingSecret, deviceName)
+			obs = append(obs, reconcile.DeviceObservation{DeviceID: deviceName})
 		}
 	}
 
-	// Determine sync operation type
+	// No devices have this secret - nothing to sync.
 	if len(devicesWithSecret) == 0 {
-		// No devices have this secret - nothing to sync
 		logger.V(1).Info("Secret not found on any device", "secret", secretPath)
 		return nil
 	}
 
-	if len(devicesNeedingSecret) == 0 && len(devicesNeedingMetadata) == 0 {
-		// All devices have the secret with metadata - check if they're in sync
-		allInSync := true
-		for _, state := range inventory.DeviceStates {
-			if state.Error == nil && state.Present {
-				if !state.HasMetadata || state.Version != sourceVersion {
-					allInSync = false
-					break
-				}
-			}
-		}
+	// Resolve the authoritative copy.
+	decision := reconcile.Resolve(obs, respondingDevices)
+	sourceDevice := decision.WinningDeviceID
+	var sourceVersion int64
+	if st, ok := inventory.DeviceStates[sourceDevice]; ok {
+		sourceVersion = st.Version
+	}
 
-		if allInSync {
-			logger.V(1).Info("Secret already in sync across all devices", "secret", secretPath)
-			return &SecretMirrorPlan{
-				SecretPath:    secretPath,
-				SourceDevice:  sourceDevice,
-				SourceVersion: sourceVersion,
-				TargetDevices: []string{}, // No targets needed
-				MirrorType:    MirrorTypeSkip,
-			}
+	// Already in sync: every responding device holds the winning value, with
+	// metadata, and none need creation.
+	if !decision.Diverged && len(devicesNeedingSecret) == 0 && len(devicesNeedingMetadata) == 0 {
+		logger.V(1).Info("Secret already in sync across all devices", "secret", secretPath)
+		return &SecretMirrorPlan{
+			SecretPath:    secretPath,
+			SourceDevice:  sourceDevice,
+			SourceVersion: sourceVersion,
+			TargetDevices: []string{}, // No targets needed
+			MirrorType:    MirrorTypeSkip,
 		}
 	}
 
-	// Determine target devices that need updates
+	// Determine target devices that need updates.
 	var targetDevices []string
 	var syncType MirrorType
 
-	// Add devices that need the secret created
+	// Devices that need the secret created.
 	targetDevices = append(targetDevices, devicesNeedingSecret...)
 	if len(devicesNeedingSecret) > 0 {
 		syncType = MirrorTypeCreate
 	}
 
-	// Add devices that need metadata restoration
+	// Devices that have the secret but lack metadata.
 	targetDevices = append(targetDevices, devicesNeedingMetadata...)
 	if len(devicesNeedingMetadata) > 0 && syncType != MirrorTypeCreate {
 		syncType = MirrorTypeRestoreMetadata
 	}
 
-	// Add devices that have outdated versions
-	for deviceName, state := range inventory.DeviceStates {
-		if state.Error == nil && state.Present && state.HasMetadata {
-			if state.Version < sourceVersion {
-				// This device has an older version
-				targetDevices = append(targetDevices, deviceName)
-				if syncType != MirrorTypeCreate && syncType != MirrorTypeRestoreMetadata {
-					syncType = MirrorTypeUpdate
-				}
-			}
+	// Devices that disagree with the resolved winner (the resolver's outliers),
+	// regardless of their version number.
+	if len(decision.Outliers) > 0 {
+		targetDevices = append(targetDevices, decision.Outliers...)
+		if syncType != MirrorTypeCreate && syncType != MirrorTypeRestoreMetadata {
+			syncType = MirrorTypeUpdate
 		}
 	}
 
@@ -461,14 +452,14 @@ func (mm *MirrorManager) executeMirrorPlan(ctx context.Context, plan *SecretMirr
 		return result
 	}
 
-	// Prepare metadata for sync
-	newVersion := time.Now().Unix()
-	if sourceMetadata != nil && sourceMetadata.Labels != nil {
-		if versionStr, exists := sourceMetadata.Labels["sync.version"]; exists {
-			if existingVersion, parseErr := parseVersion(versionStr); parseErr == nil && existingVersion > 0 {
-				newVersion = existingVersion
-			}
-		}
+	// Converge targets to the winning SOURCE's version so content and version
+	// stay coupled (the resolver already chose this copy as authoritative).
+	// Replication must not mint a new version — only the API write path does
+	// that. Bootstrap to 1 when no device carried sync metadata yet, rather than
+	// stamping a wall-clock value.
+	newVersion := hsm.MetadataVersion(sourceMetadata)
+	if newVersion <= 0 {
+		newVersion = 1
 	}
 
 	// Create or update metadata

@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,6 +38,8 @@ import (
 	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/reconcile"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/trigger"
 )
 
 const (
@@ -58,6 +61,24 @@ type HSMSecretReconciler struct {
 	OperatorNamespace string
 	OperatorName      string
 	StartupTime       time.Time
+
+	// MirrorTrigger requests a device-to-device mirror when the controller
+	// detects the devices disagree. If nil, it falls back to the process-wide
+	// trigger registered by the mirror runnable (see internal/trigger). Tests
+	// inject a fake here.
+	MirrorTrigger trigger.MirrorTrigger
+}
+
+// triggerMirror requests a (forced) mirror sync via the injected trigger, or the
+// process-wide registered one. It is a no-op if none is available yet.
+func (r *HSMSecretReconciler) triggerMirror(reason, source string, force bool) {
+	t := r.MirrorTrigger
+	if t == nil {
+		t = trigger.Get()
+	}
+	if t != nil {
+		t.TriggerMirror(reason, source, force)
+	}
 }
 
 // HSMDeviceClients holds multiple HSM devices and their clients
@@ -162,51 +183,111 @@ func (r *HSMSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{RequeueAfter: time.Minute * 2}, nil
 	}
 
-	device := devices[0]
-	grpcClient, err := r.AgentManager.CreateGRPCClient(ctx, device, logger)
-	if err != nil {
-		logger.Error(err, "Failed to create gRPC client", "node", device.NodeName)
-		return ctrl.Result{RequeueAfter: time.Minute * 2}, nil
-	}
-	defer func() {
-		if err := grpcClient.Close(); err != nil {
-			logger.Error(err, "Failed to close gRPC client")
-		}
-	}()
+	// Read the secret from ALL available devices and resolve which copy is
+	// authoritative using the shared strategy (majority for 3+ devices,
+	// last-write-wins for 1-2). Reading devices[0] alone would let the
+	// controller latch onto a stale device when devices diverge.
+	observations, reads := r.gatherSecretObservations(ctx, devices, hsmSecret.Name, logger)
+	decision := reconcile.Resolve(observations, len(devices))
 
-	// Check if secret exists
-	secrets, err := grpcClient.ListSecrets(ctx, "")
-	if err != nil {
-		logger.Error(err, "Failed to list secrets")
-		return ctrl.Result{RequeueAfter: time.Minute * 2}, nil
-	}
-
-	if !slices.Contains(secrets, hsmSecret.Name) {
-		logger.Info("Secret not found in HSM", "secret", hsmSecret.Name)
+	if !decision.Found || decision.Deleted {
+		logger.Info("Secret not found in HSM (or resolved as deleted)", "secret", hsmSecret.Name)
 		return ctrl.Result{RequeueAfter: time.Minute * 5}, nil
 	}
 
-	// Read secret data and metadata
-	hsmData, err := grpcClient.ReadSecret(ctx, hsmSecret.Name)
-	if err != nil {
-		logger.Error(err, "Failed to read secret from HSM")
+	winner, ok := reads[decision.WinningDeviceID]
+	if !ok {
+		// The winner's data wasn't captured (e.g. transient read error on the
+		// winning device). Requeue and try again shortly.
+		logger.Info("Resolved winning device had no captured data, requeuing",
+			"secret", hsmSecret.Name, "winner", decision.WinningDeviceID)
 		return ctrl.Result{RequeueAfter: time.Minute * 2}, nil
 	}
 
-	hsmMetadata, err := grpcClient.ReadMetadata(ctx, hsmSecret.Name)
-	if err != nil {
-		logger.V(1).Info("Failed to read metadata", "error", err)
-		hsmMetadata = nil // Continue without metadata
+	// When devices disagree, force a mirror so storage self-heals immediately
+	// instead of waiting for the periodic safety sync.
+	if decision.Diverged {
+		logger.Info("Devices diverged for secret, triggering forced mirror",
+			"secret", hsmSecret.Name,
+			"strategy", decision.Strategy,
+			"winner", decision.WinningDeviceID,
+			"outliers", decision.Outliers)
+		r.triggerMirror("controller_divergence", hsmSecret.Name, true)
 	}
 
-	// Reconcile the HSMSecret with the data from HSM
-	result, err := r.reconcileSecret(ctx, &hsmSecret, hsmData, hsmMetadata)
+	// Reconcile the HSMSecret with the resolved authoritative data from HSM
+	result, err := r.reconcileSecret(ctx, &hsmSecret, winner.data, winner.metadata)
 	if err != nil {
 		logger.Error(err, "Failed to reconcile HSMSecret")
 		r.updateStatus(ctx, &hsmSecret, hsmv1alpha1.SyncStatusError, err.Error())
 	}
 
 	return result, err
+}
+
+// deviceRead holds the data and metadata read from a single device.
+type deviceRead struct {
+	data     hsm.SecretData
+	metadata *hsm.SecretMetadata
+}
+
+// gatherSecretObservations reads the named secret from every available device,
+// returning a reconcile.DeviceObservation per device plus the captured data for
+// devices that hold it (keyed by serial number) so the caller can fetch the
+// winner's bytes without re-reading.
+func (r *HSMSecretReconciler) gatherSecretObservations(ctx context.Context, devices []hsmv1alpha1.DiscoveredDevice, secretName string, logger logr.Logger) ([]reconcile.DeviceObservation, map[string]deviceRead) {
+	observations := make([]reconcile.DeviceObservation, 0, len(devices))
+	reads := make(map[string]deviceRead, len(devices))
+
+	for _, device := range devices {
+		deviceID := device.SerialNumber
+
+		grpcClient, err := r.AgentManager.CreateGRPCClient(ctx, device, logger)
+		if err != nil {
+			logger.V(1).Info("Failed to create gRPC client, skipping device", "device", deviceID, "error", err)
+			continue
+		}
+
+		secrets, err := grpcClient.ListSecrets(ctx, "")
+		if err != nil {
+			logger.V(1).Info("Failed to list secrets on device", "device", deviceID, "error", err)
+			_ = grpcClient.Close()
+			continue
+		}
+		if !slices.Contains(secrets, secretName) {
+			// Device simply lacks the secret: it abstains from the vote.
+			observations = append(observations, reconcile.DeviceObservation{DeviceID: deviceID})
+			_ = grpcClient.Close()
+			continue
+		}
+
+		data, err := grpcClient.ReadSecret(ctx, secretName)
+		if err != nil {
+			logger.V(1).Info("Failed to read secret on device", "device", deviceID, "error", err)
+			_ = grpcClient.Close()
+			continue
+		}
+
+		metadata, err := grpcClient.ReadMetadata(ctx, secretName)
+		if err != nil {
+			logger.V(1).Info("Failed to read metadata on device", "device", deviceID, "error", err)
+			metadata = nil
+		}
+		_ = grpcClient.Close()
+
+		tombstone := hsm.MetadataDeleted(metadata)
+		reads[deviceID] = deviceRead{data: data, metadata: metadata}
+		observations = append(observations, reconcile.DeviceObservation{
+			DeviceID:  deviceID,
+			Present:   !tombstone,
+			Tombstone: tombstone,
+			Checksum:  hsm.CalculateChecksum(data),
+			Version:   hsm.MetadataVersion(metadata),
+			Timestamp: hsm.MetadataTimestamp(metadata),
+		})
+	}
+
+	return observations, reads
 }
 
 // reconcileSecret handles HSM secret reconciliation with data from HSM

@@ -32,6 +32,7 @@ import (
 	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
 	"github.com/evanjarrett/hsm-secrets-operator/internal/security"
+	"github.com/evanjarrett/hsm-secrets-operator/internal/trigger"
 )
 
 // Server represents the HSM REST API server that proxies requests to agent pods
@@ -150,19 +151,6 @@ func (s *Server) handleHealth(c *gin.Context) {
 	s.sendResponse(c, http.StatusOK, "Health check completed", health)
 }
 
-// MirrorTriggerInterface defines the interface for triggering mirror syncs
-type MirrorTriggerInterface interface {
-	TriggerMirror(reason, source string, force bool)
-}
-
-// Global mirror trigger for API access
-var globalMirrorTrigger MirrorTriggerInterface
-
-// SetMirrorTrigger sets the global mirror trigger for API access
-func SetMirrorTrigger(trigger MirrorTriggerInterface) {
-	globalMirrorTrigger = trigger
-}
-
 // handleMirrorSync triggers a manual mirror synchronization
 func (s *Server) handleMirrorSync(c *gin.Context) {
 	// Parse request body for force flag
@@ -176,8 +164,9 @@ func (s *Server) handleMirrorSync(c *gin.Context) {
 		return
 	}
 
-	// Get the global mirror trigger
-	if globalMirrorTrigger == nil {
+	// Get the registered mirror trigger
+	mirrorTrigger := trigger.Get()
+	if mirrorTrigger == nil {
 		s.sendError(c, http.StatusServiceUnavailable, "mirror_unavailable", "Mirror service not available", nil)
 		return
 	}
@@ -189,7 +178,7 @@ func (s *Server) handleMirrorSync(c *gin.Context) {
 		reason = "manual_api_force"
 	}
 
-	globalMirrorTrigger.TriggerMirror(reason, source, req.Force)
+	mirrorTrigger.TriggerMirror(reason, source, req.Force)
 
 	s.logger.Info("Manual mirror sync triggered via API",
 		"force", req.Force,

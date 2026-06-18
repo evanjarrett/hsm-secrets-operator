@@ -17,11 +17,13 @@ limitations under the License.
 package api
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
 )
@@ -543,6 +545,7 @@ func TestProxyClient_FindConsensusChecksum(t *testing.T) {
 		name             string
 		results          []checksumResult
 		path             string
+		deviceCount      int
 		expectedChecksum string
 		expectedError    string
 	}{
@@ -550,6 +553,7 @@ func TestProxyClient_FindConsensusChecksum(t *testing.T) {
 			name:             "no results",
 			results:          []checksumResult{},
 			path:             "test-secret",
+			deviceCount:      2,
 			expectedChecksum: "",
 			expectedError:    "checksum not found on any HSM device",
 		},
@@ -559,35 +563,38 @@ func TestProxyClient_FindConsensusChecksum(t *testing.T) {
 				{deviceName: "pico-hsm-0", checksum: "sha256:abc123"},
 			},
 			path:             "test-secret",
+			deviceCount:      1,
 			expectedChecksum: "sha256:abc123",
 			expectedError:    "",
 		},
 		{
-			name: "consensus reached",
+			name: "majority reached (3 devices)",
 			results: []checksumResult{
 				{deviceName: "pico-hsm-0", checksum: "sha256:abc123"},
 				{deviceName: "pico-hsm-1", checksum: "sha256:abc123"},
 				{deviceName: "pico-hsm-2", checksum: "sha256:def456"},
 			},
 			path:             "test-secret",
-			expectedChecksum: "sha256:abc123", // Most common (2 vs 1)
+			deviceCount:      3,
+			expectedChecksum: "sha256:abc123", // Strict majority (2 vs 1)
 			expectedError:    "",
 		},
 		{
-			name: "tie broken by first occurrence",
+			name: "two devices disagree -> deterministic lowest device id",
 			results: []checksumResult{
 				{deviceName: "pico-hsm-0", checksum: "sha256:abc123"},
 				{deviceName: "pico-hsm-1", checksum: "sha256:def456"},
 			},
 			path:             "test-secret",
-			expectedChecksum: "sha256:abc123", // First one wins in tie
+			deviceCount:      2,
+			expectedChecksum: "sha256:abc123", // No version metadata -> lowest device id wins
 			expectedError:    "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			checksum, err := proxyClient.findConsensusChecksum(tt.results, tt.path)
+			checksum, err := proxyClient.findConsensusChecksum(tt.results, tt.path, tt.deviceCount)
 
 			if tt.expectedError != "" {
 				assert.Error(t, err)
@@ -601,6 +608,35 @@ func TestProxyClient_FindConsensusChecksum(t *testing.T) {
 	}
 }
 
+// Test nextVersion computes a monotonic max+1 counter across devices
+func TestProxyClient_NextVersion(t *testing.T) {
+	proxyClient := &ProxyClient{logger: logr.Discard()}
+	ctx := context.Background()
+
+	newClientWithVersion := func(version string) hsm.Client {
+		c := hsm.NewMockClient()
+		require.NoError(t, c.Initialize(ctx, hsm.DefaultConfig()))
+		require.NoError(t, c.WriteSecret(ctx, "vsecret", hsm.SecretData{"k": []byte("v")},
+			&hsm.SecretMetadata{Labels: map[string]string{"sync.version": version}}))
+		return c
+	}
+
+	t.Run("max plus one across devices", func(t *testing.T) {
+		clients := map[string]hsm.Client{
+			"d1": newClientWithVersion("7"),
+			"d2": newClientWithVersion("12"),
+		}
+		assert.Equal(t, int64(13), proxyClient.nextVersion(ctx, clients, "vsecret"))
+	})
+
+	t.Run("fresh secret starts at 1", func(t *testing.T) {
+		c := hsm.NewMockClient()
+		require.NoError(t, c.Initialize(ctx, hsm.DefaultConfig()))
+		clients := map[string]hsm.Client{"d1": c}
+		assert.Equal(t, int64(1), proxyClient.nextVersion(ctx, clients, "nonexistent-path"))
+	})
+}
+
 // Test findMostRecentSecretResult method
 func TestProxyClient_FindMostRecentSecretResult(t *testing.T) {
 	proxyClient := &ProxyClient{
@@ -611,6 +647,7 @@ func TestProxyClient_FindMostRecentSecretResult(t *testing.T) {
 		name          string
 		results       []secretResult
 		path          string
+		deviceCount   int
 		expectedData  hsm.SecretData
 		expectedError string
 	}{
@@ -618,6 +655,7 @@ func TestProxyClient_FindMostRecentSecretResult(t *testing.T) {
 			name:          "no results",
 			results:       []secretResult{},
 			path:          "test-secret",
+			deviceCount:   2,
 			expectedData:  nil,
 			expectedError: "secret not found on any HSM device",
 		},
@@ -633,6 +671,7 @@ func TestProxyClient_FindMostRecentSecretResult(t *testing.T) {
 				},
 			},
 			path:          "test-secret",
+			deviceCount:   1,
 			expectedData:  hsm.SecretData{"key1": []byte("value1")},
 			expectedError: "",
 		},
@@ -655,6 +694,7 @@ func TestProxyClient_FindMostRecentSecretResult(t *testing.T) {
 				},
 			},
 			path:          "test-secret",
+			deviceCount:   2,
 			expectedData:  hsm.SecretData{"key1": []byte("new_value")}, // More recent one
 			expectedError: "",
 		},
@@ -673,6 +713,7 @@ func TestProxyClient_FindMostRecentSecretResult(t *testing.T) {
 				},
 			},
 			path:          "test-secret",
+			deviceCount:   1,
 			expectedData:  nil,
 			expectedError: "secret not found on any HSM device", // Deleted secrets return not found
 		},
@@ -680,7 +721,7 @@ func TestProxyClient_FindMostRecentSecretResult(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			data, err := proxyClient.findMostRecentSecretResult(tt.results, tt.path)
+			data, err := proxyClient.findMostRecentSecretResult(tt.results, tt.path, tt.deviceCount)
 
 			if tt.expectedError != "" {
 				assert.Error(t, err)
