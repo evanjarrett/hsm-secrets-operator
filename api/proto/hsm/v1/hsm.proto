@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package hsm.v1;
 
-option go_package = "github.com/evanjarrett/hsm-secrets-operator/api/proto/hsm/v1";
+option go_package = "tangled.org/evan.jarrett.net/hsm-secrets-operator/api/proto/hsm/v1";
 
 // HSMAgent service provides HSM operations via gRPC
 service HSMAgent {

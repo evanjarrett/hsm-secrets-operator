@@ -37,10 +37,10 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	hsmv1 "github.com/evanjarrett/hsm-secrets-operator/api/proto/hsm/v1"
-	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
+	hsmv1 "tangled.org/evan.jarrett.net/hsm-secrets-operator/api/proto/hsm/v1"
+	hsmv1alpha1 "tangled.org/evan.jarrett.net/hsm-secrets-operator/api/v1alpha1"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/agent"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/hsm"
 )
 
 func TestHSMSecretControllerGRPCIntegration(t *testing.T) {

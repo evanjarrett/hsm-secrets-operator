@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/hsm"
 )
 
 func TestNewProxyClient(t *testing.T) {

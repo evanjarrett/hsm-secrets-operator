@@ -27,7 +27,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/evanjarrett/hsm-secrets-operator/test/utils"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/test/utils"
 )
 
 // namespace where the project is deployed in

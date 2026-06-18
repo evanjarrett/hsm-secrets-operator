@@ -32,7 +32,7 @@ import (
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
 
-	"github.com/evanjarrett/hsm-secrets-operator/kubectl-hsm/pkg/client"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/kubectl-hsm/pkg/client"
 )
 
 const (

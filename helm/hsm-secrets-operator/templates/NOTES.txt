@@ -106,6 +106,6 @@
     kubectl get hsmdevices -n {{ .Release.Namespace }}
 {{- end }}
 
-For more information, visit: https://github.com/evanjarrett/hsm-secrets-operator
+For more information, visit: https://tangled.org/evan.jarrett.net/hsm-secrets-operator
 
 Happy secret managing! 🔐

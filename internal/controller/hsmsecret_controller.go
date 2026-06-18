@@ -35,11 +35,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/reconcile"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/trigger"
+	hsmv1alpha1 "tangled.org/evan.jarrett.net/hsm-secrets-operator/api/v1alpha1"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/agent"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/hsm"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/reconcile"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/trigger"
 )
 
 const (

@@ -24,8 +24,8 @@ import (
 	"google.golang.org/grpc/status"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	hsmv1 "github.com/evanjarrett/hsm-secrets-operator/api/proto/hsm/v1"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
+	hsmv1 "tangled.org/evan.jarrett.net/hsm-secrets-operator/api/proto/hsm/v1"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/hsm"
 )
 
 func TestGRPCServer_ChangePIN(t *testing.T) {

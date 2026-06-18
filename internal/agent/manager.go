@@ -27,8 +27,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
+	hsmv1alpha1 "tangled.org/evan.jarrett.net/hsm-secrets-operator/api/v1alpha1"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/hsm"
 )
 
 // ManagerInterface defines the interface for HSM agent management

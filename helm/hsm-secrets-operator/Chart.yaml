@@ -5,9 +5,9 @@ type: application
 version: 0.8.0
 appVersion: v0.8.0
 icon: https://raw.githubusercontent.com/cncf/artwork/master/projects/kubernetes/icon/color/kubernetes-icon-color.svg
-home: https://github.com/evanjarrett/hsm-secrets-operator
+home: https://tangled.org/evan.jarrett.net/hsm-secrets-operator
 sources:
-  - https://github.com/evanjarrett/hsm-secrets-operator
+  - https://tangled.org/evan.jarrett.net/hsm-secrets-operator
 maintainers:
   - name: Evan Jarrett
 keywords:

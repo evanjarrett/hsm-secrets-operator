@@ -1095,7 +1095,7 @@ const file_hsm_v1_hsm_proto_rawDesc = "" +
 	"\vIsConnected\x12\x1a.hsm.v1.IsConnectedRequest\x1a\x1b.hsm.v1.IsConnectedResponse\x127\n" +
 	"\x06Health\x12\x15.hsm.v1.HealthRequest\x1a\x16.hsm.v1.HealthResponseB\x93\x01\n" +
 	"\n" +
-	"com.hsm.v1B\bHsmProtoP\x01ZBgithub.com/evanjarrett/hsm-secrets-operator/api/proto/hsm/v1;hsmv1\xa2\x02\x03HXX\xaa\x02\x06Hsm.V1\xca\x02\x06Hsm\\V1\xe2\x02\x12Hsm\\V1\\GPBMetadata\xea\x02\aHsm::V1b\x06proto3"
+	"com.hsm.v1B\bHsmProtoP\x01ZBtangled.org/evan.jarrett.net/hsm-secrets-operator/api/proto/hsm/v1;hsmv1\xa2\x02\x03HXX\xaa\x02\x06Hsm.V1\xca\x02\x06Hsm\\V1\xe2\x02\x12Hsm\\V1\\GPBMetadata\xea\x02\aHsm::V1b\x06proto3"
 
 var (
 	file_hsm_v1_hsm_proto_rawDescOnce sync.Once

@@ -25,7 +25,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/hsm"
 )
 
 // ClientWrapper wraps an HSM client to track usage and manage lifecycle

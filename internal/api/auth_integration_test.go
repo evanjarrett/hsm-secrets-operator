@@ -30,8 +30,8 @@ import (
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/security"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/agent"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/security"
 )
 
 func TestJWTAuthenticationIntegration(t *testing.T) {

@@ -1179,7 +1179,7 @@ const file_hsm_v1_hsm_proto_rawDesc = "" +
 	"\vGetChecksum\x12\x1a.hsm.v1.GetChecksumRequest\x1a\x1b.hsm.v1.GetChecksumResponse\x12F\n" +
 	"\vIsConnected\x12\x1a.hsm.v1.IsConnectedRequest\x1a\x1b.hsm.v1.IsConnectedResponse\x127\n" +
 	"\x06Health\x12\x15.hsm.v1.HealthRequest\x1a\x16.hsm.v1.HealthResponse\x12@\n" +
-	"\tChangePIN\x12\x18.hsm.v1.ChangePINRequest\x1a\x19.hsm.v1.ChangePINResponseB>Z<github.com/evanjarrett/hsm-secrets-operator/api/proto/hsm/v1b\x06proto3"
+	"\tChangePIN\x12\x18.hsm.v1.ChangePINRequest\x1a\x19.hsm.v1.ChangePINResponseB>Z<tangled.org/evan.jarrett.net/hsm-secrets-operator/api/proto/hsm/v1b\x06proto3"
 
 var (
 	file_hsm_v1_hsm_proto_rawDescOnce sync.Once

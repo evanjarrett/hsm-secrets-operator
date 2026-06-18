@@ -29,8 +29,8 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/evanjarrett/hsm-secrets-operator/kubectl-hsm/pkg/client"
-	"github.com/evanjarrett/hsm-secrets-operator/kubectl-hsm/pkg/util"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/kubectl-hsm/pkg/client"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/kubectl-hsm/pkg/util"
 )
 
 // CommonOptions holds common options for all commands

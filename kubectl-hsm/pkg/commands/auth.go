@@ -23,7 +23,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/evanjarrett/hsm-secrets-operator/kubectl-hsm/pkg/util"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/kubectl-hsm/pkg/util"
 )
 
 // NewAuthCmd creates a new auth command

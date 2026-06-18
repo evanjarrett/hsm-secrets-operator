@@ -28,8 +28,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 
-	hsmv1 "github.com/evanjarrett/hsm-secrets-operator/api/proto/hsm/v1"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
+	hsmv1 "tangled.org/evan.jarrett.net/hsm-secrets-operator/api/proto/hsm/v1"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/hsm"
 )
 
 func TestGRPCClientServerIntegration(t *testing.T) {

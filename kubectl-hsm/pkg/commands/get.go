@@ -27,7 +27,7 @@ import (
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/yaml"
 
-	"github.com/evanjarrett/hsm-secrets-operator/kubectl-hsm/pkg/client"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/kubectl-hsm/pkg/client"
 )
 
 // GetOptions holds options for the get command

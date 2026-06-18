@@ -28,8 +28,8 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 
-	hsmv1 "github.com/evanjarrett/hsm-secrets-operator/api/proto/hsm/v1"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
+	hsmv1 "tangled.org/evan.jarrett.net/hsm-secrets-operator/api/proto/hsm/v1"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/hsm"
 )
 
 // GRPCClient implements the HSM client interface using gRPC

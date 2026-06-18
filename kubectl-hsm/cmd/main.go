@@ -22,7 +22,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/evanjarrett/hsm-secrets-operator/kubectl-hsm/pkg/commands"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/kubectl-hsm/pkg/commands"
 )
 
 var version = "dev" // Set during build
@@ -75,7 +75,7 @@ Examples:
   kubectl hsm mirror sync --force
 
 For more information about the HSM Secrets Operator, visit:
-https://github.com/evanjarrett/hsm-secrets-operator`,
+https://tangled.org/evan.jarrett.net/hsm-secrets-operator`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

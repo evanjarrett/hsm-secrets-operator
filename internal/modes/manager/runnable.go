@@ -28,10 +28,10 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/api"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/mirror"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/trigger"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/agent"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/api"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/mirror"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/trigger"
 )
 
 // APIServerRunnable starts the REST API server

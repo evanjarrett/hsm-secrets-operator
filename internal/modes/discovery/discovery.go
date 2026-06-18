@@ -39,9 +39,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	hsmv1alpha1 "github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
-	discoveryconfig "github.com/evanjarrett/hsm-secrets-operator/internal/config"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/discovery"
+	hsmv1alpha1 "tangled.org/evan.jarrett.net/hsm-secrets-operator/api/v1alpha1"
+	discoveryconfig "tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/config"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/discovery"
 )
 
 var (

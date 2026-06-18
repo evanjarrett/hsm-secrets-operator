@@ -4,7 +4,7 @@ A kubectl plugin that provides a Kubernetes-native command-line interface for Ha
 
 ## Overview
 
-The `kubectl-hsm` plugin integrates with the [HSM Secrets Operator](https://github.com/evanjarrett/hsm-secrets-operator) to provide secure secret storage using hardware-based security modules while maintaining seamless integration with Kubernetes workflows.
+The `kubectl-hsm` plugin integrates with the [HSM Secrets Operator](https://tangled.org/evan.jarrett.net/hsm-secrets-operator) to provide secure secret storage using hardware-based security modules while maintaining seamless integration with Kubernetes workflows.
 
 ## Features
 
@@ -23,12 +23,12 @@ The `kubectl-hsm` plugin integrates with the [HSM Secrets Operator](https://gith
 ### Quick Install (Recommended)
 
 ```bash
-curl -fsSL https://github.com/evanjarrett/hsm-secrets-operator/releases/latest/download/install.sh | bash
+curl -fsSL https://tangled.org/evan.jarrett.net/hsm-secrets-operator/releases/latest/download/install.sh | bash
 ```
 
 ### Manual Installation
 
-1. Download the binary for your platform from the [releases page](https://github.com/evanjarrett/hsm-secrets-operator/releases)
+1. Download the binary for your platform from the [releases page](https://tangled.org/evan.jarrett.net/hsm-secrets-operator/releases)
 2. Rename it to `kubectl-hsm`
 3. Make it executable: `chmod +x kubectl-hsm`
 4. Move it to a directory in your PATH (e.g., `/usr/local/bin/`)
@@ -36,7 +36,7 @@ curl -fsSL https://github.com/evanjarrett/hsm-secrets-operator/releases/latest/d
 ### Build from Source
 
 ```bash
-git clone https://github.com/evanjarrett/hsm-secrets-operator.git
+git clone https://tangled.org/evan.jarrett.net/hsm-secrets-operator.git
 cd hsm-secrets-operator/cmd/kubectl-hsm
 make build
 make install
@@ -380,7 +380,7 @@ If you get permission errors:
 
 ## Contributing
 
-Contributions are welcome! Please see the main [repository](https://github.com/evanjarrett/hsm-secrets-operator) for contribution guidelines.
+Contributions are welcome! Please see the main [repository](https://tangled.org/evan.jarrett.net/hsm-secrets-operator) for contribution guidelines.
 
 ## License
 

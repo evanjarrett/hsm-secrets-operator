@@ -1,4 +1,4 @@
-module github.com/evanjarrett/hsm-secrets-operator/kubectl-hsm
+module tangled.org/evan.jarrett.net/hsm-secrets-operator/kubectl-hsm
 
 go 1.24.0
 

@@ -26,8 +26,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-logr/logr"
 
-	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/reconcile"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/hsm"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/reconcile"
 )
 
 // WriteResult represents the result of writing to a single device

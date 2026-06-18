@@ -19,7 +19,7 @@ package api
 import (
 	"time"
 
-	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/hsm"
 )
 
 // SecretFormat defines the format of the secret data

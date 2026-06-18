@@ -25,9 +25,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	"github.com/evanjarrett/hsm-secrets-operator/internal/modes/agent"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/modes/discovery"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/modes/manager"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/modes/agent"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/modes/discovery"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/modes/manager"
 )
 
 func main() {

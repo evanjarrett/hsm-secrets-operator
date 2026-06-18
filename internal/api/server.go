@@ -28,11 +28,11 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/evanjarrett/hsm-secrets-operator/api/v1alpha1"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/agent"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/hsm"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/security"
-	"github.com/evanjarrett/hsm-secrets-operator/internal/trigger"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/api/v1alpha1"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/agent"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/hsm"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/security"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/trigger"
 )
 
 // Server represents the HSM REST API server that proxies requests to agent pods

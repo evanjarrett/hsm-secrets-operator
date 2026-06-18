@@ -30,7 +30,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/evanjarrett/hsm-secrets-operator/kubectl-hsm/pkg/auth"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/kubectl-hsm/pkg/auth"
 )
 
 // Client provides methods for interacting with the HSM operator API

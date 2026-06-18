@@ -1,8 +1,6 @@
-module github.com/evanjarrett/hsm-secrets-operator
+module tangled.org/evan.jarrett.net/hsm-secrets-operator
 
 go 1.26.4
-
-toolchain go1.26.4
 
 require (
 	github.com/gin-gonic/gin v1.10.1
