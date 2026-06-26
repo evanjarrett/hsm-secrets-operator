@@ -7,8 +7,11 @@ VERSION?=dev
 BUILD_DIR=bin
 DIST_DIR=dist
 
+# System-wide install location (override with: make install-system SYSTEM_BIN_DIR=/usr/bin)
+SYSTEM_BIN_DIR?=/usr/local/bin
+
 # Go build settings
-GO_VERSION=1.24
+GO_VERSION=1.26
 CGO_ENABLED=0
 LDFLAGS=-ldflags "-s -w -X main.version=$(VERSION)"
 
@@ -59,9 +62,9 @@ install: build
 # Install to system-wide location (requires sudo)
 .PHONY: install-system
 install-system: build
-	@echo "Installing kubectl-hsm to /usr/local/sbin/..."
-	@sudo cp $(BUILD_DIR)/$(PLUGIN_NAME) /usr/local/sbin/
-	@echo "✅ Installed to /usr/local/sbin/$(PLUGIN_NAME)"
+	@echo "Installing kubectl-hsm to $(SYSTEM_BIN_DIR)/..."
+	@sudo cp $(BUILD_DIR)/$(PLUGIN_NAME) $(SYSTEM_BIN_DIR)/
+	@echo "✅ Installed to $(SYSTEM_BIN_DIR)/$(PLUGIN_NAME)"
 	@echo ""
 	@echo "Plugin is now available system-wide:"
 	@echo "  kubectl hsm --help"
@@ -149,7 +152,7 @@ help:
 	@echo "  build         - Build for current platform"
 	@echo "  build-all     - Build for all supported platforms"
 	@echo "  install       - Install to ~/bin/"
-	@echo "  install-system - Install to /usr/local/bin/ (requires sudo)"
+	@echo "  install-system - Install to \$$(SYSTEM_BIN_DIR) (requires sudo)"
 	@echo "  install-script - Generate installation script"
 	@echo "  package       - Create distribution packages"
 	@echo "  checksums     - Generate checksums for packages"
@@ -161,8 +164,8 @@ help:
 	@echo "  help          - Show this help"
 	@echo ""
 	@echo "Variables:"
-	@echo "  VERSION       - Plugin version (default: dev)"
-	@echo "  INSTALL_DIR   - Installation directory (default: /usr/local/bin)"
+	@echo "  VERSION        - Plugin version (default: dev)"
+	@echo "  SYSTEM_BIN_DIR - install-system target dir (default: /usr/local/bin)"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make build"

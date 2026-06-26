@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -38,6 +39,15 @@ import (
 const (
 	operatorServiceName = "hsm-secrets-operator-api"
 	operatorServicePort = 8090
+
+	// defaultOperatorNamespace is the well-known namespace the operator is
+	// installed into by default. Used as a last-resort fallback when the
+	// namespace is neither specified nor discoverable.
+	defaultOperatorNamespace = "hsm-secrets-operator-system"
+
+	// operatorNamespaceEnvVar lets users pin the operator namespace without
+	// passing --namespace on every invocation.
+	operatorNamespaceEnvVar = "HSM_OPERATOR_NAMESPACE"
 )
 
 // KubectlUtil provides kubectl integration utilities
@@ -59,11 +69,17 @@ func NewKubectlUtil(namespace string) (*KubectlUtil, error) {
 		return nil, fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
 
-	// Use provided namespace or get current namespace from kubeconfig
+	// Resolve the operator namespace. Precedence:
+	//   1. Explicit --namespace flag (the `namespace` argument)
+	//   2. HSM_OPERATOR_NAMESPACE environment variable
+	//   3. Cluster discovery: locate the operator service in any namespace
+	//   4. Well-known default (defaultOperatorNamespace)
+	// Note: this deliberately does NOT fall back to the current kubeconfig
+	// context namespace, since the operator rarely lives there.
 	if namespace == "" {
-		namespace, err = getCurrentNamespace()
+		namespace, err = resolveOperatorNamespace(clientset)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get current namespace: %w", err)
+			return nil, err
 		}
 	}
 
@@ -72,6 +88,59 @@ func NewKubectlUtil(namespace string) (*KubectlUtil, error) {
 		clientset: clientset,
 		namespace: namespace,
 	}, nil
+}
+
+// resolveOperatorNamespace determines which namespace the HSM operator runs in
+// when one is not explicitly provided. It checks the environment variable, then
+// attempts to discover the operator service cluster-wide, and finally falls back
+// to the well-known default namespace. If the operator is found in more than one
+// namespace the result is ambiguous and an error is returned asking the user to
+// disambiguate with --namespace.
+func resolveOperatorNamespace(clientset *kubernetes.Clientset) (string, error) {
+	if ns := os.Getenv(operatorNamespaceEnvVar); ns != "" {
+		return ns, nil
+	}
+
+	namespaces, err := discoverOperatorNamespaces(clientset)
+	if err != nil {
+		// Discovery failed (e.g. insufficient RBAC to list services
+		// cluster-wide). Fall back to the well-known default.
+		return defaultOperatorNamespace, nil
+	}
+
+	switch len(namespaces) {
+	case 0:
+		// Not found anywhere we can see; let the default apply and surface a
+		// clearer "not installed / wrong namespace" error downstream.
+		return defaultOperatorNamespace, nil
+	case 1:
+		return namespaces[0], nil
+	default:
+		return "", fmt.Errorf("HSM operator found in multiple namespaces: %s\n\nPlease specify which one with --namespace/-n (or set %s)",
+			strings.Join(namespaces, ", "), operatorNamespaceEnvVar)
+	}
+}
+
+// discoverOperatorNamespaces searches all namespaces for the operator API
+// service and returns every namespace it is found in. Requires cluster-wide
+// permission to list services.
+func discoverOperatorNamespaces(clientset *kubernetes.Clientset) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	svcList, err := clientset.CoreV1().Services(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
+		FieldSelector: fmt.Sprintf("metadata.name=%s", operatorServiceName),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	namespaces := make([]string, 0, len(svcList.Items))
+	for _, svc := range svcList.Items {
+		namespaces = append(namespaces, svc.Namespace)
+	}
+
+	return namespaces, nil
 }
 
 // GetCurrentNamespace returns the current namespace from kubeconfig
@@ -240,30 +309,6 @@ func getKubeConfig() (*rest.Config, error) {
 	}
 
 	return config, nil
-}
-
-// getCurrentNamespace gets the current namespace from kubeconfig
-func getCurrentNamespace() (string, error) {
-	kubeconfig := os.Getenv("KUBECONFIG")
-	if kubeconfig == "" {
-		kubeconfig = filepath.Join(os.Getenv("HOME"), ".kube", "config")
-	}
-
-	configLoader := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfig},
-		&clientcmd.ConfigOverrides{},
-	)
-
-	namespace, _, err := configLoader.Namespace()
-	if err != nil {
-		return "", fmt.Errorf("failed to get namespace from kubeconfig: %w", err)
-	}
-
-	if namespace == "" {
-		namespace = "default"
-	}
-
-	return namespace, nil
 }
 
 // CreateClient creates an HSM API client with automatic authentication
