@@ -12,21 +12,23 @@ environment:
 steps:
   - name: Login to registry
     command: |
+      REPO_DID_ENCODED=$(printf '%s' "${TANGLED_REPO_DID}" | sed 's/:/-/g')
       echo "${APP_PASSWORD}" | buildah login \
-        -u "${TANGLED_REPO_HANDLE}" \
+        -u "${REPO_DID_ENCODED}" \
         --password-stdin \
         ${IMAGE_REGISTRY}
 
   - name: Build and push image
     command: |
+      REPO_DID_ENCODED=$(printf '%s' "${TANGLED_REPO_DID}" | sed 's/:/-/g')
       buildah bud \
-        --tag ${IMAGE_REGISTRY}/${TANGLED_REPO_HANDLE}/${TANGLED_REPO_NAME}:${TANGLED_REF_NAME} \
-        --tag ${IMAGE_REGISTRY}/${TANGLED_REPO_HANDLE}/${TANGLED_REPO_NAME}:latest \
+        --tag ${IMAGE_REGISTRY}/${REPO_DID_ENCODED}/${TANGLED_REPO_NAME}:${TANGLED_REF_NAME} \
+        --tag ${IMAGE_REGISTRY}/${REPO_DID_ENCODED}/${TANGLED_REPO_NAME}:latest \
         --file ./Dockerfile \
         .
 
       buildah push \
-        ${IMAGE_REGISTRY}/${TANGLED_REPO_HANDLE}/${TANGLED_REPO_NAME}:${TANGLED_REF_NAME}
+        ${IMAGE_REGISTRY}/${REPO_DID_ENCODED}/${TANGLED_REPO_NAME}:${TANGLED_REF_NAME}
 
       buildah push \
-        ${IMAGE_REGISTRY}/${TANGLED_REPO_HANDLE}/${TANGLED_REPO_NAME}:latest
+        ${IMAGE_REGISTRY}/${REPO_DID_ENCODED}/${TANGLED_REPO_NAME}:latest
