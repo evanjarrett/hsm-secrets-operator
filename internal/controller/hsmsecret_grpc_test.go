@@ -59,10 +59,10 @@ func TestHSMSecretControllerGRPCIntegration(t *testing.T) {
 		Spec: hsmv1alpha1.HSMDeviceSpec{
 			DeviceType: hsmv1alpha1.HSMDeviceTypePicoHSM,
 			Discovery: &hsmv1alpha1.DiscoverySpec{
-				USB: &hsmv1alpha1.USBDeviceSpec{
+				USB: []hsmv1alpha1.USBDeviceSpec{{
 					VendorID:  "20a0",
 					ProductID: "4230",
-				},
+				}},
 			},
 		},
 	}

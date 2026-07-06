@@ -115,8 +115,8 @@ curl http://localhost:8090/api/v1/health
 spec:
   deviceType: PicoHSM  # or SmartCardHSM, Generic
   usb:
-    vendorId: "20a0"
-    productId: "4230"
+    - vendorId: "20a0"
+      productId: "4230"
   nodeSelector:
     hsm.j5t.io/enabled: "true"
   mirroring:

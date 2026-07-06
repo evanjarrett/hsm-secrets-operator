@@ -23,8 +23,8 @@ spec:
     # Use auto-discovery for test environment
     autoDiscovery: true
     usb:
-      vendorId: "20a0"
-      productId: "4230"
+      - vendorId: "20a0"
+        productId: "4230"
   pkcs11:
     # No libraryPath specified - will use mock client in test mode
     slotId: 0

@@ -169,9 +169,11 @@ hsmdevice:
   #     maxDevices: 5
   #     # Discovery configuration
   #     discovery:
+  #       # Broad auto-discovery via the CCID Info.plist allowlist (single-bucket only).
+  #       # Or pin explicitly with a usb list (cherry-pick by serial for multiple devices):
   #       usb:
-  #         vendorId: "20a0"
-  #         productId: "4230"
+  #         - vendorId: "20a0"
+  #           productId: "4230"
   #     # PKCS#11 configuration
   #     pkcs11:
   #       libraryPath: "/usr/lib/libsc-hsm-pkcs11.so"
@@ -186,8 +188,8 @@ hsmdevice:
   #     # Discovery configuration
   #     discovery:
   #       usb:
-  #         vendorId: "04e6"
-  #         productId: "5816"
+  #         - vendorId: "04e6"
+  #           productId: "5816"
   #     # PKCS#11 configuration
   #     pkcs11:
   #       libraryPath: "/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so"
@@ -202,8 +204,8 @@ hsmdevice:
   #     maxDevices: 2
   #     discovery:
   #       usb:
-  #         vendorId: "1050"
-  #         productId: "0407"
+  #         - vendorId: "1050"
+  #           productId: "0407"
   #     pkcs11:
   #       libraryPath: "/usr/lib/x86_64-linux-gnu/libykcs11.so"
   #       slotId: 9

@@ -231,13 +231,23 @@ func (d *DiscoveryAgent) performDiscovery(ctx context.Context) error {
 	}
 
 	// Process each HSMDevice
+	current := make(map[string]struct{}, len(hsmDeviceList.Items))
 	for _, hsmDevice := range hsmDeviceList.Items {
+		current[hsmDevice.Name] = struct{}{}
 		if err := d.processHSMDevice(ctx, &hsmDevice); err != nil {
 			d.logger.Error(err, "Failed to process HSMDevice", "device", hsmDevice.Name)
 		}
 
 		// Register USB specs for event monitoring
 		d.registerSpecForMonitoring(&hsmDevice)
+	}
+
+	// Prune monitoring criteria for HSMDevices that no longer exist
+	for _, name := range d.usbDiscoverer.MonitoredDeviceNames() {
+		if _, ok := current[name]; !ok {
+			d.usbDiscoverer.RemoveSpecFromMonitoring(name)
+			delete(d.deviceTypes, name)
+		}
 	}
 
 	return nil
@@ -286,23 +296,30 @@ func (d *DiscoveryAgent) processHSMDevice(ctx context.Context, hsmDevice *hsmv1a
 	return nil
 }
 
+// buildMatchCriteria translates an HSMDevice's discovery spec into the match
+// criteria evaluated against USB devices: autoDiscovery (CCID allowlist) unioned
+// with any explicit usb selectors. An HSMDevice with no discovery config at all
+// defaults to broad auto-discovery (preserving the previous default behavior).
+//
+// NOTE: broad autoDiscovery matches every CCID device and is only disjoint when a
+// single HSMDevice uses it. Running multiple HSMDevice buckets requires pinning
+// each with explicit usb selectors (cherry-pick by serial); see DiscoverySpec.
+func buildMatchCriteria(hsmDevice *hsmv1alpha1.HSMDevice) discovery.MatchCriteria {
+	disc := hsmDevice.Spec.Discovery
+	if disc == nil {
+		return discovery.MatchCriteria{AutoDiscovery: true}
+	}
+	return discovery.MatchCriteria{
+		AutoDiscovery: disc.AutoDiscovery,
+		Specs:         disc.USB,
+	}
+}
+
 // discoverDevicesForSpec performs actual device discovery based on HSMDevice spec
 func (d *DiscoveryAgent) discoverDevicesForSpec(
 	ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice,
 ) ([]hsmv1alpha1.DiscoveredDevice, error) {
-	var devices []hsmv1alpha1.DiscoveredDevice
-	var err error
-
-	// Perform discovery based on specification
-	if hsmDevice.Spec.Discovery != nil && hsmDevice.Spec.Discovery.USB != nil {
-		devices, err = d.discoverUSBDevices(ctx, hsmDevice)
-	} else if hsmDevice.Spec.Discovery != nil && hsmDevice.Spec.Discovery.AutoDiscovery {
-		devices, err = d.autoDiscoverDevices(ctx, hsmDevice)
-	} else {
-		// Default to auto-discovery
-		devices, err = d.autoDiscoverDevices(ctx, hsmDevice)
-	}
-
+	devices, err := d.discoverUSBDevices(ctx, hsmDevice)
 	if err != nil {
 		return nil, err
 	}
@@ -321,11 +338,11 @@ func (d *DiscoveryAgent) discoverDevicesForSpec(
 	return devices, nil
 }
 
-// discoverUSBDevices discovers devices using USB specifications
+// discoverUSBDevices discovers devices using the HSMDevice's match criteria
 func (d *DiscoveryAgent) discoverUSBDevices(
 	ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice,
 ) ([]hsmv1alpha1.DiscoveredDevice, error) {
-	usbDevices, err := d.usbDiscoverer.DiscoverDevices(ctx, hsmDevice.Spec.Discovery.USB)
+	usbDevices, err := d.usbDiscoverer.DiscoverDevices(ctx, buildMatchCriteria(hsmDevice))
 	if err != nil {
 		return nil, fmt.Errorf("USB discovery failed: %w", err)
 	}
@@ -355,33 +372,6 @@ func (d *DiscoveryAgent) discoverUSBDevices(
 
 	d.logger.V(1).Info("USB device discovery completed", "devicesFound", len(devices))
 	return devices, nil
-}
-
-// autoDiscoverDevices performs auto-discovery based on device type
-func (d *DiscoveryAgent) autoDiscoverDevices(
-	ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice,
-) ([]hsmv1alpha1.DiscoveredDevice, error) {
-	// Get well-known USB specs for device type
-	wellKnownSpecs := discovery.GetWellKnownHSMSpecs()
-	spec, exists := wellKnownSpecs[hsmDevice.Spec.DeviceType]
-
-	if !exists {
-		return nil, fmt.Errorf("no well-known specification for device type %s", hsmDevice.Spec.DeviceType)
-	}
-
-	d.logger.V(1).Info("Using well-known USB specification",
-		"deviceType", hsmDevice.Spec.DeviceType,
-		"vendorId", spec.VendorID,
-		"productId", spec.ProductID)
-
-	// Use the well-known spec for discovery
-	tempDevice := *hsmDevice
-	if tempDevice.Spec.Discovery == nil {
-		tempDevice.Spec.Discovery = &hsmv1alpha1.DiscoverySpec{}
-	}
-	tempDevice.Spec.Discovery.USB = spec
-
-	return d.discoverUSBDevices(ctx, &tempDevice)
 }
 
 // shouldDiscoverOnNode determines if device discovery should run on this node
@@ -683,40 +673,19 @@ func (d *DiscoveryAgent) reconcileDevices(ctx context.Context) error {
 	return nil
 }
 
-// registerSpecForMonitoring registers an HSMDevice specification for event monitoring
+// registerSpecForMonitoring registers an HSMDevice's match criteria for event monitoring
 func (d *DiscoveryAgent) registerSpecForMonitoring(hsmDevice *hsmv1alpha1.HSMDevice) {
 	// Skip if device should not be discovered on this node
 	if !d.shouldDiscoverOnNode(hsmDevice) {
 		return
 	}
 
-	var spec *hsmv1alpha1.USBDeviceSpec
-
-	// Determine the USB spec to monitor
-	if hsmDevice.Spec.Discovery != nil && hsmDevice.Spec.Discovery.USB != nil {
-		spec = hsmDevice.Spec.Discovery.USB
-	} else if hsmDevice.Spec.Discovery != nil && hsmDevice.Spec.Discovery.AutoDiscovery {
-		// Use well-known specs for auto-discovery
-		wellKnownSpecs := discovery.GetWellKnownHSMSpecs()
-		if wellKnownSpec, exists := wellKnownSpecs[hsmDevice.Spec.DeviceType]; exists {
-			spec = wellKnownSpec
-		}
-	} else {
-		// Default to auto-discovery with well-known specs
-		wellKnownSpecs := discovery.GetWellKnownHSMSpecs()
-		if wellKnownSpec, exists := wellKnownSpecs[hsmDevice.Spec.DeviceType]; exists {
-			spec = wellKnownSpec
-		}
-	}
-
-	// Register the spec if we have one
-	if spec != nil {
-		d.usbDiscoverer.AddSpecForMonitoring(hsmDevice.Name, spec)
-		d.logger.V(2).Info("Registered USB spec for event monitoring",
-			"device", hsmDevice.Name,
-			"vendor", spec.VendorID,
-			"product", spec.ProductID)
-	}
+	criteria := buildMatchCriteria(hsmDevice)
+	d.usbDiscoverer.AddSpecForMonitoring(hsmDevice.Name, criteria)
+	d.logger.V(2).Info("Registered USB criteria for event monitoring",
+		"device", hsmDevice.Name,
+		"autoDiscovery", criteria.AutoDiscovery,
+		"explicitSpecs", len(criteria.Specs))
 }
 
 // reregisterAllSpecs re-registers all current HSMDevice specs for monitoring

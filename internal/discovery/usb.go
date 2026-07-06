@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"maps"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -28,10 +29,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	hsmv1alpha1 "tangled.org/evan.jarrett.net/hsm-secrets-operator/api/v1alpha1"
-)
-
-const (
-	picoHSMVendorID = "20a0" // Pico HSM vendor ID
 )
 
 // USBDevice represents a discovered USB device
@@ -53,15 +50,27 @@ type USBEvent struct {
 	HSMDeviceName string // Which HSMDevice spec this event relates to
 }
 
+// MatchCriteria is the per-HSMDevice rule set evaluated against each USB device.
+// A device matches when autoDiscovery is enabled and the device is in the CCID
+// allowlist, OR when it satisfies any explicit spec. The two are unioned, and
+// explicit specs match regardless of the allowlist (so they can bridge IDs not
+// yet known to libccid, or pin a single device by serial number).
+type MatchCriteria struct {
+	AutoDiscovery bool
+	Specs         []hsmv1alpha1.USBDeviceSpec
+}
+
 // USBDiscoverer handles USB device discovery and monitoring
 type USBDiscoverer struct {
-	logger logr.Logger
-	udev   *Udev
+	logger    logr.Logger
+	udev      *Udev
+	allowlist *CCIDAllowlist
 
 	// Event monitoring
 	monitor      *Monitor
 	eventChannel chan USBEvent
-	activeSpecs  map[string]*hsmv1alpha1.USBDeviceSpec
+	activeMu     sync.RWMutex
+	activeSpecs  map[string]MatchCriteria
 }
 
 // NewUSBDiscoverer creates a new USB device discoverer
@@ -73,16 +82,17 @@ func NewUSBDiscoverer() *USBDiscoverer {
 	return &USBDiscoverer{
 		logger:       logger,
 		udev:         udev,
+		allowlist:    LoadCCIDAllowlist(logger),
 		eventChannel: make(chan USBEvent, 100),
-		activeSpecs:  make(map[string]*hsmv1alpha1.USBDeviceSpec),
+		activeSpecs:  make(map[string]MatchCriteria),
 	}
 }
 
-// DiscoverDevices finds USB devices matching the given specification
-func (u *USBDiscoverer) DiscoverDevices(ctx context.Context, spec *hsmv1alpha1.USBDeviceSpec) ([]USBDevice, error) {
+// DiscoverDevices finds USB devices matching the given criteria
+func (u *USBDiscoverer) DiscoverDevices(ctx context.Context, criteria MatchCriteria) ([]USBDevice, error) {
 	u.logger.V(1).Info("Starting USB device discovery",
-		"vendorId", spec.VendorID,
-		"productId", spec.ProductID)
+		"autoDiscovery", criteria.AutoDiscovery,
+		"explicitSpecs", len(criteria.Specs))
 
 	// Create enumerate object
 	enumerate := u.udev.NewEnumerate()
@@ -108,7 +118,7 @@ func (u *USBDiscoverer) DiscoverDevices(ctx context.Context, spec *hsmv1alpha1.U
 	var matchingDevices []USBDevice
 	for _, device := range devices {
 		if usbDev := u.convertUdevDevice(device); usbDev != nil {
-			if u.matchesSpec(*usbDev, spec) {
+			if u.matchesCriteria(*usbDev, criteria) {
 				u.logger.V(1).Info("Found matching USB device",
 					"vendorId", usbDev.VendorID,
 					"productId", usbDev.ProductID,
@@ -145,18 +155,18 @@ func (u *USBDiscoverer) matchesSpec(device USBDevice, spec *hsmv1alpha1.USBDevic
 	return true
 }
 
-// GetWellKnownHSMSpecs returns USB specifications for well-known HSM devices
-func GetWellKnownHSMSpecs() map[hsmv1alpha1.HSMDeviceType]*hsmv1alpha1.USBDeviceSpec {
-	return map[hsmv1alpha1.HSMDeviceType]*hsmv1alpha1.USBDeviceSpec{
-		hsmv1alpha1.HSMDeviceTypePicoHSM: {
-			VendorID:  picoHSMVendorID,
-			ProductID: "4230", // Pico HSM product ID
-		},
-		hsmv1alpha1.HSMDeviceTypeSmartCardHSM: {
-			VendorID:  "04e6", // Example SmartCard-HSM vendor ID
-			ProductID: "5816", // Example SmartCard-HSM product ID
-		},
+// matchesCriteria reports whether a device satisfies an HSMDevice's criteria:
+// the CCID allowlist (when autoDiscovery is on) unioned with any explicit specs.
+func (u *USBDiscoverer) matchesCriteria(device USBDevice, criteria MatchCriteria) bool {
+	if criteria.AutoDiscovery && u.allowlist.Contains(device.VendorID, device.ProductID) {
+		return true
 	}
+	for i := range criteria.Specs {
+		if u.matchesSpec(device, &criteria.Specs[i]) {
+			return true
+		}
+	}
+	return false
 }
 
 // StartEventMonitoring begins real-time USB device event monitoring
@@ -211,19 +221,35 @@ func (u *USBDiscoverer) monitorLoop(ctx context.Context) {
 	}
 }
 
-// AddSpecForMonitoring registers an HSMDevice spec for event monitoring
-func (u *USBDiscoverer) AddSpecForMonitoring(hsmDeviceName string, spec *hsmv1alpha1.USBDeviceSpec) {
-	u.activeSpecs[hsmDeviceName] = spec
-	u.logger.V(2).Info("Added USB spec for monitoring",
+// AddSpecForMonitoring registers an HSMDevice's match criteria for event monitoring
+func (u *USBDiscoverer) AddSpecForMonitoring(hsmDeviceName string, criteria MatchCriteria) {
+	u.activeMu.Lock()
+	u.activeSpecs[hsmDeviceName] = criteria
+	u.activeMu.Unlock()
+	u.logger.V(2).Info("Added USB criteria for monitoring",
 		"device", hsmDeviceName,
-		"vendor", spec.VendorID,
-		"product", spec.ProductID)
+		"autoDiscovery", criteria.AutoDiscovery,
+		"explicitSpecs", len(criteria.Specs))
 }
 
-// RemoveSpecFromMonitoring unregisters an HSMDevice spec from event monitoring
+// RemoveSpecFromMonitoring unregisters an HSMDevice from event monitoring
 func (u *USBDiscoverer) RemoveSpecFromMonitoring(hsmDeviceName string) {
+	u.activeMu.Lock()
 	delete(u.activeSpecs, hsmDeviceName)
-	u.logger.V(2).Info("Removed USB spec from monitoring", "device", hsmDeviceName)
+	u.activeMu.Unlock()
+	u.logger.V(2).Info("Removed USB criteria from monitoring", "device", hsmDeviceName)
+}
+
+// MonitoredDeviceNames returns the HSMDevice names currently registered for
+// event monitoring. Used to prune criteria for HSMDevices that no longer exist.
+func (u *USBDiscoverer) MonitoredDeviceNames() []string {
+	u.activeMu.RLock()
+	defer u.activeMu.RUnlock()
+	names := make([]string, 0, len(u.activeSpecs))
+	for name := range u.activeSpecs {
+		names = append(names, name)
+	}
+	return names
 }
 
 // GetEventChannel returns the channel for receiving USB device events

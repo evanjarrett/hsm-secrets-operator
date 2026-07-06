@@ -3,18 +3,13 @@ FROM golang:1.26.4-trixie AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
-# Install runtime and build dependencies
-RUN apt-get update && apt-get install -y \
-    opensc \
-    pcscd \
-    libccid \
-    libpcsclite1 \
-    libusb-1.0-0 \
-    udev \
-    ca-certificates \
+# Build-only dependency: the sole external lib the CGO build links is libudev
+# (via go-udev). The pkcs11 CGO path vendors its header and dlopen's the module
+# at runtime, so it needs no -dev package. gcc/git come from the golang base.
+# (Runtime libs — opensc/pcscd/libccid/etc — live in the final stage, not here.)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libudev-dev \
-    libpcsclite-dev \
-    libusb-1.0-0-dev \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Create minimal /etc/passwd and /etc/group for nonroot user (65532:65532)
@@ -42,9 +37,14 @@ RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -tags
 # Build test utility for manual testing/debugging
 RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -tags udev -ldflags="-s -w" -o test cmd/test/main.go
 
-# Stage 2: Debian Trixie Slim (minimal but functional for USB hardware interaction)
-# Provides proper runtime environment for libudev USB device enumeration
-FROM debian:trixie-slim
+# Stage 2: Debian Forky Slim (minimal but functional for USB hardware interaction)
+# Provides proper runtime environment for libudev USB device enumeration.
+# forky (testing) ships CCID 1.8.2, whose Info.plist allowlist natively includes
+# the new Pico HSM USB ID 2e8a:10fd (added upstream in CCID 1.8.0). Trixie/stable
+# only has CCID 1.6.2, which does not know that ID, so pcscd there cannot drive a
+# Pico HSM running current firmware. The small runtime package set (opensc, pcscd,
+# libccid, libpcsclite1, libusb-1.0-0) makes tracking testing low-risk here.
+FROM debian:forky-slim
 
 # Install only the essential runtime packages (minimal attack surface)
 RUN apt-get update && apt-get install -y --no-install-recommends \

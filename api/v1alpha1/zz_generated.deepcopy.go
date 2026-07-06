@@ -73,8 +73,8 @@ func (in *DiscoverySpec) DeepCopyInto(out *DiscoverySpec) {
 	*out = *in
 	if in.USB != nil {
 		in, out := &in.USB, &out.USB
-		*out = new(USBDeviceSpec)
-		**out = **in
+		*out = make([]USBDeviceSpec, len(*in))
+		copy(*out, *in)
 	}
 	if in.DevicePath != nil {
 		in, out := &in.DevicePath, &out.DevicePath

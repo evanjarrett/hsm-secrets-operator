@@ -62,8 +62,12 @@ spec:
                 properties:
                   autoDiscovery:
                     default: false
-                    description: AutoDiscovery enables automatic discovery based on
-                      device type
+                    description: |-
+                      AutoDiscovery matches any USB device present in libccid's CCID Info.plist
+                      allowlist (i.e. any smartcard/HSM that pcscd can drive). This is broad: it
+                      is only safe when a single HSMDevice uses it. To run multiple HSMDevice
+                      buckets, keep autoDiscovery off and pin each with explicit usb selectors,
+                      or use one autoDiscovery device to enumerate and then cherry-pick by serial.
                     type: boolean
                   devicePath:
                     description: DevicePath defines path-based device discovery criteria
@@ -80,24 +84,34 @@ spec:
                     - path
                     type: object
                   usb:
-                    description: USB defines USB-based device discovery criteria
-                    properties:
-                      productId:
-                        description: ProductID is the USB product ID (e.g., "4230"
-                          for Pico HSM)
-                        type: string
-                      serialNumber:
-                        description: SerialNumber optionally matches a specific device
-                          serial number
-                        type: string
-                      vendorId:
-                        description: VendorID is the USB vendor ID (e.g., "20a0" for
-                          Pico HSM)
-                        type: string
-                    required:
-                    - productId
-                    - vendorId
-                    type: object
+                    description: |-
+                      USB defines one or more explicit USB selectors. Each entry matches by
+                      vendorId/productId (and optional serialNumber) and is OR-ed with the
+                      others. Explicit selectors match regardless of the CCID allowlist, so
+                      they can pin a specific device (cherry-pick by serial) or bridge a
+                      vendor/product ID that libccid's Info.plist does not yet know about.
+                      When combined with autoDiscovery, the two are unioned.
+                    items:
+                      description: USBDeviceSpec defines USB device identification
+                        criteria
+                      properties:
+                        productId:
+                          description: ProductID is the USB product ID (e.g., "4230"
+                            for Pico HSM)
+                          type: string
+                        serialNumber:
+                          description: SerialNumber optionally matches a specific
+                            device serial number
+                          type: string
+                        vendorId:
+                          description: VendorID is the USB vendor ID (e.g., "20a0"
+                            for Pico HSM)
+                          type: string
+                      required:
+                      - productId
+                      - vendorId
+                      type: object
+                    type: array
                 type: object
               maxDevices:
                 default: 10
@@ -146,6 +160,15 @@ spec:
                 description: PKCS11 defines PKCS#11 connection configuration for this
                   device
                 properties:
+                  autoProvision:
+                    default: false
+                    description: |-
+                      AutoProvision, when true, allows the agent to initialize a BLANK/uninitialized
+                      SC-HSM token by generating a random SO-PIN (used once and discarded) and setting
+                      the user PIN from PinSecret. The agent only ever initializes a token that is
+                      positively detected as uninitialized; it never touches an already-initialized
+                      device. Defaults to false.
+                    type: boolean
                   libraryPath:
                     description: LibraryPath is the path to the PKCS#11 library for
                       this device

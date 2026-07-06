@@ -14,9 +14,9 @@ spec:
   discovery:
     # USB device specifications for Pico HSM
     usb:
-      vendorId: "20a0"
-      productId: "4230"
-      # serialNumber: "12345"  # Optional: specific device serial
+      - vendorId: "20a0"
+        productId: "4230"
+        # serialNumber: "12345"  # Optional: specific device serial
     
     # Alternative: Manual path specification
     # devicePath:

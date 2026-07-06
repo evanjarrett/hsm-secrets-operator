@@ -76,27 +76,35 @@ func (u *USBDiscoverer) handleDeviceEvent(device *UDevDevice) {
 		"product", usbDev.ProductID,
 		"serial", usbDev.SerialNumber)
 
-	// Check which active specs match this device
-	for hsmDeviceName, spec := range u.activeSpecs {
-		if u.matchesSpec(*usbDev, spec) {
-			event := USBEvent{
-				Action:        action,
-				Device:        *usbDev,
-				Timestamp:     time.Now(),
-				HSMDeviceName: hsmDeviceName,
-			}
+	// Snapshot the matching HSMDevice names under the lock, then emit events
+	// without holding it (the channel send can block).
+	u.activeMu.RLock()
+	var matched []string
+	for hsmDeviceName, criteria := range u.activeSpecs {
+		if u.matchesCriteria(*usbDev, criteria) {
+			matched = append(matched, hsmDeviceName)
+		}
+	}
+	u.activeMu.RUnlock()
 
-			select {
-			case u.eventChannel <- event:
-				u.logger.V(1).Info("Sent USB event",
-					"action", action,
-					"device", hsmDeviceName,
-					"vendor", usbDev.VendorID,
-					"product", usbDev.ProductID,
-					"serial", usbDev.SerialNumber)
-			default:
-				u.logger.Error(nil, "USB event channel full, dropping event", "action", action)
-			}
+	for _, hsmDeviceName := range matched {
+		event := USBEvent{
+			Action:        action,
+			Device:        *usbDev,
+			Timestamp:     time.Now(),
+			HSMDeviceName: hsmDeviceName,
+		}
+
+		select {
+		case u.eventChannel <- event:
+			u.logger.V(1).Info("Sent USB event",
+				"action", action,
+				"device", hsmDeviceName,
+				"vendor", usbDev.VendorID,
+				"product", usbDev.ProductID,
+				"serial", usbDev.SerialNumber)
+		default:
+			u.logger.Error(nil, "USB event channel full, dropping event", "action", action)
 		}
 	}
 }

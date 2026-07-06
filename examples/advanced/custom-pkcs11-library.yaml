@@ -45,9 +45,9 @@ spec:
   discovery:
     # Custom USB device
     usb:
-      vendorId: "1234"  # Your vendor ID
-      productId: "5678"  # Your product ID
-      # serialNumber: "CUSTOM-001"  # Optional specific device
+      - vendorId: "1234"  # Your vendor ID
+        productId: "5678"  # Your product ID
+        # serialNumber: "CUSTOM-001"  # Optional specific device
   
   # PKCS#11 configuration
   pkcs11:

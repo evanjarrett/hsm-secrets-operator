@@ -175,9 +175,31 @@ func Run(args []string, logLevel string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		if err := hsmClient.Initialize(ctx, hsmConfig); err != nil {
-			setupLog.Error(err, "Failed to initialize PKCS#11 client, falling back to mock client")
-			usePKCS11 = false
+		if initErr := hsmClient.Initialize(ctx, hsmConfig); initErr != nil {
+			setupLog.Error(initErr, "Failed to initialize PKCS#11 client")
+
+			// A blank, freshly-flashed SC-HSM fails Initialize because its token isn't
+			// initialized yet. When the device opts in (AutoProvision) and is positively
+			// detected as blank, initialize it in place and retry.
+			provisioned, requested, perr := attemptAutoProvision(ctx, setupLog, k8sClient, k8sTypedClient,
+				agentConfig.DeviceName, agentConfig.PodNamespace, pinProvider, hsmConfig)
+			switch {
+			case perr != nil:
+				return fmt.Errorf("auto-provisioning device %q failed: %w", agentConfig.DeviceName, perr)
+			case provisioned:
+				if err := hsmClient.Initialize(ctx, hsmConfig); err != nil {
+					return fmt.Errorf("PKCS#11 initialize after provisioning device %q failed: %w", agentConfig.DeviceName, err)
+				}
+				setupLog.Info("HSM client initialized after auto-provisioning", "device", agentConfig.DeviceName)
+			case requested:
+				// AutoProvision was requested but this is not a provisionable blank token
+				// (wrong/locked PIN, already initialized, or removed). Fail loudly — never
+				// serve mock data in place of a real hardware device.
+				return fmt.Errorf("device %q failed PKCS#11 initialize and is not an eligible blank token for auto-provisioning; refusing mock fallback: %w", agentConfig.DeviceName, initErr)
+			default:
+				setupLog.Error(initErr, "Falling back to mock client")
+				usePKCS11 = false
+			}
 		}
 	}
 

@@ -60,10 +60,10 @@ var _ = Describe("HSMPoolReconciler with Manager-Owned DaemonSets", func() {
 				Spec: hsmv1alpha1.HSMDeviceSpec{
 					DeviceType: "PicoHSM",
 					Discovery: &hsmv1alpha1.DiscoverySpec{
-						USB: &hsmv1alpha1.USBDeviceSpec{
+						USB: []hsmv1alpha1.USBDeviceSpec{{
 							VendorID:  "20a0",
 							ProductID: "4230",
-						},
+						}},
 					},
 				},
 			}

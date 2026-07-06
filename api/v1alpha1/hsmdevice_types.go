@@ -115,6 +115,15 @@ type PKCS11Config struct {
 	// TokenLabel optionally specifies the token label to match
 	// +optional
 	TokenLabel string `json:"tokenLabel,omitempty"`
+
+	// AutoProvision, when true, allows the agent to initialize a BLANK/uninitialized
+	// SC-HSM token by generating a random SO-PIN (used once and discarded) and setting
+	// the user PIN from PinSecret. The agent only ever initializes a token that is
+	// positively detected as uninitialized; it never touches an already-initialized
+	// device. Defaults to false.
+	// +kubebuilder:default=false
+	// +optional
+	AutoProvision bool `json:"autoProvision,omitempty"`
 }
 
 // SecretKeySelector selects a key from a Secret
@@ -132,15 +141,24 @@ type SecretKeySelector struct {
 
 // DiscoverySpec defines how to discover HSM devices
 type DiscoverySpec struct {
-	// USB defines USB-based device discovery criteria
+	// USB defines one or more explicit USB selectors. Each entry matches by
+	// vendorId/productId (and optional serialNumber) and is OR-ed with the
+	// others. Explicit selectors match regardless of the CCID allowlist, so
+	// they can pin a specific device (cherry-pick by serial) or bridge a
+	// vendor/product ID that libccid's Info.plist does not yet know about.
+	// When combined with autoDiscovery, the two are unioned.
 	// +optional
-	USB *USBDeviceSpec `json:"usb,omitempty"`
+	USB []USBDeviceSpec `json:"usb,omitempty"`
 
 	// DevicePath defines path-based device discovery criteria
 	// +optional
 	DevicePath *DevicePathSpec `json:"devicePath,omitempty"`
 
-	// AutoDiscovery enables automatic discovery based on device type
+	// AutoDiscovery matches any USB device present in libccid's CCID Info.plist
+	// allowlist (i.e. any smartcard/HSM that pcscd can drive). This is broad: it
+	// is only safe when a single HSMDevice uses it. To run multiple HSMDevice
+	// buckets, keep autoDiscovery off and pin each with explicit usb selectors,
+	// or use one autoDiscovery device to enumerate and then cherry-pick by serial.
 	// +kubebuilder:default=false
 	// +optional
 	AutoDiscovery bool `json:"autoDiscovery,omitempty"`

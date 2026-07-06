@@ -119,8 +119,8 @@ metadata:
 spec:
   deviceType: Generic
   usb:
-    vendorId: "1050"  # Yubico
-    productId: "0407"  # YubiKey 4/5 Series
+    - vendorId: "1050"  # Yubico
+      productId: "0407"  # YubiKey 4/5 Series
   pkcs11LibraryPath: "/usr/lib/x86_64-linux-gnu/libykcs11.so.1"
   nodeSelector:
     yubikey.enabled: "true"
@@ -163,8 +163,8 @@ metadata:
 spec:
   deviceType: Generic
   usb:
-    vendorId: "ABCD"
-    productId: "1234"
+    - vendorId: "ABCD"
+      productId: "1234"
   pkcs11LibraryPath: "/opt/vendor-hsm/lib/libvendor-pkcs11.so"
   nodeSelector:
     vendor-hsm.installed: "true"
@@ -255,8 +255,8 @@ metadata:
 spec:
   deviceType: Generic
   usb:
-    vendorId: "1111"
-    productId: "AAAA"
+    - vendorId: "1111"
+      productId: "AAAA"
   pkcs11LibraryPath: "/opt/vendor-a/lib/libvendor-a-pkcs11.so"
   nodeSelector:
     hsm.vendor: "vendor-a"
@@ -270,8 +270,8 @@ metadata:
 spec:
   deviceType: Generic
   usb:
-    vendorId: "2222"
-    productId: "BBBB"
+    - vendorId: "2222"
+      productId: "BBBB"
   pkcs11LibraryPath: "/opt/vendor-b/lib/libvendor-b-pkcs11.so"
   nodeSelector:
     hsm.vendor: "vendor-b"

@@ -21,9 +21,9 @@ Configure HSM device discovery for non-standard devices or custom paths:
 ```yaml
 # Custom USB device
 usb:
-  vendorId: "1234"
-  productId: "5678"
-  serialNumber: "CUSTOM-HSM-001"
+  - vendorId: "1234"
+    productId: "5678"
+    serialNumber: "CUSTOM-HSM-001"
 
 # Custom device path
 devicePath:

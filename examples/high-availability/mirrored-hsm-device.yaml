@@ -17,8 +17,8 @@ spec:
   discovery:
     # USB discovery for Pico HSM
     usb:
-      vendorId: "20a0"
-      productId: "4230"
+      - vendorId: "20a0"
+        productId: "4230"
   
   # PKCS#11 configuration
   pkcs11:

@@ -142,22 +142,79 @@ func TestMatchesSpec(t *testing.T) {
 	}
 }
 
-func TestGetWellKnownHSMSpecs(t *testing.T) {
-	specs := GetWellKnownHSMSpecs()
+func TestMatchesCriteria(t *testing.T) {
+	discoverer := NewUSBDiscoverer()
+	// Stub a deterministic allowlist (20a0:4230 is the masquerade Nitrokey ID).
+	discoverer.allowlist = &CCIDAllowlist{pairs: map[string]bool{"20a0:4230": true}}
 
-	assert.NotEmpty(t, specs)
+	pico := USBDevice{VendorID: "20a0", ProductID: "4230", SerialNumber: "AAAA"}
+	picoNew := USBDevice{VendorID: "2e8a", ProductID: "10fd", SerialNumber: "BBBB"}
+	picoNew2 := USBDevice{VendorID: "2e8a", ProductID: "10fd", SerialNumber: "CCCC"}
 
-	// Check Pico HSM
-	picoSpec, exists := specs[hsmv1alpha1.HSMDeviceTypePicoHSM]
-	assert.True(t, exists)
-	assert.Equal(t, "20a0", picoSpec.VendorID)
-	assert.Equal(t, "4230", picoSpec.ProductID)
+	tests := []struct {
+		name     string
+		device   USBDevice
+		criteria MatchCriteria
+		want     bool
+	}{
+		{
+			name:     "autoDiscovery hits allowlist",
+			device:   pico,
+			criteria: MatchCriteria{AutoDiscovery: true},
+			want:     true,
+		},
+		{
+			name:     "autoDiscovery misses non-allowlisted device",
+			device:   picoNew,
+			criteria: MatchCriteria{AutoDiscovery: true},
+			want:     false,
+		},
+		{
+			name:   "explicit spec overrides allowlist (bridge new firmware)",
+			device: picoNew,
+			criteria: MatchCriteria{
+				Specs: []hsmv1alpha1.USBDeviceSpec{{VendorID: "2e8a", ProductID: "10fd"}},
+			},
+			want: true,
+		},
+		{
+			name:   "union: auto for fleet plus explicit bridge",
+			device: picoNew,
+			criteria: MatchCriteria{
+				AutoDiscovery: true,
+				Specs:         []hsmv1alpha1.USBDeviceSpec{{VendorID: "2e8a", ProductID: "10fd"}},
+			},
+			want: true,
+		},
+		{
+			name:   "serial cherry-pick selects exactly one of two same-model devices",
+			device: picoNew,
+			criteria: MatchCriteria{
+				Specs: []hsmv1alpha1.USBDeviceSpec{{VendorID: "2e8a", ProductID: "10fd", SerialNumber: "BBBB"}},
+			},
+			want: true,
+		},
+		{
+			name:   "serial cherry-pick rejects the other same-model device",
+			device: picoNew2,
+			criteria: MatchCriteria{
+				Specs: []hsmv1alpha1.USBDeviceSpec{{VendorID: "2e8a", ProductID: "10fd", SerialNumber: "BBBB"}},
+			},
+			want: false,
+		},
+		{
+			name:     "empty criteria matches nothing",
+			device:   pico,
+			criteria: MatchCriteria{},
+			want:     false,
+		},
+	}
 
-	// Check SmartCard HSM
-	smartCardSpec, exists := specs[hsmv1alpha1.HSMDeviceTypeSmartCardHSM]
-	assert.True(t, exists)
-	assert.Equal(t, "04e6", smartCardSpec.VendorID)
-	assert.Equal(t, "5816", smartCardSpec.ProductID)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, discoverer.matchesCriteria(tt.device, tt.criteria))
+		})
+	}
 }
 
 func TestUSBEvent(t *testing.T) {
@@ -182,19 +239,21 @@ func TestUSBEvent(t *testing.T) {
 func TestAddSpecForMonitoring(t *testing.T) {
 	discoverer := NewUSBDiscoverer()
 
-	spec := &hsmv1alpha1.USBDeviceSpec{
-		VendorID:  "20a0",
-		ProductID: "4230",
+	criteria := MatchCriteria{
+		AutoDiscovery: true,
+		Specs:         []hsmv1alpha1.USBDeviceSpec{{VendorID: "20a0", ProductID: "4230"}},
 	}
 
-	// Test adding spec
-	discoverer.AddSpecForMonitoring("test-device", spec)
-	assert.Equal(t, spec, discoverer.activeSpecs["test-device"])
+	// Test adding criteria
+	discoverer.AddSpecForMonitoring("test-device", criteria)
+	assert.Equal(t, criteria, discoverer.activeSpecs["test-device"])
+	assert.Equal(t, []string{"test-device"}, discoverer.MonitoredDeviceNames())
 
-	// Test removing spec
+	// Test removing criteria
 	discoverer.RemoveSpecFromMonitoring("test-device")
 	_, exists := discoverer.activeSpecs["test-device"]
 	assert.False(t, exists)
+	assert.Empty(t, discoverer.MonitoredDeviceNames())
 }
 
 func TestGetEventChannel(t *testing.T) {

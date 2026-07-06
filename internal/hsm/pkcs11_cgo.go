@@ -146,6 +146,55 @@ func initializePKCS11(config Config, pin string) (*Session, uint, error) {
 	}, targetSlot, nil
 }
 
+// isTokenBlankPKCS11 reports whether the library exposes exactly one token that is
+// present but not yet provisioned (no user PIN set). It opens its own context (no login)
+// and inspects token flags.
+//
+// The discriminator is CKF_USER_PIN_INITIALIZED, NOT CKF_TOKEN_INITIALIZED: a
+// freshly-flashed Pico HSM already reports CKF_TOKEN_INITIALIZED (its PKCS#15 structure
+// exists in firmware) but has no user PIN yet. A device whose user PIN has been set —
+// including one whose PIN is merely locked — reports CKF_USER_PIN_INITIALIZED and is
+// therefore treated as NOT blank, so we never re-initialize (wipe) a device in use.
+//
+// It returns true ONLY when exactly one token-present slot lacks a user PIN. Any error,
+// zero blank tokens, or more than one blank token returns false so the caller never
+// provisions (and thus never wipes) by accident. Non-blank tokens sharing the reader set
+// (e.g. a YubiKey) are ignored because their user PIN is already initialized.
+func isTokenBlankPKCS11(config Config) (bool, error) {
+	ctx := pkcs11.New(config.PKCS11LibraryPath)
+	if ctx == nil {
+		return false, fmt.Errorf("failed to create PKCS#11 context for library: %s", config.PKCS11LibraryPath)
+	}
+	if err := ctx.Initialize(); err != nil {
+		ctx.Destroy()
+		return false, fmt.Errorf("failed to initialize PKCS#11 library: %w", err)
+	}
+	defer func() {
+		_ = ctx.Finalize()
+		ctx.Destroy()
+	}()
+
+	// true = only slots with a token present
+	slots, err := ctx.GetSlotList(true)
+	if err != nil {
+		return false, fmt.Errorf("failed to get slot list: %w", err)
+	}
+
+	blankCount := 0
+	for _, slot := range slots {
+		tokenInfo, err := ctx.GetTokenInfo(slot)
+		if err != nil {
+			return false, fmt.Errorf("failed to get token info for slot %d: %w", slot, err)
+		}
+		if tokenInfo.Flags&pkcs11.CKF_USER_PIN_INITIALIZED == 0 {
+			blankCount++
+		}
+	}
+
+	// Fail closed: only a single, unambiguous, unprovisioned token counts as blank.
+	return blankCount == 1, nil
+}
+
 // closePKCS11 terminates the HSM connection
 func closePKCS11(session *Session) error {
 	if session == nil {

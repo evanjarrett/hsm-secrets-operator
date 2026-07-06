@@ -215,10 +215,10 @@ func TestHSMDevice(t *testing.T) {
 		Spec: HSMDeviceSpec{
 			DeviceType: HSMDeviceTypePicoHSM,
 			Discovery: &DiscoverySpec{
-				USB: &USBDeviceSpec{
+				USB: []USBDeviceSpec{{
 					VendorID:  "20a0",
 					ProductID: "4230",
-				},
+				}},
 			},
 			PKCS11: &PKCS11Config{
 				LibraryPath: "/usr/lib/opensc-pkcs11.so",
@@ -230,8 +230,8 @@ func TestHSMDevice(t *testing.T) {
 	assert.Equal(t, "pico-hsm-1", device.Name)
 	assert.Equal(t, "HSMDevice", device.Kind)
 	assert.Equal(t, HSMDeviceTypePicoHSM, device.Spec.DeviceType)
-	assert.NotNil(t, device.Spec.Discovery.USB)
-	assert.Equal(t, "20a0", device.Spec.Discovery.USB.VendorID)
+	assert.Len(t, device.Spec.Discovery.USB, 1)
+	assert.Equal(t, "20a0", device.Spec.Discovery.USB[0].VendorID)
 	assert.NotNil(t, device.Spec.PKCS11)
 	assert.Equal(t, "/usr/lib/opensc-pkcs11.so", device.Spec.PKCS11.LibraryPath)
 }

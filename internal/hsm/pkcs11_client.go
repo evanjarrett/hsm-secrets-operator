@@ -73,6 +73,22 @@ func NewPKCS11Client() *PKCS11Client {
 	}
 }
 
+// IsTokenBlank reports whether the PKCS#11 library currently exposes exactly one
+// token that is present but not yet provisioned — i.e. it has no user PIN set
+// (CKF_USER_PIN_INITIALIZED absent). A freshly-flashed Pico HSM reports
+// CKF_TOKEN_INITIALIZED yet has no user PIN, so the user-PIN flag is the correct
+// "safe to provision" signal. It performs NO login. The check is intentionally
+// conservative and fails closed: it returns true only for a single, unambiguous,
+// unprovisioned token, so an accidental re-initialize (which would wipe an existing
+// device) can never be triggered by a transient error, a locked PIN (whose user PIN
+// *is* initialized), or another smartcard sharing the reader set.
+func IsTokenBlank(ctx context.Context, config Config) (bool, error) {
+	if config.PKCS11LibraryPath == "" {
+		return false, fmt.Errorf("PKCS11LibraryPath is required")
+	}
+	return isTokenBlankPKCS11(config)
+}
+
 // Initialize establishes connection to the HSM via PKCS#11
 func (c *PKCS11Client) Initialize(ctx context.Context, config Config) error {
 	c.mutex.Lock()

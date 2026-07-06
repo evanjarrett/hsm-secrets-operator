@@ -67,10 +67,10 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 				Spec: hsmv1alpha1.HSMDeviceSpec{
 					DeviceType: "PicoHSM",
 					Discovery: &hsmv1alpha1.DiscoverySpec{
-						USB: &hsmv1alpha1.USBDeviceSpec{
+						USB: []hsmv1alpha1.USBDeviceSpec{{
 							VendorID:  "20a0",
 							ProductID: "4230",
-						},
+						}},
 					},
 					PKCS11: &hsmv1alpha1.PKCS11Config{
 						LibraryPath: "/usr/lib/libsc-hsm-pkcs11.so",

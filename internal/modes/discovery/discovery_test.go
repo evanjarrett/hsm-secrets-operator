@@ -917,10 +917,10 @@ func TestMaxDevicesWithDifferentDiscoveryTypes(t *testing.T) {
 		{
 			name: "maxDevices with USB discovery",
 			discoverySpec: &hsmv1alpha1.DiscoverySpec{
-				USB: &hsmv1alpha1.USBDeviceSpec{
+				USB: []hsmv1alpha1.USBDeviceSpec{{
 					VendorID:  "20a0",
 					ProductID: "4230",
-				},
+				}},
 			},
 			maxDevices:  2,
 			description: "USB discovery with maxDevices limit",
@@ -964,9 +964,9 @@ func TestMaxDevicesWithDifferentDiscoveryTypes(t *testing.T) {
 
 			// Verify discovery spec is correctly configured
 			if tt.discoverySpec.USB != nil {
-				assert.NotNil(t, hsmDevice.Spec.Discovery.USB)
-				assert.Equal(t, "20a0", hsmDevice.Spec.Discovery.USB.VendorID)
-				assert.Equal(t, "4230", hsmDevice.Spec.Discovery.USB.ProductID)
+				assert.Len(t, hsmDevice.Spec.Discovery.USB, 1)
+				assert.Equal(t, "20a0", hsmDevice.Spec.Discovery.USB[0].VendorID)
+				assert.Equal(t, "4230", hsmDevice.Spec.Discovery.USB[0].ProductID)
 			}
 
 			if tt.discoverySpec.DevicePath != nil {

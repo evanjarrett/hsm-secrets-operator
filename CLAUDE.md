@@ -142,7 +142,7 @@ make quality test         # Verify changes
 
 ### Docker & Deployment
 ```bash
-# Production image (FROM scratch base - ultra-minimal ~15MB)
+# Production image (debian:forky-slim runtime with OpenSC/PCSC tooling)
 make docker-build IMG=hsm-secrets-operator:latest
 
 # Multi-arch build (supports amd64 and arm64)
@@ -156,13 +156,22 @@ make build-installer IMG=hsm-secrets-operator:latest
 ```
 
 **Container Architecture:**
-- **Base Image**: FROM scratch (no distro, no shell - maximum security)
-- **Size**: ~15MB (vs ~30MB with distroless:debug)
-- **Security**: Minimal attack surface - only essential binaries and libraries
-- **Dependencies**: Auto-discovered via iterative ldd/strings analysis in builder stage
-- **Multi-arch**: Supports x86_64 and arm64 via dynamic linker auto-detection
+- **Base Image**: `debian:forky-slim` (testing) — chosen over trixie/stable because forky ships
+  CCID 1.8.2, whose Info.plist allowlist natively includes the current Pico HSM USB ID
+  `2e8a:10fd` (trixie's CCID 1.6.2 does not, so its pcscd cannot drive current-firmware Pico
+  HSMs). The Go builder stage stays on `golang:...-trixie`; compiling against trixie glibc and
+  running on forky glibc is the safe forward-compatible direction (verified).
+- **Runtime packages** (apt-installed): `opensc`, `pcscd`, `libccid`, `libpcsclite1`,
+  `libusb-1.0-0`, `ca-certificates`
+- **CCID Info.plist path note**: Debian (both trixie and forky) ships the driver bundle at
+  `/usr/lib/pcsc/drivers/ifd-ccid.bundle/Contents/Info.plist` (symlinked to
+  `/etc/libccid_Info.plist`). Discovery globs this plus multiarch/`/usr/lib64`/source-build
+  fallbacks for other distros (`internal/discovery/ccid_allowlist.go`).
+- **Security**: runs as nonroot (65532) by default; agent mode overrides to root via
+  Kubernetes securityContext for USB device access
+- **Multi-arch**: Supports amd64 and arm64 (docker buildx)
 - **Process Management**: Direct binary execution with Go-managed pcscd lifecycle
-- **No Shell**: All process management handled in Go code (internal/agent/pcscd_manager.go)
+  (`internal/agent/pcscd_manager.go`) — no shell scripts, though the base image does include `/bin/sh`
 
 ## CRD Structure and Relationships
 

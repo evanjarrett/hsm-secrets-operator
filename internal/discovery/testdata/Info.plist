@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>ifdManufacturerString</key>
+	<string>Ludovic Rousseau (ludovic.rousseau@free.fr)</string>
+
+	<key>ifdProductString</key>
+	<string>Generic CCID driver</string>
+
+	<key>ifdVendorID</key>
+	<array>
+		<string>0x20A0</string>
+		<string>0x2E8A</string>
+		<string>0x04E6</string>
+	</array>
+
+	<key>ifdProductID</key>
+	<array>
+		<string>0x4230</string>
+		<string>0x10FD</string>
+		<string>0x5816</string>
+	</array>
+
+	<key>ifdFriendlyName</key>
+	<array>
+		<string>Nitrokey HSM</string>
+		<string>Pico HSM</string>
+		<string>SmartCard-HSM</string>
+	</array>
+</dict>
+</plist>

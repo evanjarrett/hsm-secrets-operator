@@ -36,6 +36,11 @@ func closePKCS11(session *Session) error {
 	return nil
 }
 
+// isTokenBlankPKCS11 returns an error for non-CGO builds
+func isTokenBlankPKCS11(config Config) (bool, error) {
+	return false, fmt.Errorf("PKCS#11 support requires CGO (set CGO_ENABLED=1 and rebuild)")
+}
+
 // getTokenInfoPKCS11 returns an error for non-CGO builds
 func getTokenInfoPKCS11(session *Session, slot uint) (*tokenInfo, error) {
 	return nil, fmt.Errorf("PKCS#11 support requires CGO (set CGO_ENABLED=1 and rebuild)")
