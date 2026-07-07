@@ -4,8 +4,35 @@ entries:
   - annotations:
       category: Security
     apiVersion: v2
+    appVersion: v0.10.3
+    created: "2026-07-07T17:35:59.738133137Z"
+    description: A Kubernetes operator that bridges Pico HSM binary data storage with
+      Kubernetes Secrets
+    digest: aa72e68fb48b8bfe2e8e8432a1ce252492cdfff6e77e1d7ce2e98c27a6dd8a09
+    home: https://tangled.org/evan.jarrett.net/hsm-secrets-operator
+    icon: https://raw.githubusercontent.com/cncf/artwork/master/projects/kubernetes/icon/color/kubernetes-icon-color.svg
+    keywords:
+    - kubernetes
+    - operator
+    - hsm
+    - secrets
+    - security
+    - pkcs11
+    - pico-hsm
+    maintainers:
+    - name: Evan Jarrett
+    name: hsm-secrets-operator
+    sources:
+    - https://tangled.org/evan.jarrett.net/hsm-secrets-operator
+    type: application
+    urls:
+    - https://github.com/evanjarrett/hsm-secrets-operator/releases/download/hsm-secrets-operator-0.10.3/hsm-secrets-operator-0.10.3.tgz
+    version: 0.10.3
+  - annotations:
+      category: Security
+    apiVersion: v2
     appVersion: v0.10.2
-    created: '2026-07-07T02:45:38.995302074Z'
+    created: "2026-07-07T02:45:38.995302074Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 15bb90a33f24b79e77c5d653b38e75cd1c0507cd7b6dd9291263e7a717fbd247
@@ -32,7 +59,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.8.0
-    created: '2026-01-02T21:21:13.653020194Z'
+    created: "2026-01-02T21:21:13.653020194Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: b8b5c8ef602f09e894e262cb5e0c97ce5c674ae5a75849b7fccace0560c038cf
@@ -59,7 +86,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.7.0
-    created: '2025-12-14T16:10:21.99182725Z'
+    created: "2025-12-14T16:10:21.99182725Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 52c009e6435351211394b07429f53b0ab006d2661711c3134c03221093c86d07
@@ -86,7 +113,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.44
-    created: '2025-11-03T23:14:24.021882586Z'
+    created: "2025-11-03T23:14:24.021882586Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: b6d88b717ccd361f0b3727f9704dd229bf3f399d3445cb8c9f703788296effe3
@@ -113,7 +140,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.42
-    created: '2025-10-28T04:18:38.8576907Z'
+    created: "2025-10-28T04:18:38.8576907Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: b5ebf539cd2aa464afbe2aae1634d1ddbd3bbad9d8c50a7390db445a7aefa579
@@ -140,7 +167,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.41
-    created: '2025-10-28T03:39:58.16825198Z'
+    created: "2025-10-28T03:39:58.16825198Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 42a607216856bd69105321e9c5d4ade4f9c215d8d7fd52dc1f6e887312fe8892
@@ -167,7 +194,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.40
-    created: '2025-10-27T21:03:19.308111173Z'
+    created: "2025-10-27T21:03:19.308111173Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 778abd6c12dd936c435979126c4dcc5115fbe902536d76abb17c9cb5fefb2a56
@@ -194,7 +221,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.39
-    created: '2025-10-27T20:34:51.026058828Z'
+    created: "2025-10-27T20:34:51.026058828Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 375d6a16b1e22b8b631a8b16828a4edd5ae565425084eb872d397c62510f7585
@@ -221,7 +248,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.38
-    created: '2025-10-27T18:26:06.973173834Z'
+    created: "2025-10-27T18:26:06.973173834Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 5bc5a57caa1d00a85d2a47a5eec3288299949737148401ac18fdf405f75f5fe2
@@ -248,7 +275,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.37
-    created: '2025-10-27T17:20:01.938721363Z'
+    created: "2025-10-27T17:20:01.938721363Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 5551a1329fd52d1980b973b01dfe5df3142da6bcfb0dbc9a808ca75fb475da84
@@ -275,7 +302,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.36
-    created: '2025-09-30T14:43:20.631576128Z'
+    created: "2025-09-30T14:43:20.631576128Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 63a47e2ec8bca2828108cbf23b725884fc268f4e8319ae04ca8e15cd6de12a15
@@ -302,7 +329,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.35
-    created: '2025-09-30T04:16:47.834666723Z'
+    created: "2025-09-30T04:16:47.834666723Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: e470253309545f3a9f763ff68ac15d53574e65105f8063611cbd074371482144
@@ -329,7 +356,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.34
-    created: '2025-09-30T03:51:50.046654609Z'
+    created: "2025-09-30T03:51:50.046654609Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: a639f5071f7923224ea65abf5bb61707d7d3de23b1cbe9ca742672f9d5afff28
@@ -356,7 +383,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.33
-    created: '2025-09-30T03:29:50.678236087Z'
+    created: "2025-09-30T03:29:50.678236087Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 06ff57695b20e80ed063523e902952f11cf68933fbece63f3bdb0296007b9f5b
@@ -383,7 +410,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.32
-    created: '2025-09-30T02:41:12.508859647Z'
+    created: "2025-09-30T02:41:12.508859647Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 665c01f1a98fe64195715fd1f11ab056385daabd2aee3da9255ac1578b1b315a
@@ -410,7 +437,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.31
-    created: '2025-09-29T22:12:08.447993161Z'
+    created: "2025-09-29T22:12:08.447993161Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 7094fae1f57d9477bad8554b166813cc39c5f4522b6fb3b3ea5fef0c49b79678
@@ -437,7 +464,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.30
-    created: '2025-09-29T21:22:03.494964251Z'
+    created: "2025-09-29T21:22:03.494964251Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: c992af31f65d829ae584edec71c0354785b97089bd295b4a16082b699eb60e61
@@ -464,7 +491,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.29
-    created: '2025-09-29T20:38:07.056570015Z'
+    created: "2025-09-29T20:38:07.056570015Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 4a82f46a18f3cae714bbf10c90d9d92db5f9ab348f7081b827026f44a168944b
@@ -491,7 +518,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.28
-    created: '2025-09-29T19:49:59.443396978Z'
+    created: "2025-09-29T19:49:59.443396978Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: b51361edb332e6984a4eaecbf87768d7e3416a9f13a0417df50a0b3854853757
@@ -518,7 +545,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.27
-    created: '2025-09-29T19:02:17.461523227Z'
+    created: "2025-09-29T19:02:17.461523227Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 04e7b9ccd63118176f6103a642c3d97eafde56b79571dcdd6b368406b62a7727
@@ -545,7 +572,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.26
-    created: '2025-09-29T17:02:34.993735072Z'
+    created: "2025-09-29T17:02:34.993735072Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 1c1e95ce6070f932ded291556974449c91d8ba75650a3be37d707d100894886e
@@ -572,7 +599,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.25
-    created: '2025-09-29T15:51:41.60851865Z'
+    created: "2025-09-29T15:51:41.60851865Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 692f50e157fde6aaa8f1a11594ee6c3f5faff1cb3a2da62425ac397a13075d4a
@@ -599,7 +626,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.24
-    created: '2025-09-29T03:13:58.6191766Z'
+    created: "2025-09-29T03:13:58.6191766Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: c1a5987c20b3e1afcbe846c903c8955ff4470f5c0abd5a66044462be1aba5ac0
@@ -626,7 +653,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.23
-    created: '2025-09-29T03:03:11.927040084Z'
+    created: "2025-09-29T03:03:11.927040084Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 1e276265ef6544e78dae88e961dd05cae9e6ef34a8ce74ab949767a80e6bdbbb
@@ -653,7 +680,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.22
-    created: '2025-09-29T02:06:45.607154691Z'
+    created: "2025-09-29T02:06:45.607154691Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 2169c2f492f9d68322d572a09a1cadfcd0fbfb72c1aad86900d2d313219e0da0
@@ -680,7 +707,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.21
-    created: '2025-09-29T01:51:51.734645642Z'
+    created: "2025-09-29T01:51:51.734645642Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: e3e823e13c2782b350a2ae8f33a21fe553f2ab8b57bb748da564e98d8691d4ab
@@ -707,7 +734,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.20
-    created: '2025-09-29T01:29:30.094219773Z'
+    created: "2025-09-29T01:29:30.094219773Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 943587de70753b4c466080fb1b25a5236feeee4825b7bef09ff07e9039916428
@@ -734,7 +761,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.19
-    created: '2025-09-28T21:41:17.762486781Z'
+    created: "2025-09-28T21:41:17.762486781Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 0b7e46e3866f76a934ea08a3c8a3c8a695de9f7d950431fa094e1f5a4a181bed
@@ -761,7 +788,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.18
-    created: '2025-09-28T20:17:32.81402512Z'
+    created: "2025-09-28T20:17:32.81402512Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 47ea30ba3d4a3c8209cd290847e6bcddd7846ed48b5a4faf843c1e35c3451aae
@@ -788,7 +815,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.17
-    created: '2025-09-28T19:40:36.476751247Z'
+    created: "2025-09-28T19:40:36.476751247Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: bbd90e751489dc2301c2b5b0b5f5143b32dc15e8ed8816c309982ec7f7acf620
@@ -815,7 +842,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.16
-    created: '2025-09-28T17:35:42.475128292Z'
+    created: "2025-09-28T17:35:42.475128292Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 78e8a822cafbbd4d90535c7dd343e428a43e74dc39b9741641507f306c06465f
@@ -842,7 +869,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.15
-    created: '2025-09-28T17:19:25.809726782Z'
+    created: "2025-09-28T17:19:25.809726782Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: ab20a7d3abe7550fc3efcc074da395dfb7bb6614f4ddd019452757dbd130d448
@@ -869,7 +896,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.14
-    created: '2025-09-28T14:57:49.598150971Z'
+    created: "2025-09-28T14:57:49.598150971Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: cb02a83570d6a6403c1d41b1d023aae13c99fd508ebaae7473d4ac5a2698980f
@@ -896,7 +923,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.13
-    created: '2025-09-28T14:44:31.773891015Z'
+    created: "2025-09-28T14:44:31.773891015Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 4e62528d85f450297378ba109c345d728af2bc6dd5a5458e848219a7cae3787f
@@ -923,7 +950,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.12
-    created: '2025-09-28T04:09:16.529038844Z'
+    created: "2025-09-28T04:09:16.529038844Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 6494dbbf5704a8905483e506b10cc1c37e1232991eb8051f82bb5fa17c3cc60e
@@ -950,7 +977,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.11
-    created: '2025-09-28T04:02:49.994892417Z'
+    created: "2025-09-28T04:02:49.994892417Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 565b4a28168ea0a5d40b61a6d8c165808a259adcbad7a14b9784e91e45208b54
@@ -977,7 +1004,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.10
-    created: '2025-09-28T03:57:57.489995698Z'
+    created: "2025-09-28T03:57:57.489995698Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 462943ef1c9b197c7e3cca1948b8153ad3c6bdbf16735a931e6f7a41eb3e438c
@@ -1004,7 +1031,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.9
-    created: '2025-09-28T03:40:21.267176331Z'
+    created: "2025-09-28T03:40:21.267176331Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 16b708851e576937538a2cd830884605515e0aef7efbc66e54dbfcfd32a1117d
@@ -1031,7 +1058,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.8
-    created: '2025-09-28T03:19:58.462993528Z'
+    created: "2025-09-28T03:19:58.462993528Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: bff531691e54377efac8e8685c94995db8beb33fd76905a3698b614cb22ca71e
@@ -1058,7 +1085,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.7
-    created: '2025-09-28T02:24:38.010281584Z'
+    created: "2025-09-28T02:24:38.010281584Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: b24e8f653a2043e5f3f95420f9d0e8d86d3b90cd79c2de90d0729d1687c247b9
@@ -1085,7 +1112,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.6
-    created: '2025-09-28T01:50:29.962891333Z'
+    created: "2025-09-28T01:50:29.962891333Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 87a5e76966b3bf7c8cdafc2dcab27a7e7dc889505c89575a0c0a337080a760e2
@@ -1112,7 +1139,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.5
-    created: '2025-09-28T01:32:36.867838478Z'
+    created: "2025-09-28T01:32:36.867838478Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: efeeca355e4987f8ff3f550c373b7e73ff9f30c0f38cc0520a8fcf6981584489
@@ -1139,7 +1166,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.4
-    created: '2025-09-26T01:39:11.492464344Z'
+    created: "2025-09-26T01:39:11.492464344Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 13980bcef317bd6acb11a01c6078e768b083f53d41136d7ee14311eb88bfefda
@@ -1166,7 +1193,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.3
-    created: '2025-09-25T03:45:39.478313445Z'
+    created: "2025-09-25T03:45:39.478313445Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 8b50f05188f79649d2f17985bf6539d0b0e03dda8a4f9a0459c23a8a3c0c5a77
@@ -1193,7 +1220,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.2
-    created: '2025-09-24T15:26:35.820187033Z'
+    created: "2025-09-24T15:26:35.820187033Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 780d40d32b52e63aa4df79e3ac29f776a587011d59bd027096d0129ed1b64ceb
@@ -1220,7 +1247,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.6.0
-    created: '2025-09-24T05:24:52.107597877Z'
+    created: "2025-09-24T05:24:52.107597877Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 069228af1bd91d149aa1ff1617dc1041961fcbc7dfa187573edf3959e20d9545
@@ -1247,7 +1274,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.30
-    created: '2025-09-10T04:06:53.180897012Z'
+    created: "2025-09-10T04:06:53.180897012Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 2987d829fcdfde0b4082f0c0728d88c9df2ef2002510338c0ca47934db467b62
@@ -1274,7 +1301,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.29
-    created: '2025-09-10T03:15:52.225137291Z'
+    created: "2025-09-10T03:15:52.225137291Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 348276b540b1ca973312172382bf2a48ab8bfccfebaa152f80a91b7045d73f8c
@@ -1301,7 +1328,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.28
-    created: '2025-09-09T22:41:14.414095879Z'
+    created: "2025-09-09T22:41:14.414095879Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 675fb55ef493d7e70552de301130a12f3a05bd76695fef6fe4490273ee849b54
@@ -1328,7 +1355,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.27
-    created: '2025-09-09T19:53:33.747128171Z'
+    created: "2025-09-09T19:53:33.747128171Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: a715d5d83bbd1d0423fa4a900c6d2f6a201a2a091cccfef8cedce22c8d5c13a9
@@ -1355,7 +1382,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.26
-    created: '2025-09-09T04:03:46.287672404Z'
+    created: "2025-09-09T04:03:46.287672404Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: acb310dd92b138f7e161bcd65bc14512ff263532d435c9285517486b7f823b4a
@@ -1382,7 +1409,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.25
-    created: '2025-09-09T03:36:59.399262019Z'
+    created: "2025-09-09T03:36:59.399262019Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: ba9ae9a392855f25ee868e2c1b5129a1748313b2dbc4aff9897132b6dc6b54fe
@@ -1409,7 +1436,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.24
-    created: '2025-09-09T03:17:24.587685043Z'
+    created: "2025-09-09T03:17:24.587685043Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 9e2916da304f1191080d9d4b0a8afa545bef6dfb29a96f1b546cd992ee469c4e
@@ -1436,7 +1463,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.23
-    created: '2025-09-09T02:53:38.548619817Z'
+    created: "2025-09-09T02:53:38.548619817Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: f7301b072a3d911d8d3bde54ac0ff710104904658b93f18f19866e79be8e6535
@@ -1463,7 +1490,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.22
-    created: '2025-09-08T15:43:11.291724716Z'
+    created: "2025-09-08T15:43:11.291724716Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: ba27e0fe1b48853e3aeedbb57de51b8203637f4306bed5818948e33c17ba57d3
@@ -1490,7 +1517,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.21
-    created: '2025-09-07T15:08:44.659232694Z'
+    created: "2025-09-07T15:08:44.659232694Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 63a2ff1d76ccf1ec3237052a9195911f4be89f572f60adc33a50374d230b9542
@@ -1517,7 +1544,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.20
-    created: '2025-09-06T22:17:25.004550305Z'
+    created: "2025-09-06T22:17:25.004550305Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 813d8506530d37d344bc3d491571e1261cdcbd274908afa6705e64225a06981a
@@ -1544,7 +1571,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.19
-    created: '2025-09-06T21:55:05.951674487Z'
+    created: "2025-09-06T21:55:05.951674487Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: fd50f869be935df1272777e0102ccd4e8910b5da0bee58ce94dd4957a58327f3
@@ -1571,7 +1598,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.18
-    created: '2025-09-06T21:28:38.609522235Z'
+    created: "2025-09-06T21:28:38.609522235Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 47d35e992c7df93c9bc21714f882f9a26a029f9156be711595d308f3d2ee12b7
@@ -1598,7 +1625,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.17
-    created: '2025-09-06T20:37:36.677561452Z'
+    created: "2025-09-06T20:37:36.677561452Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 8e9e21082c2aacfce75b8e1b283f740a73e40572f0a5d387967a35a0710615fd
@@ -1625,7 +1652,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.16
-    created: '2025-09-06T16:53:28.773808346Z'
+    created: "2025-09-06T16:53:28.773808346Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 54234902ddbd7d22a808866f0125ae1c50704963f97b8b0ed31dc68c5a4d4b58
@@ -1652,7 +1679,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.15
-    created: '2025-09-05T22:36:30.770356059Z'
+    created: "2025-09-05T22:36:30.770356059Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 756902630544c39f1a45423ad8da995d509bcb93f07f8a285f8f7b6326420600
@@ -1679,7 +1706,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.14
-    created: '2025-09-05T02:21:07.543872112Z'
+    created: "2025-09-05T02:21:07.543872112Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: b9c41636d9baa3ff8a717b5746bdeeee325319e5f71a64febe2a66a6e1a64f30
@@ -1706,7 +1733,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.13
-    created: '2025-08-28T14:38:20.623822797Z'
+    created: "2025-08-28T14:38:20.623822797Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 2d5ec08481c6f3e1bfc06b7e02a74bc0a5549322d48ff5335723224547127f36
@@ -1733,7 +1760,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.12
-    created: '2025-08-27T04:42:41.642578394Z'
+    created: "2025-08-27T04:42:41.642578394Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: c6ad7dcb0e14e6932908edb28ea9b1e9147dc18e6e42f086106d6392fe26ae0b
@@ -1760,7 +1787,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.11
-    created: '2025-08-26T03:13:15.685721373Z'
+    created: "2025-08-26T03:13:15.685721373Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 33263ecf8d59033d4dd9f2136604fe5e36f852d230f5571dbfb28e7506ca9a33
@@ -1787,7 +1814,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.10
-    created: '2025-08-25T21:34:48.600495523Z'
+    created: "2025-08-25T21:34:48.600495523Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 42e10a1c0af907618ee6c206f91451df1693e572e5928e79962cf9c26f91ed8c
@@ -1814,7 +1841,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.9
-    created: '2025-08-25T15:54:00.564659509Z'
+    created: "2025-08-25T15:54:00.564659509Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: b7ab8d875720b19ed96c67af56ea88391b2784bcc5783bf71353924612adb84d
@@ -1841,7 +1868,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.8
-    created: '2025-08-24T22:20:23.59918158Z'
+    created: "2025-08-24T22:20:23.59918158Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: df39f9304645caab45484ea2b22f2c8f6d2e2c8557ae79f9b5ab375b978e1ccf
@@ -1868,7 +1895,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.7
-    created: '2025-08-23T21:57:51.430357548Z'
+    created: "2025-08-23T21:57:51.430357548Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 3739d86321901572d8fdb8f63ef139605e8c5d0eb8b00b3ccd21c60d1eab010f
@@ -1895,7 +1922,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.6
-    created: '2025-08-23T19:56:47.897341556Z'
+    created: "2025-08-23T19:56:47.897341556Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: c300a86654172e666b009463928b2a8b0c2acf201c246fa6e62390c48a212bbf
@@ -1922,7 +1949,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.5
-    created: '2025-08-23T18:55:19.377909205Z'
+    created: "2025-08-23T18:55:19.377909205Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: c443432e66c180cf06605905c44c09d87e226af1377b9355d898ead52be3fde6
@@ -1949,7 +1976,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.4
-    created: '2025-08-23T18:32:28.684804436Z'
+    created: "2025-08-23T18:32:28.684804436Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: e4f36eb991c65214ff0d229004af4d39226ba108fddd3447fc6780dc1f2e0e4e
@@ -1976,7 +2003,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.3
-    created: '2025-08-23T16:00:46.930888441Z'
+    created: "2025-08-23T16:00:46.930888441Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 8f426feafbd6fb3cfd4a891d96c916be64b465ef1b2433a07f929abed18b28a9
@@ -2003,7 +2030,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.2
-    created: '2025-08-23T15:41:04.328042269Z'
+    created: "2025-08-23T15:41:04.328042269Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 46dff7d242012809ab974ad7aff4f52ec8f7e9d3d497883902d3546cbe2e5fa0
@@ -2030,7 +2057,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.1
-    created: '2025-08-23T02:41:02.987345829Z'
+    created: "2025-08-23T02:41:02.987345829Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 11e244f69be55e76b3814e977952af0db16821da0c4e81dec07456023c6124e7
@@ -2057,7 +2084,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.5.0
-    created: '2025-08-23T00:41:26.499131683Z'
+    created: "2025-08-23T00:41:26.499131683Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: bf0fd65628a2a418d9b81d5cbc8ec6cc848eca685588c7c5c5d89d19307e74fd
@@ -2084,7 +2111,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.4.6
-    created: '2025-08-22T03:05:24.389194563Z'
+    created: "2025-08-22T03:05:24.389194563Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 3f3927dff929d56e05fd6b418940a407de8413fa32e7ceddedc92114c1aec50d
@@ -2111,7 +2138,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.4.5
-    created: '2025-08-22T01:28:30.550207481Z'
+    created: "2025-08-22T01:28:30.550207481Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: efb57fdfee227d3250cda2176d2944204c6c62a215aca8ef6274af90314843c7
@@ -2138,7 +2165,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.4.4
-    created: '2025-08-20T20:06:53.974123305Z'
+    created: "2025-08-20T20:06:53.974123305Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 072925f04bccdae00d84ebf6e0fac87573109d6a9497f94c891b919b13841150
@@ -2165,7 +2192,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.4.3
-    created: '2025-08-20T14:05:56.287336699Z'
+    created: "2025-08-20T14:05:56.287336699Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 951221c9c6439c5744dbe7d05195a5a222da79ce23cd99a1db89f11c1bfa3353
@@ -2192,7 +2219,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.4.2
-    created: '2025-08-20T04:22:23.454148601Z'
+    created: "2025-08-20T04:22:23.454148601Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 59945203d4814860d1550327a96b860aa0c392e4381ef5cd7c421d926dba532c
@@ -2219,7 +2246,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.4.1
-    created: '2025-08-20T04:01:14.905510472Z'
+    created: "2025-08-20T04:01:14.905510472Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 5097519df9923ae92d2d0da41fe73f3c927e916db28fae602e360717a8b0bc3d
@@ -2246,7 +2273,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.4.0
-    created: '2025-08-20T00:18:15.466202088Z'
+    created: "2025-08-20T00:18:15.466202088Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: c7cbc9ddaea705d93f1d070fc69cd5da412480ea3ad6f7357e7523045beb50c7
@@ -2273,7 +2300,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.3.2
-    created: '2025-08-19T22:12:28.176351901Z'
+    created: "2025-08-19T22:12:28.176351901Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 84edab35390eec15cd92e56f1a4675250b94aaa6de9ef26680da823b97e61229
@@ -2300,7 +2327,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.3.1
-    created: '2025-08-19T21:46:23.925973528Z'
+    created: "2025-08-19T21:46:23.925973528Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: ab5ac4945ac29ee3e16c71e3de5f3211d97b1080496bf282969067aace3f4a0c
@@ -2327,7 +2354,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.3.0
-    created: '2025-08-19T20:48:36.929166119Z'
+    created: "2025-08-19T20:48:36.929166119Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: e3957ddfd6e07a29e1d7f14a05b8d80f4a872b09c7c9658ad947d6ce8ab3605c
@@ -2354,7 +2381,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.2.19
-    created: '2025-08-19T04:29:41.686604932Z'
+    created: "2025-08-19T04:29:41.686604932Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 5b47308aade1aad260cb5e1616b586ad5ef6e42bc709a24b7b5a0f1261094d09
@@ -2381,7 +2408,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.2.18
-    created: '2025-08-19T03:52:17.893961231Z'
+    created: "2025-08-19T03:52:17.893961231Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 834b05d25ac88b1a2daa79a250a1e1fd552e7848fc928d5281378f8296af8f8b
@@ -2408,7 +2435,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.2.17
-    created: '2025-08-19T03:19:23.100051358Z'
+    created: "2025-08-19T03:19:23.100051358Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: cce2189e36bc376be318edabba1cebdfed2f1d831f3cab71eb781300db4aba96
@@ -2435,7 +2462,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.2.16
-    created: '2025-08-19T03:10:21.942390191Z'
+    created: "2025-08-19T03:10:21.942390191Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: c0d31347ab04ae6bd90aea79caf776adb77bbe0b454a27c6f8c4505df0fc68dc
@@ -2462,7 +2489,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.2.15
-    created: '2025-08-19T02:18:57.913733257Z'
+    created: "2025-08-19T02:18:57.913733257Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 38abaf0543afbbbb42380fc11808d7ac9cf91a8f7f3e5902690466de3322c5fc
@@ -2489,7 +2516,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.2.14
-    created: '2025-08-19T01:59:24.850656182Z'
+    created: "2025-08-19T01:59:24.850656182Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 723813388bfa371ed6f0d256afca75737531da6845f044b518b3490fcef3d071
@@ -2516,7 +2543,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.2.13
-    created: '2025-08-18T22:20:44.889577688Z'
+    created: "2025-08-18T22:20:44.889577688Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 62dfb1c04b422a307af6df800be4ec09e0a1f74a721b92d1f816ea428bf59ef9
@@ -2543,7 +2570,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.2.12
-    created: '2025-08-18T21:42:14.995977314Z'
+    created: "2025-08-18T21:42:14.995977314Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 8ab357291095f01937cbe2287bbe7c4752c457f94b41358e9179f1b4deda8b3c
@@ -2570,7 +2597,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.2.11
-    created: '2025-08-18T21:13:01.583405162Z'
+    created: "2025-08-18T21:13:01.583405162Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: c7d61031dae1a6df917ad408c44ab5ef44cb0d09da20ed6ede356aa88228d79c
@@ -2597,7 +2624,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.2.10
-    created: '2025-08-18T20:38:09.093590363Z'
+    created: "2025-08-18T20:38:09.093590363Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 7b665f092338ca121504eb03479383590193dbe020195c5343f9b96c2964d475
@@ -2624,7 +2651,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.2.9
-    created: '2025-08-18T19:15:54.953514826Z'
+    created: "2025-08-18T19:15:54.953514826Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: e42875e172d24e9195681222cec8766bc7936c12c815a3ca34e4ac2da1e98784
@@ -2651,7 +2678,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.2.8
-    created: '2025-08-18T18:57:13.970887452Z'
+    created: "2025-08-18T18:57:13.970887452Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: fc0db1a6905a9ef983018456d21fe1b9dca7d5b7a76701b3b76c421e2c4e2783
@@ -2678,7 +2705,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.2.7
-    created: '2025-08-18T18:22:19.02772131Z'
+    created: "2025-08-18T18:22:19.02772131Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: dacb969fc6e6cb70746c088672955b2289d86a3d2c6e5c22141fde821d2046dd
@@ -2705,7 +2732,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.2.6
-    created: '2025-08-18T18:15:39.200416098Z'
+    created: "2025-08-18T18:15:39.200416098Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 2ceec98546616c02d300b657535f50dd038a0d1d47b6ec164920638aa24f160b
@@ -2732,7 +2759,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.2.5
-    created: '2025-08-18T17:45:27.686163352Z'
+    created: "2025-08-18T17:45:27.686163352Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 4105fe40b4cb4daadd72428d1a7af90ab8df372af1f767e4081574b74769b9ed
@@ -2759,7 +2786,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.2.4
-    created: '2025-08-18T17:19:58.319055223Z'
+    created: "2025-08-18T17:19:58.319055223Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 9dca6bb4190f22feb5837073d7cf52406cd95098ba52b9bec7be188931fbe1bd
@@ -2786,7 +2813,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.2.3
-    created: '2025-08-18T16:35:37.518386258Z'
+    created: "2025-08-18T16:35:37.518386258Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 1b6b89b3464697be85b91c2f666ac4d21c071c93a140a725216fb1dec7152847
@@ -2813,7 +2840,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.2.2
-    created: '2025-08-18T16:34:26.386403624Z'
+    created: "2025-08-18T16:34:26.386403624Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: cc696bea91117d644dcdee7869bd75a602eb86dde8337cc9aeffb916173a3866
@@ -2840,7 +2867,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.2.1
-    created: '2025-08-18T15:47:08.311190352Z'
+    created: "2025-08-18T15:47:08.311190352Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 13d1df17caf44df97e8962736ec10fcc6b8295ab17f9645ccb3de34c42a31038
@@ -2867,7 +2894,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.2.0
-    created: '2025-08-18T15:27:08.866695281Z'
+    created: "2025-08-18T15:27:08.866695281Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 495aa8d301b82414e625ccea542c4a7a3d465439d351c537c3e6be39d44fbd34
@@ -2894,7 +2921,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.1.16
-    created: '2025-08-18T14:42:16.238766576Z'
+    created: "2025-08-18T14:42:16.238766576Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: ada9e5e39a695271137da6661659542e957890c236db7a2c32900c56e728b7f7
@@ -2921,7 +2948,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.1.15
-    created: '2025-08-18T05:03:45.955074889Z'
+    created: "2025-08-18T05:03:45.955074889Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 3012c100651c8bc3ef7f7fc23be82e0a7e7200767f50fd6ae6577f2324177b77
@@ -2948,7 +2975,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.1.14
-    created: '2025-08-18T04:47:07.346443528Z'
+    created: "2025-08-18T04:47:07.346443528Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 27a3b3eb75c86574b5474c5879354ff4dd9d6bbfcac5904155ec702f85ed4d7d
@@ -2975,7 +3002,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.1.13
-    created: '2025-08-18T04:09:50.366997002Z'
+    created: "2025-08-18T04:09:50.366997002Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: dc47679ce62cad400c59fdcf1ea605a8a4799cbf5dc253645a4f1b49596e58db
@@ -3002,7 +3029,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.1.12
-    created: '2025-08-18T03:39:56.208186655Z'
+    created: "2025-08-18T03:39:56.208186655Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 5c38886211ceb376134092324ef4649b331100eeaf753e2c0c81a73a330730f2
@@ -3029,7 +3056,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.1.11
-    created: '2025-08-18T03:12:41.146148184Z'
+    created: "2025-08-18T03:12:41.146148184Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 29c76f26289505fc67151ed40380f6475175fd81a507ee1f92ccaa4bffd5eaba
@@ -3056,7 +3083,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.1.10
-    created: '2025-08-18T02:53:30.619052339Z'
+    created: "2025-08-18T02:53:30.619052339Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: fbaacc7418480bbe0895b209d8e8c065334a2537e82b1f3609209ffa7a0e7716
@@ -3083,7 +3110,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.1.9
-    created: '2025-08-18T02:44:02.608831598Z'
+    created: "2025-08-18T02:44:02.608831598Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 5588f5cb6d9eed3ccb294443d639b9532120d1fc7b2de8e8094a3c0c7d69e40f
@@ -3110,7 +3137,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.1.8
-    created: '2025-08-18T02:19:26.812136489Z'
+    created: "2025-08-18T02:19:26.812136489Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 0b09f822705ccf51c381b5b06e442cb1dde2294e8a65b31d78bb0e1b7d473e38
@@ -3137,7 +3164,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.1.7
-    created: '2025-08-17T23:09:58.620404209Z'
+    created: "2025-08-17T23:09:58.620404209Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: c0ec93fdaeadb1573fb46070e2dff8c5a31095b1f7ef0efe5e2e1c0f16efc384
@@ -3164,7 +3191,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: v0.1.5
-    created: '2025-08-17T22:43:19.513377679Z'
+    created: "2025-08-17T22:43:19.513377679Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 6f74467e8a31ea33589302b3618be4b0ce633e47a7dfd9cb4db48e15ae524e68
@@ -3191,7 +3218,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: 0.1.5
-    created: '2025-08-17T19:49:03.620938249Z'
+    created: "2025-08-17T19:49:03.620938249Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: da1da9f89fb40bf2c52b14f13e55872b1010eab524877d46f42de426bc02ff80
@@ -3218,7 +3245,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: latest
-    created: '2025-08-17T19:21:40.489465796Z'
+    created: "2025-08-17T19:21:40.489465796Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 588cd74d5461d743ec4dab868eec61e6deba3fc2fe578e707991dea9ac5a9b8e
@@ -3245,7 +3272,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: latest
-    created: '2025-08-17T18:56:15.337249636Z'
+    created: "2025-08-17T18:56:15.337249636Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 993f3f996942c96768221a7249fd46abcaaf114af42684c92d20eaaf04dbab55
@@ -3272,7 +3299,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: latest
-    created: '2025-08-17T18:51:42.681531761Z'
+    created: "2025-08-17T18:51:42.681531761Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: a08a7f8bc12a8c63c2c048de47362fc921e0dd734649f9430918d6f4d7209da3
@@ -3299,7 +3326,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: latest
-    created: '2025-08-17T18:42:07.010234431Z'
+    created: "2025-08-17T18:42:07.010234431Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: a1e2e14097869435cf79f633ae3d0b4651c4980d88417d8e3d69dc7488100cca
@@ -3326,7 +3353,7 @@ entries:
       category: Security
     apiVersion: v2
     appVersion: latest
-    created: '2025-08-17T16:38:36.747257557Z'
+    created: "2025-08-17T16:38:36.747257557Z"
     description: A Kubernetes operator that bridges Pico HSM binary data storage with
       Kubernetes Secrets
     digest: 18f4c7dd340c17a86fe6af399962ff93e91f98544c45773f78d836dc85684ff1
@@ -3349,4 +3376,4 @@ entries:
     urls:
     - https://github.com/evanjarrett/hsm-secrets-operator/releases/download/hsm-secrets-operator-0.1.0/hsm-secrets-operator-0.1.0.tgz
     version: 0.1.0
-generated: '2026-07-07T02:45:38.996027596Z'
+generated: "2026-07-07T17:35:59.738403312Z"
