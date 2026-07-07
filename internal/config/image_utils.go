@@ -24,7 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-const defaultImage = "atcr.io/evanjarrett/hsm-secrets-operator:latest"
+const defaultImage = "ghcr.io/evanjarrett/hsm-secrets-operator:latest"
 
 // ImageResolver provides functionality to resolve container images
 type ImageResolver struct {

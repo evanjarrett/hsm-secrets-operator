@@ -4,21 +4,21 @@
 
 # Operator image configuration
 image:
-  repository: atcr.io/evanjarrett/hsm-secrets-operator
+  repository: ghcr.io/evanjarrett/hsm-secrets-operator
   pullPolicy: IfNotPresent
   tag: "" # Defaults to the chart appVersion
 
 # Discovery image configuration
 # Uses same unified image as manager and discoveryc
 discoveryImage:
-  repository: atcr.io/evanjarrett/hsm-secrets-operator
+  repository: ghcr.io/evanjarrett/hsm-secrets-operator
   pullPolicy: IfNotPresent
   tag: "" # Defaults to the chart appVersion
 
 # Agent image configuration (for HSM agent pods)
 # Uses same unified image as manager and discoveryc
 agentImage:
-  repository: atcr.io/evanjarrett/hsm-secrets-operator
+  repository: ghcr.io/evanjarrett/hsm-secrets-operator
   pullPolicy: IfNotPresent
   tag: "" # Defaults to the chart appVersion (uses same unified image)
 
