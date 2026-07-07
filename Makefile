@@ -145,6 +145,31 @@ helm-sync: manifests ## Sync generated CRDs from config/ to helm/crds/
 	@echo "✅ CRDs synced successfully"
 	@echo "⚠️  RBAC sync: Please manually verify helm/hsm-secrets-operator/templates/rbac/role.yaml matches config/rbac/role.yaml"
 
+##@ Helm Chart
+
+# Helm chart packaging/publishing configuration.
+# HELM_NAMESPACE defaults to the human-readable handle so `oci://buoy.cr/evan.jarrett.net/hsm-secrets-operator`
+# keeps resolving; the automated release workflow overrides it with the DID-encoded namespace.
+CHART_DIR    ?= helm/hsm-secrets-operator
+CHART_NAME   ?= hsm-secrets-operator
+CHART_TGZ    := $(CHART_NAME)-$(VERSION).tgz
+HELM_REGISTRY  ?= buoy.cr
+HELM_NAMESPACE ?= evan.jarrett.net
+
+.PHONY: helm-lint
+helm-lint: ## Lint the Helm chart
+	helm lint $(CHART_DIR)
+
+.PHONY: helm-package
+helm-package: helm-sync version-sync ## Package the Helm chart into $(CHART_NAME)-$(VERSION).tgz
+	helm package $(CHART_DIR) --version $(VERSION) --app-version v$(VERSION)
+	@echo "✅ Packaged $(CHART_TGZ)"
+
+.PHONY: helm-push
+helm-push: helm-package ## Package and push the Helm chart to the OCI registry (uses docker/helm registry creds)
+	helm push $(CHART_TGZ) oci://$(HELM_REGISTRY)/$(HELM_NAMESPACE)
+	@echo "✅ Pushed oci://$(HELM_REGISTRY)/$(HELM_NAMESPACE)/$(CHART_NAME):$(VERSION)"
+
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
