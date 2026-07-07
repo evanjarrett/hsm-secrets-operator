@@ -566,7 +566,6 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 	*falsePtr = false
 	truePtr := new(bool)
 	*truePtr = true
-	hostPathDirectory := corev1.HostPathDirectory
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -698,11 +697,12 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 									MountPath: "/tmp",
 									ReadOnly:  false, // Required for pcscd runtime with readonly filesystem
 								},
-								{
-									Name:      "usb-bus",
-									MountPath: "/dev/bus/usb",
-									ReadOnly:  false,
-								},
+								// NOTE: no broad /dev/bus/usb hostPath mount. The device plugin
+								// (internal/discovery/deviceplugin.go Allocate) injects ONLY this
+								// pod's assigned device node. Mounting the whole bus would expose
+								// every HSM on the node to every agent's pcscd, causing
+								// LIBUSB_ERROR_BUSY contention and mis-binding (--slot-id=0 could
+								// bind the wrong serial) when multiple devices share a node.
 								{
 									Name:      "pcscd-run",
 									MountPath: "/run/pcscd",
@@ -721,15 +721,6 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 							Name: "tmp",
 							VolumeSource: corev1.VolumeSource{
 								EmptyDir: &corev1.EmptyDirVolumeSource{},
-							},
-						},
-						{
-							Name: "usb-bus",
-							VolumeSource: corev1.VolumeSource{
-								HostPath: &corev1.HostPathVolumeSource{
-									Path: "/dev/bus/usb",
-									Type: &hostPathDirectory,
-								},
 							},
 						},
 						{
