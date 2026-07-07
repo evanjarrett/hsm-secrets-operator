@@ -61,6 +61,7 @@ func Run(args []string, logLevel string) error {
 	var slotID int
 	var tokenLabel string
 	var pin string
+	var requireHardware bool
 	fs.StringVar(&deviceName, "device-name", "", "Name of the HSM device this agent serves")
 	fs.IntVar(&port, "port", 9090, "Port for the HSM agent gRPC API")
 	fs.IntVar(&healthPort, "health-port", 8093, "Port for health checks")
@@ -68,6 +69,10 @@ func Run(args []string, logLevel string) error {
 	fs.IntVar(&slotID, "slot-id", -1, "PKCS#11 slot ID")
 	fs.StringVar(&tokenLabel, "token-label", "", "PKCS#11 token label")
 	fs.StringVar(&pin, "pin", "", "PKCS#11 PIN (use environment variable HSM_PIN for security)")
+	fs.BoolVar(&requireHardware, "require-hardware", true,
+		"Refuse to fall back to the in-memory mock client; fail loudly if a real PKCS#11 token "+
+			"cannot be initialized (default). A live cluster must never serve mock data. "+
+			"Pass --require-hardware=false only for local/dev testing without real hardware.")
 
 	// Parse agent-specific flags from the remaining unparsed arguments
 	if err := fs.Parse(args); err != nil {
@@ -132,9 +137,15 @@ func Run(args []string, logLevel string) error {
 			// Library exists, check other validation requirements
 			if tokenLabel != "" || slotID >= 0 {
 				usePKCS11 = true
+			} else if requireHardware {
+				return fmt.Errorf("--require-hardware set but no --token-label or --slot-id specified for device %q; "+
+					"refusing mock fallback", agentConfig.DeviceName)
 			} else {
 				setupLog.Info("PKCS#11 library found but no token-label or slot-id specified, using mock client")
 			}
+		} else if requireHardware {
+			return fmt.Errorf("--require-hardware set but PKCS#11 library %q not found for device %q: %w; "+
+				"refusing mock fallback", agentConfig.PKCS11LibraryPath, agentConfig.DeviceName, err)
 		} else {
 			setupLog.Info("PKCS#11 library not found, using mock client",
 				"library-path", agentConfig.PKCS11LibraryPath, "error", err)
@@ -197,7 +208,19 @@ func Run(args []string, logLevel string) error {
 				// serve mock data in place of a real hardware device.
 				return fmt.Errorf("device %q failed PKCS#11 initialize and is not an eligible blank token for auto-provisioning; refusing mock fallback: %w", agentConfig.DeviceName, initErr)
 			default:
-				setupLog.Error(initErr, "Falling back to mock client")
+				// AutoProvision was NOT requested for this device (flag unset, or the
+				// HSMDevice couldn't be loaded). The raw PKCS#11 error alone is misleading:
+				// on a blank token it reads as CKR_USER_PIN_NOT_INITIALIZED, which looks like
+				// a config problem rather than "this device has never been initialized".
+				// Spell out the likely cause and the one-line fix instead.
+				if requireHardware {
+					return fmt.Errorf("device %q failed PKCS#11 initialize and --require-hardware is set; refusing mock fallback. "+
+						"If this is a blank/uninitialized token, set spec.pkcs11.autoProvision=true on the HSMDevice to have the agent initialize it: %w",
+						agentConfig.DeviceName, initErr)
+				}
+				setupLog.Error(initErr, "PKCS#11 initialize failed and auto-provisioning is not enabled; falling back to mock client. "+
+					"If this is a blank/uninitialized token, set spec.pkcs11.autoProvision=true on the HSMDevice to have the agent initialize it.",
+					"device", agentConfig.DeviceName, "autoProvision", false)
 				usePKCS11 = false
 			}
 		}

@@ -786,6 +786,59 @@ func TestExecuteMirrorPlans(t *testing.T) {
 	assert.Equal(t, MirrorTypeUpdate, secret1Result.MirrorType)
 }
 
+// TestExecuteMirrorPlanPartialTargetFailure verifies that a plan is reported as
+// FAILED when any target fails to receive the secret, even if another target
+// succeeded. Previously "partial success" masked a failed backfill (e.g. a
+// rate-limited write to a recovering device) as success, dropping it from the
+// error list and stalling convergence.
+func TestExecuteMirrorPlanPartialTargetFailure(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = hsmv1alpha1.AddToScheme(scheme)
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	ctx := context.Background()
+	mockAgentManager := NewMockAgentManager()
+
+	// Source device holds the secret so the source read succeeds.
+	sourceClient := hsm.NewMockClient()
+	require.NoError(t, sourceClient.Initialize(ctx, hsm.DefaultConfig()))
+	require.NoError(t, sourceClient.WriteSecret(ctx, "shared-secret",
+		hsm.SecretData{"k": []byte("v")}, nil))
+	mockAgentManager.SetClient("source", sourceClient)
+
+	// Target "good" accepts the write.
+	goodTarget := hsm.NewMockClient()
+	require.NoError(t, goodTarget.Initialize(ctx, hsm.DefaultConfig()))
+	mockAgentManager.SetClient("good", goodTarget)
+
+	// Target "bad" fails at client creation, simulating a rejected/unreachable write.
+	mockAgentManager.SetCreationError("bad", fmt.Errorf("rate limit exceeded"))
+
+	mirrorManager := NewMirrorManager(client, mockAgentManager, logr.Discard(), "test-namespace")
+
+	plan := &SecretMirrorPlan{
+		SecretPath:    "shared-secret",
+		SourceDevice:  "source",
+		TargetDevices: []string{"good", "bad"},
+		MirrorType:    MirrorTypeCreate,
+	}
+	deviceLookup := map[string]hsmv1alpha1.DiscoveredDevice{
+		"source": {SerialNumber: "source"},
+		"good":   {SerialNumber: "good"},
+		"bad":    {SerialNumber: "bad"},
+	}
+
+	res := mirrorManager.executeMirrorPlan(ctx, plan, deviceLookup, logr.Discard())
+
+	assert.False(t, res.Success, "a plan with a failed target must not report success")
+	assert.Error(t, res.Error, "the failed target's error must be surfaced")
+
+	// And the aggregate must count it as an error, not a silent success.
+	agg := mirrorManager.executeMirrorPlans(ctx, []*SecretMirrorPlan{plan}, deviceLookup, logr.Discard())
+	assert.False(t, agg.Success)
+	assert.NotEmpty(t, agg.Errors)
+}
+
 // Test conflict resolution - version precedence
 func TestConflictResolutionVersionPrecedence(t *testing.T) {
 	scheme := runtime.NewScheme()

@@ -615,30 +615,140 @@ func (d *DiscoveryAgent) handleDeviceRemove(ctx context.Context, event discovery
 	}
 }
 
-// reconcileDevices performs periodic reconciliation as a safety net
+// reconcileDevices performs periodic reconciliation as a safety net.
+//
+// It always runs a full USB rescan, even when event monitoring is active. Hotplug
+// events can be missed — the motivating case is a wedged device that drops off the
+// USB bus without delivering a clean remove/add — and a cache-only reconcile would
+// never notice, leaving agents pinned to a stale device path until the discovery pod
+// is manually restarted. The scan results are MERGED into the cache (see
+// mergeScanIntoCache) rather than replacing it, so a device briefly absent during a
+// single scan is marked lost with the usual grace period instead of being deleted
+// outright, and a device that re-enumerated at a new path has that new path
+// propagated to the device plugin and pod annotation.
 func (d *DiscoveryAgent) reconcileDevices(ctx context.Context) error {
-	if !d.eventMonitoringActive {
-		// If event monitoring is not active, fall back to regular discovery
-		d.logger.V(1).Info("Event monitoring inactive, performing full discovery")
-		return d.performDiscovery(ctx)
-	}
+	d.logger.V(1).Info("Performing periodic full-scan reconciliation")
 
-	// Light reconciliation - just verify our cached state matches reality
-	d.logger.V(2).Info("Performing light reconciliation check")
-
-	// List all HSMDevice resources
 	var hsmDeviceList hsmv1alpha1.HSMDeviceList
 	if err := d.client.List(ctx, &hsmDeviceList); err != nil {
 		return fmt.Errorf("failed to list HSMDevice resources during reconciliation: %w", err)
 	}
 
-	// Re-register specs in case any were missed
-	for _, hsmDevice := range hsmDeviceList.Items {
-		d.registerSpecForMonitoring(&hsmDevice)
+	for i := range hsmDeviceList.Items {
+		hsmDevice := &hsmDeviceList.Items[i]
+		// Re-register specs in case any were missed by event monitoring.
+		d.registerSpecForMonitoring(hsmDevice)
+		if !d.shouldDiscoverOnNode(hsmDevice) {
+			continue
+		}
+		if err := d.reconcileHSMDeviceScan(ctx, hsmDevice); err != nil {
+			d.logger.Error(err, "Periodic full scan failed", "device", hsmDevice.Name)
+		}
 	}
 
-	// Clean up devices that have been lost for too long (5 minutes)
-	cleanupThreshold := 5 * time.Minute
+	// Retire devices that have been lost longer than the grace period.
+	d.cleanupStaleDevices(ctx)
+	return nil
+}
+
+// reconcileHSMDeviceScan performs a fresh full scan for one HSMDevice and merges the
+// result into the cache, propagating any change (new device, path change, or a
+// device newly gone) to the device plugin and pod annotation.
+func (d *DiscoveryAgent) reconcileHSMDeviceScan(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice) error {
+	scanned, err := d.discoverDevicesForSpec(ctx, hsmDevice)
+	if err != nil {
+		return err
+	}
+
+	merged, changed := d.mergeScanIntoCache(hsmDevice.Name, scanned)
+	if !changed {
+		return nil
+	}
+
+	d.logger.Info("Periodic full scan reconciled device state",
+		"device", hsmDevice.Name,
+		"node", d.nodeName,
+		"devices", len(merged))
+
+	d.updateDeviceCache(hsmDevice.Name, merged)
+	if err := d.updateDevicePlugin(hsmDevice, merged); err != nil {
+		d.logger.Error(err, "Failed to update device plugin after periodic scan", "device", hsmDevice.Name)
+	}
+	if err := d.updatePodAnnotation(ctx, hsmDevice.Name, merged); err != nil {
+		return fmt.Errorf("failed to update pod annotation after periodic scan for %q: %w", hsmDevice.Name, err)
+	}
+	return nil
+}
+
+// mergeScanIntoCache reconciles a fresh full-scan result against the current cache
+// for one HSMDevice while preserving the lost-device grace period. Devices present in
+// the scan are marked available with their current path/LastSeen (so a re-enumerated
+// path is adopted); cached devices absent from the scan are marked lost (not deleted)
+// so cleanupStaleDevices can retire them after the grace period. Matching prefers the
+// serial number and falls back to the device path, mirroring findDeviceIndex. Returns
+// the merged list and whether it differs materially from the cache.
+func (d *DiscoveryAgent) mergeScanIntoCache(
+	hsmDeviceName string,
+	scanned []hsmv1alpha1.DiscoveredDevice,
+) ([]hsmv1alpha1.DiscoveredDevice, bool) {
+	key := func(dev hsmv1alpha1.DiscoveredDevice) string {
+		if dev.SerialNumber != "" {
+			return "serial:" + dev.SerialNumber
+		}
+		return "path:" + dev.DevicePath
+	}
+
+	scannedByKey := make(map[string]hsmv1alpha1.DiscoveredDevice, len(scanned))
+	for _, dev := range scanned {
+		scannedByKey[key(dev)] = dev
+	}
+
+	existing := d.deviceCache[hsmDeviceName]
+	merged := make([]hsmv1alpha1.DiscoveredDevice, 0, len(existing)+len(scanned))
+	matched := make(map[string]struct{}, len(scanned))
+	changed := false
+
+	// Walk the existing cache first to preserve ordering and grace state.
+	for _, old := range existing {
+		k := key(old)
+		if fresh, ok := scannedByKey[k]; ok {
+			// Still present: adopt the fresh path/info and mark available.
+			fresh.Available = true
+			if old.DevicePath != fresh.DevicePath || !old.Available {
+				changed = true
+			}
+			merged = append(merged, fresh)
+			matched[k] = struct{}{}
+			continue
+		}
+		// Absent from the scan.
+		if old.Available {
+			// Newly lost: mark unavailable and stamp the lost-at time.
+			old.Available = false
+			old.LastSeen = metav1.Now()
+			changed = true
+		}
+		// If already lost, keep the original LastSeen so the grace countdown continues.
+		merged = append(merged, old)
+	}
+
+	// Append devices seen in the scan that weren't in the cache at all.
+	for _, dev := range scanned {
+		if _, ok := matched[key(dev)]; ok {
+			continue
+		}
+		dev.Available = true
+		merged = append(merged, dev)
+		changed = true
+	}
+
+	return merged, changed
+}
+
+// cleanupStaleDevices retires devices that have been marked lost longer than the
+// grace period, updating the cache and pod annotation for any device type it prunes.
+func (d *DiscoveryAgent) cleanupStaleDevices(ctx context.Context) {
+	const cleanupThreshold = 5 * time.Minute
 	for hsmDeviceName, devices := range d.deviceCache {
 		var activeDevices []hsmv1alpha1.DiscoveredDevice
 		cleanedCount := 0
@@ -669,8 +779,6 @@ func (d *DiscoveryAgent) reconcileDevices(ctx context.Context) error {
 			}
 		}
 	}
-
-	return nil
 }
 
 // registerSpecForMonitoring registers an HSMDevice's match criteria for event monitoring

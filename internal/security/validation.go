@@ -38,10 +38,16 @@ const (
 	MaxSecretDataSize = 1024 * 1024
 	// Maximum metadata field length
 	MaxMetadataFieldLength = 1024
-	// Rate limit: 100 requests per minute per client
-	DefaultRateLimit = rate.Limit(100.0 / 60.0) // per second
+	// Rate limit per client. The agent gRPC server's only caller is the trusted
+	// manager, whose mirror sweeps legitimately burst well past a handful of calls
+	// (ReadSecret+ReadMetadata per secret per device, plus writes) from a single IP.
+	// The old 100/min + burst 20 throttled that sole client into ResourceExhausted
+	// and silently stalled mirror convergence. Sized generously as backpressure
+	// against a runaway client, not as access control (HSM access is already
+	// serialized by the PKCS#11 client mutex).
+	DefaultRateLimit = rate.Limit(1000.0 / 60.0) // ~16.7 requests/second
 	// Burst allowance
-	DefaultBurst = 20
+	DefaultBurst = 256
 )
 
 var (

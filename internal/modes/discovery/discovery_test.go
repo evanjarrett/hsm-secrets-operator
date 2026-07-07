@@ -679,6 +679,90 @@ func TestShouldDiscoverOnNodeLogic(t *testing.T) {
 	}
 }
 
+func TestMergeScanIntoCache(t *testing.T) {
+	const devName = "pico-hsm"
+	dev := func(serial, path string, available bool, lastSeen metav1.Time) hsmv1alpha1.DiscoveredDevice {
+		return hsmv1alpha1.DiscoveredDevice{
+			SerialNumber: serial,
+			DevicePath:   path,
+			Available:    available,
+			LastSeen:     lastSeen,
+		}
+	}
+	now := metav1.Now()
+	old := metav1.NewTime(now.Add(-2 * time.Minute))
+
+	t.Run("no change when present device unchanged", func(t *testing.T) {
+		a := &DiscoveryAgent{deviceCache: map[string][]hsmv1alpha1.DiscoveredDevice{
+			devName: {dev("S1", "/dev/bus/usb/001/003", true, old)},
+		}}
+		merged, changed := a.mergeScanIntoCache(devName, []hsmv1alpha1.DiscoveredDevice{
+			dev("S1", "/dev/bus/usb/001/003", true, now),
+		})
+		assert.False(t, changed)
+		assert.Len(t, merged, 1)
+		assert.Equal(t, "/dev/bus/usb/001/003", merged[0].DevicePath)
+		assert.True(t, merged[0].Available)
+	})
+
+	t.Run("re-enumeration adopts new path", func(t *testing.T) {
+		a := &DiscoveryAgent{deviceCache: map[string][]hsmv1alpha1.DiscoveredDevice{
+			devName: {dev("S1", "/dev/bus/usb/001/003", true, old)},
+		}}
+		merged, changed := a.mergeScanIntoCache(devName, []hsmv1alpha1.DiscoveredDevice{
+			dev("S1", "/dev/bus/usb/001/004", true, now),
+		})
+		assert.True(t, changed, "path change must be reported as changed")
+		assert.Len(t, merged, 1)
+		assert.Equal(t, "/dev/bus/usb/001/004", merged[0].DevicePath)
+		assert.True(t, merged[0].Available)
+	})
+
+	t.Run("absent device is marked lost, not deleted", func(t *testing.T) {
+		a := &DiscoveryAgent{deviceCache: map[string][]hsmv1alpha1.DiscoveredDevice{
+			devName: {dev("S1", "/dev/bus/usb/001/003", true, old)},
+		}}
+		merged, changed := a.mergeScanIntoCache(devName, nil)
+		assert.True(t, changed)
+		assert.Len(t, merged, 1, "lost device must remain for the grace period")
+		assert.False(t, merged[0].Available)
+		assert.True(t, merged[0].LastSeen.After(old.Time), "lost-at timestamp must be stamped")
+	})
+
+	t.Run("already-lost device stays lost with preserved timestamp and no change", func(t *testing.T) {
+		a := &DiscoveryAgent{deviceCache: map[string][]hsmv1alpha1.DiscoveredDevice{
+			devName: {dev("S1", "/dev/bus/usb/001/003", false, old)},
+		}}
+		merged, changed := a.mergeScanIntoCache(devName, nil)
+		assert.False(t, changed, "a still-absent lost device is not a new change")
+		assert.Len(t, merged, 1)
+		assert.False(t, merged[0].Available)
+		assert.Equal(t, old, merged[0].LastSeen, "grace countdown must not be reset")
+	})
+
+	t.Run("new device is appended", func(t *testing.T) {
+		a := &DiscoveryAgent{deviceCache: map[string][]hsmv1alpha1.DiscoveredDevice{}}
+		merged, changed := a.mergeScanIntoCache(devName, []hsmv1alpha1.DiscoveredDevice{
+			dev("S1", "/dev/bus/usb/001/003", true, now),
+		})
+		assert.True(t, changed)
+		assert.Len(t, merged, 1)
+		assert.True(t, merged[0].Available)
+	})
+
+	t.Run("reconnect of lost device marks available again", func(t *testing.T) {
+		a := &DiscoveryAgent{deviceCache: map[string][]hsmv1alpha1.DiscoveredDevice{
+			devName: {dev("S1", "/dev/bus/usb/001/003", false, old)},
+		}}
+		merged, changed := a.mergeScanIntoCache(devName, []hsmv1alpha1.DiscoveredDevice{
+			dev("S1", "/dev/bus/usb/001/003", true, now),
+		})
+		assert.True(t, changed)
+		assert.Len(t, merged, 1)
+		assert.True(t, merged[0].Available)
+	})
+}
+
 func BenchmarkDeviceReportValidation(b *testing.B) {
 	deviceReport := map[string]any{
 		"timestamp": time.Now().Unix(),

@@ -484,10 +484,16 @@ func (mm *MirrorManager) executeMirrorPlan(ctx context.Context, plan *SecretMirr
 
 	// Sync to target devices
 	successfulTargets := 0
+	failedTargets := 0
 	for _, targetDeviceId := range plan.TargetDevices {
 		targetDevice, ok := deviceLookup[targetDeviceId]
 		if !ok {
-			logger.Error(fmt.Errorf("target device not found in lookup: %s", targetDeviceId), "Failed to find target device", "target", targetDeviceId, "secret", plan.SecretPath)
+			lookupErr := fmt.Errorf("target device not found in lookup: %s", targetDeviceId)
+			logger.Error(lookupErr, "Failed to find target device", "target", targetDeviceId, "secret", plan.SecretPath)
+			failedTargets++
+			if result.Error == nil {
+				result.Error = lookupErr
+			}
 			continue
 		}
 
@@ -504,6 +510,7 @@ func (mm *MirrorManager) executeMirrorPlan(ctx context.Context, plan *SecretMirr
 
 		if syncErr != nil {
 			logger.Error(syncErr, "Failed to sync to target device", "target", targetDeviceId, "secret", plan.SecretPath)
+			failedTargets++
 			if result.Error == nil {
 				result.Error = syncErr
 			}
@@ -513,12 +520,20 @@ func (mm *MirrorManager) executeMirrorPlan(ctx context.Context, plan *SecretMirr
 		}
 	}
 
-	// Consider sync successful if we synced to at least some targets (partial success)
-	result.Success = successfulTargets > 0 || len(plan.TargetDevices) == 0
+	// A plan converges only when EVERY intended target received the secret. The
+	// previous "partial success = success" rule masked backfill failures — e.g. a
+	// rate-limited write to a recovering device — as success, so the failure was
+	// dropped from the aggregate error list and never surfaced or retried, leaving
+	// a device stuck as a partial replica. Any failed target now fails the plan so
+	// the aggregate reports it and the next sweep retries the still-missing target.
+	result.Success = failedTargets == 0
 
 	if result.Success {
 		logger.Info("Sync plan executed successfully", "secret", plan.SecretPath,
 			"syncType", plan.MirrorType, "targetCount", successfulTargets)
+	} else {
+		logger.Info("Sync plan partially failed", "secret", plan.SecretPath,
+			"syncType", plan.MirrorType, "successfulTargets", successfulTargets, "failedTargets", failedTargets)
 	}
 
 	return result
