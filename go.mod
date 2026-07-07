@@ -1,6 +1,6 @@
 module tangled.org/evan.jarrett.net/hsm-secrets-operator
 
-go 1.26.4
+go 1.26
 
 require (
 	github.com/gin-gonic/gin v1.10.1
