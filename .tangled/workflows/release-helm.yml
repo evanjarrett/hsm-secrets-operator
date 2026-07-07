@@ -1,0 +1,26 @@
+when:
+  - event: ["push"]
+    tag: ["v*"]
+
+engine: kubernetes
+image: alpine/helm:latest
+architecture: amd64
+
+environment:
+  IMAGE_REGISTRY: buoy.cr
+
+steps:
+  - name: Login to registry
+    command: |
+      REPO_DID_ENCODED=$(printf '%s' "${TANGLED_REPO_DID}" | sed 's/:/-/g')
+      echo "${APP_PASSWORD}" | helm registry login \
+        -u "${REPO_DID_ENCODED}" \
+        --password-stdin \
+        ${IMAGE_REGISTRY}
+
+  - name: Package and push Helm chart
+    command: |
+      REPO_DID_ENCODED=$(printf '%s' "${TANGLED_REPO_DID}" | sed 's/:/-/g')
+      VERSION=${TANGLED_REF_NAME#v}
+      helm package helm/hsm-secrets-operator --version ${VERSION} --app-version v${VERSION}
+      helm push hsm-secrets-operator-${VERSION}.tgz oci://${IMAGE_REGISTRY}/${REPO_DID_ENCODED}
