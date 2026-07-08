@@ -55,6 +55,15 @@ spec:
         {{- end }}
         - --agent-image={{ include "hsm-secrets-operator.agentImage" . }}
         - --discovery-image={{ include "hsm-secrets-operator.discoveryImage" . }}
+        - --agent-tls-enabled={{ .Values.agentTls.enabled }}
+        {{- if .Values.agentTls.enabled }}
+        - --agent-tls-ca-secret={{ .Values.agentTls.caSecretName }}
+        - --agent-tls-server-secret={{ .Values.agentTls.serverSecretName }}
+        - --agent-tls-client-secret={{ .Values.agentTls.clientSecretName }}
+        - --agent-tls-leaf-validity={{ .Values.agentTls.leafValidity }}
+        - --agent-tls-renew-before={{ .Values.agentTls.renewBefore }}
+        - --agent-tls-cert-manager={{ .Values.agentTls.certManager.enabled }}
+        {{- end }}
         env:
         # PKCS#11 configuration is now per-device via HSMDevice CRDs
         # No global HSM configuration environment variables needed

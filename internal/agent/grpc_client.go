@@ -25,6 +25,7 @@ import (
 	"github.com/go-logr/logr"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
@@ -42,16 +43,23 @@ type GRPCClient struct {
 	timeout  time.Duration
 }
 
-// NewGRPCClient creates a new gRPC-based HSM client
-func NewGRPCClient(endpoint string, logger logr.Logger) (*GRPCClient, error) {
+// NewGRPCClient creates a new gRPC-based HSM client. When clientTLS is non-nil,
+// the connection uses mutual TLS (verifying the agent's shared server cert and
+// presenting the manager's client leaf); otherwise it falls back to plaintext.
+func NewGRPCClient(endpoint string, logger logr.Logger, clientTLS *ClientTLS) (*GRPCClient, error) {
 	if endpoint == "" {
 		return nil, fmt.Errorf("endpoint cannot be empty")
+	}
+
+	transportCreds := insecure.NewCredentials()
+	if clientTLS != nil {
+		transportCreds = credentials.NewTLS(clientTLS.Config())
 	}
 
 	// Create gRPC connection with conservative keepalive settings
 	// Reduce ping frequency to prevent "too_many_pings" errors
 	conn, err := grpc.NewClient(endpoint,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(transportCreds),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                30 * time.Second, // Reduced from 10s to 30s
 			Timeout:             10 * time.Second, // Increased from 3s to 10s

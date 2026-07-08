@@ -62,6 +62,7 @@ func Run(args []string, logLevel string) error {
 	var tokenLabel string
 	var pin string
 	var requireHardware bool
+	var tlsCertFile, tlsKeyFile, tlsClientCAFile string
 	fs.StringVar(&deviceName, "device-name", "", "Name of the HSM device this agent serves")
 	fs.IntVar(&port, "port", 9090, "Port for the HSM agent gRPC API")
 	fs.IntVar(&healthPort, "health-port", 8093, "Port for health checks")
@@ -73,6 +74,9 @@ func Run(args []string, logLevel string) error {
 		"Refuse to fall back to the in-memory mock client; fail loudly if a real PKCS#11 token "+
 			"cannot be initialized (default). A live cluster must never serve mock data. "+
 			"Pass --require-hardware=false only for local/dev testing without real hardware.")
+	fs.StringVar(&tlsCertFile, "tls-cert-file", "", "Path to the agent gRPC server TLS certificate (enables mTLS)")
+	fs.StringVar(&tlsKeyFile, "tls-key-file", "", "Path to the agent gRPC server TLS private key")
+	fs.StringVar(&tlsClientCAFile, "tls-client-ca-file", "", "Path to the CA bundle used to verify manager client certificates")
 
 	// Parse agent-specific flags from the remaining unparsed arguments
 	if err := fs.Parse(args); err != nil {
@@ -120,6 +124,9 @@ func Run(args []string, logLevel string) error {
 	agentConfig.DeviceName = deviceName
 	agentConfig.PKCS11LibraryPath = pkcs11LibraryPath
 	agentConfig.TokenLabel = tokenLabel
+	agentConfig.TLSCertFile = tlsCertFile
+	agentConfig.TLSKeyFile = tlsKeyFile
+	agentConfig.TLSClientCAFile = tlsClientCAFile
 
 	// Validate complete configuration
 	if err := agentConfig.Validate(); err != nil {
@@ -261,6 +268,10 @@ func Run(args []string, logLevel string) error {
 	setupLog.Info("HSM agent ready", "device", agentConfig.DeviceName)
 
 	grpcServer := agent.NewGRPCServer(hsmClient, port, healthPort, setupLog)
+	if agentConfig.TLSCertFile != "" || agentConfig.TLSKeyFile != "" || agentConfig.TLSClientCAFile != "" {
+		grpcServer.SetTLSFiles(agentConfig.TLSCertFile, agentConfig.TLSKeyFile, agentConfig.TLSClientCAFile)
+		setupLog.Info("Agent gRPC server will require mutual TLS")
+	}
 	if err := grpcServer.Start(ctx); err != nil {
 		setupLog.Error(err, "gRPC server failed")
 		return err

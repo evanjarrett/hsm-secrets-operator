@@ -122,12 +122,22 @@ type ConnectionPoolMetrics struct {
 
 // ConnectionPool manages a pool of gRPC connections to HSM agents
 type ConnectionPool struct {
-	clients  map[string]*PooledClient // endpoint -> client
-	mutex    sync.RWMutex
-	logger   logr.Logger
-	stopChan chan struct{}
-	stopOnce sync.Once
-	metrics  ConnectionPoolMetrics
+	clients   map[string]*PooledClient // endpoint -> client
+	mutex     sync.RWMutex
+	logger    logr.Logger
+	stopChan  chan struct{}
+	stopOnce  sync.Once
+	metrics   ConnectionPoolMetrics
+	clientTLS *ClientTLS // mutual-TLS material for dialing agents; nil = plaintext
+}
+
+// SetClientTLS enables mutual TLS for connections created after this call.
+// Existing pooled connections are unaffected. Safe to call once during startup
+// before the pool serves any request.
+func (cp *ConnectionPool) SetClientTLS(clientTLS *ClientTLS) {
+	cp.mutex.Lock()
+	defer cp.mutex.Unlock()
+	cp.clientTLS = clientTLS
 }
 
 // NewConnectionPool creates a new connection pool
@@ -223,7 +233,7 @@ func (cp *ConnectionPool) getClientAttempt(ctx context.Context, endpoint string,
 	// Create new client
 	cp.logger.V(1).Info("Creating new gRPC client", "endpoint", endpoint)
 	cp.metrics.TotalConnections++
-	client, err := NewGRPCClient(endpoint, logger)
+	client, err := NewGRPCClient(endpoint, logger, cp.clientTLS)
 	if err != nil {
 		cp.metrics.FailedConnections++
 		return nil, fmt.Errorf("failed to create gRPC client: %w", err)

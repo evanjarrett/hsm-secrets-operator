@@ -137,6 +137,28 @@ webhook:
   secret:
     name: webhook-server-certs
 
+# Agent mutual-TLS configuration
+# Secures the manager <-> agent gRPC channel (port 9090) with a self-managed CA
+# and rotating leaf certificates. No external dependency: the operator generates
+# and rotates the CA/leaves itself. Enabled by default.
+agentTls:
+  enabled: true
+  # Secret names managed in the operator namespace (left un-owned; survive restarts)
+  caSecretName: hsm-mtls-ca
+  serverSecretName: hsm-agent-server-tls
+  clientSecretName: hsm-manager-client-tls
+  # Leaf validity and rotation lead time (Go duration strings)
+  leafValidity: 2160h   # 90d
+  renewBefore: 720h     # 30d
+  # Optional: consume cert-manager-issued Secrets instead of self-generating.
+  # When enabled, the chart renders a gated Issuer/Certificate and the operator
+  # reads (never writes) the PKI Secrets.
+  certManager:
+    enabled: false
+    issuerRef:
+      name: ""
+      kind: ClusterIssuer
+
 # Health check configuration
 health:
   # Health check probe port

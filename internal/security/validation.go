@@ -21,13 +21,9 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"sync"
 
-	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -38,16 +34,6 @@ const (
 	MaxSecretDataSize = 1024 * 1024
 	// Maximum metadata field length
 	MaxMetadataFieldLength = 1024
-	// Rate limit per client. The agent gRPC server's only caller is the trusted
-	// manager, whose mirror sweeps legitimately burst well past a handful of calls
-	// (ReadSecret+ReadMetadata per secret per device, plus writes) from a single IP.
-	// The old 100/min + burst 20 throttled that sole client into ResourceExhausted
-	// and silently stalled mirror convergence. Sized generously as backpressure
-	// against a runaway client, not as access control (HSM access is already
-	// serialized by the PKCS#11 client mutex).
-	DefaultRateLimit = rate.Limit(1000.0 / 60.0) // ~16.7 requests/second
-	// Burst allowance
-	DefaultBurst = 256
 )
 
 var (
@@ -163,91 +149,6 @@ func (v *InputValidator) ValidateMetadata(secretMetadata map[string]string) erro
 	return nil
 }
 
-// RateLimiter implements per-client rate limiting for gRPC requests
-type RateLimiter struct {
-	limiters map[string]*rate.Limiter
-	mu       sync.RWMutex
-	limit    rate.Limit
-	burst    int
-}
-
-// NewRateLimiter creates a new rate limiter
-func NewRateLimiter() *RateLimiter {
-	return &RateLimiter{
-		limiters: make(map[string]*rate.Limiter),
-		limit:    DefaultRateLimit,
-		burst:    DefaultBurst,
-	}
-}
-
-// NewRateLimiterWithConfig creates a rate limiter with custom settings
-func NewRateLimiterWithConfig(limit rate.Limit, burst int) *RateLimiter {
-	return &RateLimiter{
-		limiters: make(map[string]*rate.Limiter),
-		limit:    limit,
-		burst:    burst,
-	}
-}
-
-// getLimiter gets or creates a rate limiter for a client
-func (rl *RateLimiter) getLimiter(clientID string) *rate.Limiter {
-	rl.mu.RLock()
-	limiter, exists := rl.limiters[clientID]
-	rl.mu.RUnlock()
-
-	if exists {
-		return limiter
-	}
-
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-
-	// Double-check in case another goroutine created it
-	if limiter, exists := rl.limiters[clientID]; exists {
-		return limiter
-	}
-
-	// Create new limiter
-	limiter = rate.NewLimiter(rl.limit, rl.burst)
-	rl.limiters[clientID] = limiter
-	return limiter
-}
-
-// Allow checks if a request should be allowed for the given client
-func (rl *RateLimiter) Allow(clientID string) bool {
-	return rl.getLimiter(clientID).Allow()
-}
-
-// getClientID extracts a client identifier from the gRPC context
-func getClientID(ctx context.Context) string {
-	// Try to get peer information
-	if p, ok := peer.FromContext(ctx); ok {
-		return p.Addr.String()
-	}
-
-	// Try to get metadata
-	if md, ok := metadata.FromIncomingContext(ctx); ok {
-		if clientIDs := md.Get("client-id"); len(clientIDs) > 0 {
-			return clientIDs[0]
-		}
-	}
-
-	return "unknown"
-}
-
-// RateLimitInterceptor returns a gRPC unary interceptor for rate limiting
-func (rl *RateLimiter) RateLimitInterceptor() grpc.UnaryServerInterceptor {
-	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		clientID := getClientID(ctx)
-
-		if !rl.Allow(clientID) {
-			return nil, status.Errorf(codes.ResourceExhausted, "rate limit exceeded for client %s", clientID)
-		}
-
-		return handler(ctx, req)
-	}
-}
-
 // ValidationInterceptor returns a gRPC unary interceptor for input validation
 func ValidationInterceptor(validator *InputValidator) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
@@ -260,46 +161,6 @@ func ValidationInterceptor(validator *InputValidator) grpc.UnaryServerIntercepto
 		}
 
 		// Additional validation for write requests
-		switch r := req.(type) {
-		case interface {
-			GetSecretData() interface{ GetData() map[string][]byte }
-		}:
-			if secretData := r.GetSecretData(); secretData != nil {
-				if err := validator.ValidateSecretData(secretData.GetData()); err != nil {
-					return nil, status.Errorf(codes.InvalidArgument, "invalid secret data: %v", err)
-				}
-			}
-		case interface {
-			GetMetadata() interface{ GetLabels() map[string]string }
-		}:
-			if metadata := r.GetMetadata(); metadata != nil {
-				if err := validator.ValidateMetadata(metadata.GetLabels()); err != nil {
-					return nil, status.Errorf(codes.InvalidArgument, "invalid metadata: %v", err)
-				}
-			}
-		}
-
-		return handler(ctx, req)
-	}
-}
-
-// SecurityInterceptor combines multiple security checks
-func SecurityInterceptor(rateLimiter *RateLimiter, validator *InputValidator) grpc.UnaryServerInterceptor {
-	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		// Rate limiting
-		clientID := getClientID(ctx)
-		if !rateLimiter.Allow(clientID) {
-			return nil, status.Errorf(codes.ResourceExhausted, "rate limit exceeded for client %s", clientID)
-		}
-
-		// Input validation
-		switch r := req.(type) {
-		case interface{ GetPath() string }:
-			if err := validator.ValidateSecretPath(r.GetPath()); err != nil {
-				return nil, status.Errorf(codes.InvalidArgument, "invalid path: %v", err)
-			}
-		}
-
 		switch r := req.(type) {
 		case interface {
 			GetSecretData() interface{ GetData() map[string][]byte }

@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	hsmv1alpha1 "tangled.org/evan.jarrett.net/hsm-secrets-operator/api/v1alpha1"
@@ -156,7 +157,7 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 			}
 
 			// Clean up any agent deployments that might have been created
-			agentName := fmt.Sprintf("hsm-agent-%s-0", hsmDeviceName)
+			agentName := fmt.Sprintf("hsm-agent-%s-dc6a33145e23a42a", hsmDeviceName)
 			deployment := &appsv1.Deployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      agentName,
@@ -192,7 +193,7 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Checking that agent deployment was created")
-			agentName := fmt.Sprintf("hsm-agent-%s-0", hsmDeviceName)
+			agentName := fmt.Sprintf("hsm-agent-%s-dc6a33145e23a42a", hsmDeviceName)
 			deployment := &appsv1.Deployment{}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
@@ -265,7 +266,7 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Checking that no agent deployment was created")
-			agentName := fmt.Sprintf("hsm-agent-%s-0", hsmDeviceName)
+			agentName := fmt.Sprintf("hsm-agent-%s-dc6a33145e23a42a", hsmDeviceName)
 			deployment := &appsv1.Deployment{}
 			Consistently(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
@@ -305,7 +306,7 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Checking that no agent deployment was created")
-			agentName := fmt.Sprintf("hsm-agent-%s-0", hsmDeviceName)
+			agentName := fmt.Sprintf("hsm-agent-%s-dc6a33145e23a42a", hsmDeviceName)
 			deployment := &appsv1.Deployment{}
 			Consistently(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
@@ -407,7 +408,7 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Checking that agent deployment was created despite nil agent manager")
-			agentName := fmt.Sprintf("hsm-agent-%s-0", hsmDeviceName)
+			agentName := fmt.Sprintf("hsm-agent-%s-dc6a33145e23a42a", hsmDeviceName)
 			deployment := &appsv1.Deployment{}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
@@ -435,7 +436,7 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Verifying agent deployment exists")
-			agentName := fmt.Sprintf("hsm-agent-%s-0", hsmDeviceName)
+			agentName := fmt.Sprintf("hsm-agent-%s-dc6a33145e23a42a", hsmDeviceName)
 			deployment := &appsv1.Deployment{}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{
@@ -465,6 +466,48 @@ var _ = Describe("HSMPoolAgentReconciler", func() {
 			// Same UID means it wasn't recreated
 			Expect(updatedDeployment.UID).To(Equal(originalUID))
 		})
+
+		It("Should not deploy an agent for a device with no serial number", func() {
+			By("Updating the pool's device to have an empty serial number")
+			Eventually(func() error {
+				pool := &hsmv1alpha1.HSMPool{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      hsmPoolName,
+					Namespace: hsmPoolNamespace,
+				}, pool); err != nil {
+					return err
+				}
+				pool.Status.AggregatedDevices[0].SerialNumber = ""
+				return k8sClient.Status().Update(ctx, pool)
+			}).WithTimeout(2 * time.Second).Should(Succeed())
+
+			By("Reconciling the HSMPool")
+			reconciler := &HSMPoolAgentReconciler{
+				Client:       k8sClient,
+				Scheme:       k8sClient.Scheme(),
+				AgentManager: agentManager,
+				AgentImage:   "test-agent:latest",
+			}
+			_, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      hsmPoolName,
+					Namespace: hsmPoolNamespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying no agent deployment was created for the serial-less device")
+			deploymentList := &appsv1.DeploymentList{}
+			Consistently(func() int {
+				if err := k8sClient.List(ctx, deploymentList,
+					client.InNamespace(hsmPoolNamespace),
+					client.MatchingLabels{"hsm.j5t.io/device": hsmDeviceName},
+				); err != nil {
+					return -1
+				}
+				return len(deploymentList.Items)
+			}).WithTimeout(1 * time.Second).WithPolling(50 * time.Millisecond).Should(Equal(0))
+		})
 	})
 })
 
@@ -489,6 +532,7 @@ func (m *MockAgentManager) GetAgentEndpoint(hsmDevice *hsmv1alpha1.HSMDevice) st
 func TestCleanupStaleAgents(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, hsmv1alpha1.AddToScheme(scheme))
+	require.NoError(t, appsv1.AddToScheme(scheme))
 
 	now := time.Now()
 	tenMinutesAgo := now.Add(-10 * time.Minute)
@@ -704,6 +748,7 @@ func TestCleanupStaleAgents(t *testing.T) {
 func TestDefaultAbsenceTimeout(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, hsmv1alpha1.AddToScheme(scheme))
+	require.NoError(t, appsv1.AddToScheme(scheme))
 
 	ctx := context.Background()
 	now := time.Now()

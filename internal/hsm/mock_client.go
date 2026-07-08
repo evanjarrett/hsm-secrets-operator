@@ -36,9 +36,21 @@ type MockClient struct {
 	logger    logr.Logger
 	mutex     sync.RWMutex
 	connected bool
+	// tokenLost simulates a device that fell off the USB bus: the client is still
+	// "connected" but GetInfo returns ErrTokenNotPresent (the zombie-agent scenario).
+	tokenLost bool
 	secrets   map[string]SecretData
 	metadata  map[string]*SecretMetadata
 	config    Config
+}
+
+// SetTokenPresent toggles simulated token presence for tests. When set false, GetInfo
+// returns ErrTokenNotPresent even though the client reports connected — mirroring a device
+// that re-enumerated out from under a live session.
+func (m *MockClient) SetTokenPresent(present bool) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.tokenLost = !present
 }
 
 // NewMockClient creates a new mock HSM client for testing
@@ -92,6 +104,9 @@ func (m *MockClient) GetInfo(ctx context.Context) (*HSMInfo, error) {
 
 	if !m.connected {
 		return nil, fmt.Errorf("HSM not connected")
+	}
+	if m.tokenLost {
+		return nil, fmt.Errorf("mock token gone: %w", ErrTokenNotPresent)
 	}
 
 	return &HSMInfo{

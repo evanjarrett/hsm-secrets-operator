@@ -12,6 +12,13 @@ type AgentConfig struct {
 	TokenLabel        string
 	PodName           string
 	PodNamespace      string
+
+	// Mutual-TLS material for the gRPC server. When all three are set the agent
+	// serves mTLS (RequireAndVerifyClientCert); when empty it serves plaintext
+	// (local/dev path).
+	TLSCertFile     string
+	TLSKeyFile      string
+	TLSClientCAFile string
 }
 
 // NewAgentConfigFromEnv creates AgentConfig from system information

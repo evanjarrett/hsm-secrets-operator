@@ -17,6 +17,7 @@ limitations under the License.
 package manager
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"os"
@@ -42,6 +43,7 @@ import (
 	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/agent"
 	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/config"
 	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/controller"
+	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/pki"
 )
 
 var (
@@ -75,6 +77,15 @@ type managerConfig struct {
 	// Mirror configuration
 	mirrorPeriodicInterval string // Duration string for periodic sync interval
 	mirrorDebounceWindow   string // Duration string for event debounce window
+
+	// Agent mutual-TLS configuration
+	agentTLSEnabled      bool   // Enable self-managed mTLS on the manager<->agent gRPC channel
+	agentTLSCASecret     string // Secret holding the CA cert/key (manager only)
+	agentTLSServerSecret string // Secret holding the agent server leaf (mounted into agents)
+	agentTLSClientSecret string // Secret holding the manager client leaf
+	agentTLSLeafValidity string // Duration string for issued leaf validity
+	agentTLSRenewBefore  string // Duration string for leaf rotation lead time
+	agentTLSCertManager  bool   // Consume externally-managed (cert-manager) Secrets instead of self-generating
 }
 
 // parseFlags parses command line arguments and returns the configuration
@@ -113,6 +124,22 @@ func parseFlags(args []string) (*managerConfig, error) {
 		"Interval for periodic mirror safety sync (e.g., 5m, 10m, 1h)")
 	fs.StringVar(&cfg.mirrorDebounceWindow, "mirror-debounce-window", "5s",
 		"Debounce window for batching mirror events (e.g., 5s, 10s, 30s)")
+
+	// Agent mutual-TLS flags (self-managed PKI, no external dependency)
+	fs.BoolVar(&cfg.agentTLSEnabled, "agent-tls-enabled", true,
+		"Secure the manager<->agent gRPC channel with self-managed mutual TLS")
+	fs.StringVar(&cfg.agentTLSCASecret, "agent-tls-ca-secret", "hsm-mtls-ca",
+		"Secret name holding the mTLS CA certificate and key")
+	fs.StringVar(&cfg.agentTLSServerSecret, "agent-tls-server-secret", "hsm-agent-server-tls",
+		"Secret name holding the agent server certificate (mounted into agent pods)")
+	fs.StringVar(&cfg.agentTLSClientSecret, "agent-tls-client-secret", "hsm-manager-client-tls",
+		"Secret name holding the manager client certificate")
+	fs.StringVar(&cfg.agentTLSLeafValidity, "agent-tls-leaf-validity", "2160h",
+		"Validity duration for issued mTLS leaf certificates (e.g., 2160h = 90d)")
+	fs.StringVar(&cfg.agentTLSRenewBefore, "agent-tls-renew-before", "720h",
+		"Rotate an mTLS leaf when this much validity remains (e.g., 720h = 30d)")
+	fs.BoolVar(&cfg.agentTLSCertManager, "agent-tls-cert-manager", false,
+		"Consume externally-managed (cert-manager) mTLS Secrets instead of self-generating")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -295,6 +322,8 @@ func setupAllControllers(mgr ctrl.Manager, cfg *managerConfig, serviceAccountNam
 		ImageResolver:        imageResolver,
 		DeviceAbsenceTimeout: 10 * time.Minute, // Default: cleanup agents after 10 minutes of device absence
 		ServiceAccountName:   serviceAccountName,
+		AgentTLSEnabled:      cfg.agentTLSEnabled,
+		AgentTLSSecretName:   cfg.agentTLSServerSecret,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "HSMPoolAgent")
 		return err
@@ -400,10 +429,36 @@ func Run(args []string) error {
 	}
 	setupLog.Info("Using service account", "serviceAccount", serviceAccountName)
 
+	// Bootstrap the self-managed mTLS PKI synchronously (before the agent manager
+	// and controllers) so the manager holds its client leaf in-memory before it
+	// dials any agent. Uses an uncached client since mgr.GetClient() only works
+	// after mgr.Start.
+	var agentClientTLS *agent.ClientTLS
+	var pkiCfg pki.Config
+	if cfg.agentTLSEnabled {
+		pkiCfg, err = pkiConfig(cfg, operatorNamespace)
+		if err != nil {
+			setupLog.Error(err, "invalid agent mTLS configuration")
+			return err
+		}
+		agentClientTLS, err = bootstrapAgentPKI(context.Background(), mgr.GetConfig(), pkiCfg)
+		if err != nil {
+			setupLog.Error(err, "unable to bootstrap agent mTLS PKI")
+			return err
+		}
+		setupLog.Info("Agent mTLS PKI ready", "caSecret", cfg.agentTLSCASecret,
+			"serverSecret", cfg.agentTLSServerSecret, "clientSecret", cfg.agentTLSClientSecret)
+	} else {
+		setupLog.Info("Agent mTLS disabled; manager<->agent gRPC channel is plaintext")
+	}
+
 	// Create agent manager directly (no runnable needed)
 	setupLog.Info("Creating agent manager")
 	imageResolver := config.NewImageResolver(mgr.GetClient())
 	agentManager := agent.NewManager(mgr.GetClient(), operatorNamespace, cfg.agentImage, imageResolver)
+	if agentClientTLS != nil {
+		agentManager.SetClientTLS(agentClientTLS)
+	}
 
 	// Setup all controllers directly
 	if err := setupAllControllers(mgr, cfg, serviceAccountName, agentManager, operatorNamespace, operatorName); err != nil {
@@ -422,6 +477,19 @@ func Run(args []string) error {
 		setupLog.Info("Adding webhook certificate watcher to manager")
 		if err := mgr.Add(webhookCertWatcher); err != nil {
 			setupLog.Error(err, "unable to add webhook certificate watcher to manager")
+			return err
+		}
+	}
+
+	if agentClientTLS != nil {
+		setupLog.Info("Adding agent mTLS rotation runnable to manager")
+		if err := mgr.Add(&pkiRunnable{
+			client:    mgr.GetClient(),
+			pkiCfg:    pkiCfg,
+			clientTLS: agentClientTLS,
+			logger:    ctrl.Log.WithName("agent-mtls"),
+		}); err != nil {
+			setupLog.Error(err, "unable to add agent mTLS rotation runnable")
 			return err
 		}
 	}

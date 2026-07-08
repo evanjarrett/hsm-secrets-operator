@@ -19,9 +19,11 @@ package hsm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -34,6 +36,13 @@ const (
 	applicationName   = "hsm-secrets-operator"
 )
 
+// ErrTokenNotPresent indicates the PKCS#11 token is no longer reachable — the device
+// fell off the USB bus / re-enumerated (CKR_TOKEN_NOT_PRESENT, CKR_DEVICE_REMOVED, …).
+// The CGO layer wraps token-loss PKCS#11 errors with this sentinel so the shared client
+// code (which cannot reference pkcs11 constants without CGO) can detect it via errors.Is
+// and mark the client disconnected, driving the readiness/liveness probes.
+var ErrTokenNotPresent = errors.New("hsm token not present or device removed")
+
 // PKCS11Client implements the Client interface using PKCS#11
 type PKCS11Client struct {
 	config Config
@@ -43,7 +52,7 @@ type PKCS11Client struct {
 	// Internal state
 	session   *Session // Will be concrete type in CGO, stub in non-CGO
 	slot      uint
-	connected bool
+	connected atomic.Bool // truthful token-presence flag; flipped false on token loss (ErrTokenNotPresent)
 
 	// Data object cache for faster lookups (CGO only)
 	dataObjects map[string]ObjectHandle
@@ -123,7 +132,7 @@ func (c *PKCS11Client) Initialize(ctx context.Context, config Config) error {
 
 	c.session = session
 	c.slot = slot
-	c.connected = true
+	c.connected.Store(true)
 	c.logger.Info("HSM connection established successfully", "slot", slot)
 	return nil
 }
@@ -133,7 +142,7 @@ func (c *PKCS11Client) Close() error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	if !c.connected {
+	if !c.connected.Load() {
 		return nil
 	}
 
@@ -144,7 +153,7 @@ func (c *PKCS11Client) Close() error {
 		c.logger.V(1).Info("Error during PKCS#11 cleanup", "error", err)
 	}
 
-	c.connected = false
+	c.connected.Store(false)
 	c.session = nil
 	c.dataObjects = make(map[string]ObjectHandle)
 
@@ -156,13 +165,21 @@ func (c *PKCS11Client) GetInfo(ctx context.Context) (*HSMInfo, error) {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 
-	if !c.connected {
+	if !c.connected.Load() {
 		return nil, fmt.Errorf("HSM not connected")
 	}
 
-	// Get token information via helper
+	// Get token information via helper. This is the live "is the token really there"
+	// probe: on a device that fell off the USB bus it returns ErrTokenNotPresent.
 	tokenInfo, err := getTokenInfoPKCS11(c.session, c.slot)
 	if err != nil {
+		if errors.Is(err, ErrTokenNotPresent) {
+			// Mark disconnected so IsConnected() (and the readiness/liveness probes and
+			// mirror guards that consult it) stop reporting a phantom-healthy token. The
+			// flag is atomic, so this is safe while still holding the read lock.
+			c.connected.Store(false)
+			c.logger.Error(err, "HSM token no longer present; marking client disconnected")
+		}
 		return nil, fmt.Errorf("failed to get token info: %w", err)
 	}
 
@@ -182,7 +199,7 @@ func (c *PKCS11Client) ReadSecret(ctx context.Context, path string) (SecretData,
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 
-	if !c.connected {
+	if !c.connected.Load() {
 		return nil, fmt.Errorf("HSM not connected")
 	}
 
@@ -240,7 +257,7 @@ func (c *PKCS11Client) WriteSecret(ctx context.Context, path string, data Secret
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	if !c.connected {
+	if !c.connected.Load() {
 		return fmt.Errorf("HSM not connected")
 	}
 
@@ -321,7 +338,7 @@ func (c *PKCS11Client) ReadMetadata(ctx context.Context, path string) (*SecretMe
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 
-	if !c.connected {
+	if !c.connected.Load() {
 		return nil, fmt.Errorf("HSM not connected")
 	}
 
@@ -353,7 +370,7 @@ func (c *PKCS11Client) DeleteSecret(ctx context.Context, path string) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	if !c.connected {
+	if !c.connected.Load() {
 		return fmt.Errorf("HSM not connected")
 	}
 
@@ -379,7 +396,7 @@ func (c *PKCS11Client) DeleteSecretKey(ctx context.Context, path, key string) er
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	if !c.connected {
+	if !c.connected.Load() {
 		return fmt.Errorf("HSM not connected")
 	}
 
@@ -407,7 +424,7 @@ func (c *PKCS11Client) ListSecrets(ctx context.Context, prefix string) ([]string
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 
-	if !c.connected {
+	if !c.connected.Load() {
 		return nil, fmt.Errorf("HSM not connected")
 	}
 
@@ -472,12 +489,13 @@ func (c *PKCS11Client) GetChecksum(ctx context.Context, path string) (string, er
 	return checksum, nil
 }
 
-// IsConnected returns true if the HSM is connected and responsive
+// IsConnected returns true if the HSM token is present and responsive. It reads an
+// atomic flag (no mutex) so it never blocks behind an in-flight exclusive operation —
+// important when a wedged device is holding the write lock. The flag is flipped false by
+// GetInfo when the token goes missing (ErrTokenNotPresent), so this no longer reports a
+// phantom-healthy token after a device falls off the bus.
 func (c *PKCS11Client) IsConnected() bool {
-	c.mutex.RLock()
-	defer c.mutex.RUnlock()
-
-	return c.connected
+	return c.connected.Load()
 }
 
 // ChangePIN changes the HSM PIN from old PIN to new PIN
@@ -485,7 +503,7 @@ func (c *PKCS11Client) ChangePIN(ctx context.Context, oldPIN, newPIN string) err
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	if !c.connected {
+	if !c.connected.Load() {
 		return fmt.Errorf("HSM not connected")
 	}
 

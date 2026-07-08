@@ -18,6 +18,8 @@ package agent
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/go-logr/logr"
@@ -27,6 +29,47 @@ import (
 	hsmv1 "tangled.org/evan.jarrett.net/hsm-secrets-operator/api/proto/hsm/v1"
 	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/hsm"
 )
+
+// probeStatus drives one of the HTTP health handlers and returns the status code.
+func probeStatus(h func(http.ResponseWriter, *http.Request)) int {
+	rr := httptest.NewRecorder()
+	h(rr, httptest.NewRequest(http.MethodGet, "/probe", nil))
+	return rr.Code
+}
+
+// TestHealthProbesReflectTokenPresence verifies the readiness/liveness handlers actively
+// probe the token (GetInfo) rather than trusting the cached connected flag — so a zombie
+// agent (connected, but the device fell off the bus) is reported unhealthy.
+func TestHealthProbesReflectTokenPresence(t *testing.T) {
+	logger := logr.Discard()
+
+	t.Run("healthy when token present", func(t *testing.T) {
+		mockClient := hsm.NewMockClient()
+		require.NoError(t, mockClient.Initialize(context.Background(), hsm.DefaultConfig()))
+		server := NewGRPCServer(mockClient, 9090, 8080, logger)
+
+		assert.Equal(t, http.StatusOK, probeStatus(server.handleReadyz))
+		assert.Equal(t, http.StatusOK, probeStatus(server.handleHealthz))
+	})
+
+	t.Run("unhealthy when token fell off the bus (zombie)", func(t *testing.T) {
+		mockClient := hsm.NewMockClient()
+		require.NoError(t, mockClient.Initialize(context.Background(), hsm.DefaultConfig()))
+		// connected flag stays true, but GetInfo now returns ErrTokenNotPresent.
+		mockClient.SetTokenPresent(false)
+		require.True(t, mockClient.IsConnected(), "precondition: cached flag still reports connected")
+		server := NewGRPCServer(mockClient, 9090, 8080, logger)
+
+		assert.Equal(t, http.StatusServiceUnavailable, probeStatus(server.handleReadyz))
+		assert.Equal(t, http.StatusServiceUnavailable, probeStatus(server.handleHealthz))
+	})
+
+	t.Run("unhealthy when no HSM client", func(t *testing.T) {
+		server := NewGRPCServer(nil, 9090, 8080, logger)
+		assert.Equal(t, http.StatusServiceUnavailable, probeStatus(server.handleReadyz))
+		assert.Equal(t, http.StatusServiceUnavailable, probeStatus(server.handleHealthz))
+	})
+}
 
 func TestNewGRPCServer(t *testing.T) {
 	mockClient := hsm.NewMockClient()

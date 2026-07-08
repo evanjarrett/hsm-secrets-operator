@@ -125,6 +125,12 @@ func NewManager(k8sClient client.Client, namespace string, agentImage string, im
 	return m
 }
 
+// SetClientTLS enables mutual TLS on the manager's connection pool. Call once
+// during startup, before any agent RPC, to have all agent connections use mTLS.
+func (m *Manager) SetClientTLS(clientTLS *ClientTLS) {
+	m.connectionPool.SetClientTLS(clientTLS)
+}
+
 // NewTestManager creates a new agent manager optimized for testing
 func NewTestManager(k8sClient client.Client, namespace string, agentImage string, imageResolver ImageResolver) *Manager {
 	// Create logger for the test manager
@@ -146,23 +152,25 @@ func NewTestManager(k8sClient client.Client, namespace string, agentImage string
 	return m
 }
 
-// generateAgentName creates a consistent agent name for an HSM device
-func (m *Manager) generateAgentName(hsmPool *hsmv1alpha1.HSMPool) string {
-	return fmt.Sprintf("%s-%s", AgentNamePrefix, hsmPool.OwnerReferences[0].Name)
-}
-
 // EnsureAgent discovers and tracks existing agent pods for all available devices in the pool
 func (m *Manager) EnsureAgent(ctx context.Context, hsmPool *hsmv1alpha1.HSMPool) error {
 	// Pre-collect available devices to process
+	deviceName := hsmPool.OwnerReferences[0].Name
 	workItems := make([]deviceWork, 0, len(hsmPool.Status.AggregatedDevices))
 	for i, aggregatedDevice := range hsmPool.Status.AggregatedDevices {
 		if !aggregatedDevice.Available {
 			continue
 		}
+		agentName, ok := AgentInstanceName(deviceName, aggregatedDevice.SerialNumber)
+		if !ok {
+			// Device reported no serial; it has no stable identity to route to,
+			// so we skip it (the controller skips deploying an agent too).
+			continue
+		}
 		workItems = append(workItems, deviceWork{
 			device:    aggregatedDevice,
-			agentName: fmt.Sprintf("%s-%d", m.generateAgentName(hsmPool), i),
-			agentKey:  fmt.Sprintf("%s-%s", hsmPool.OwnerReferences[0].Name, aggregatedDevice.SerialNumber),
+			agentName: agentName,
+			agentKey:  fmt.Sprintf("%s-%s", deviceName, aggregatedDevice.SerialNumber),
 			index:     i,
 		})
 	}

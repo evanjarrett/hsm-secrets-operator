@@ -19,11 +19,32 @@ limitations under the License.
 package hsm
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/miekg/pkcs11"
 )
+
+// isTokenLostError reports whether a PKCS#11 error means the token/device is gone
+// (fell off the USB bus, re-enumerated, or the session was invalidated) rather than a
+// transient or logical failure. These are the codes that must mark the client
+// disconnected so the health probes fail and kubelet restarts the agent.
+func isTokenLostError(err error) bool {
+	var pe pkcs11.Error
+	if !errors.As(err, &pe) {
+		return false
+	}
+	switch pe {
+	case pkcs11.CKR_TOKEN_NOT_PRESENT,
+		pkcs11.CKR_DEVICE_REMOVED,
+		pkcs11.CKR_DEVICE_ERROR,
+		pkcs11.CKR_SESSION_HANDLE_INVALID:
+		return true
+	default:
+		return false
+	}
+}
 
 // CGO-specific types
 type Session struct {
@@ -234,6 +255,11 @@ func getTokenInfoPKCS11(session *Session, slot uint) (*tokenInfo, error) {
 	// Get token information from PKCS#11
 	pkcs11TokenInfo, err := session.ctx.GetTokenInfo(session.slot)
 	if err != nil {
+		if isTokenLostError(err) {
+			// Wrap with the shared sentinel so the non-CGO shared client code can detect
+			// token loss via errors.Is without referencing pkcs11 constants.
+			return nil, fmt.Errorf("get token info failed (%v): %w", err, ErrTokenNotPresent)
+		}
 		return nil, fmt.Errorf("failed to get token info: %w", err)
 	}
 

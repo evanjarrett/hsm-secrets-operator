@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -52,6 +51,11 @@ const (
 
 	// AgentHealthPort is the port for health checks (HTTP for simplicity)
 	AgentHealthPort = 8093
+
+	// agentTLSVolumeName is the volume name for the mounted mTLS server cert.
+	agentTLSVolumeName = "agent-mtls"
+	// agentTLSMountPath is where the mTLS server cert Secret is mounted in agents.
+	agentTLSMountPath = "/etc/hsm/tls"
 )
 
 // HSMPoolAgentReconciler watches HSMPools and ensures agents are deployed when pools become ready
@@ -62,6 +66,12 @@ type HSMPoolAgentReconciler struct {
 	ImageResolver      *config.ImageResolver
 	AgentImage         string
 	ServiceAccountName string
+
+	// AgentTLSEnabled mounts the shared server certificate into agent pods and
+	// passes the --tls-* flags so the agent gRPC server requires mutual TLS.
+	AgentTLSEnabled bool
+	// AgentTLSSecretName is the Secret (ca.crt/tls.crt/tls.key) mounted into agents.
+	AgentTLSSecretName string
 
 	// DeviceAbsenceTimeout is the duration after which agents are cleaned up when devices are unavailable
 	// Defaults to 2x grace period (10 minutes) if not set
@@ -195,7 +205,7 @@ func (r *HSMPoolAgentReconciler) cleanupStaleAgents(ctx context.Context, hsmPool
 					"poolAge", poolAge,
 					"absenceTimeout", absenceTimeout)
 
-				if err := r.cleanupAgentForDevice(ctx, &hsmDevice); err != nil {
+				if err := r.cleanupAgentDeployments(ctx, &hsmDevice); err != nil {
 					logger.Error(err, "Failed to cleanup agent for device with no instances", "device", deviceRef)
 				}
 			}
@@ -206,7 +216,7 @@ func (r *HSMPoolAgentReconciler) cleanupStaleAgents(ctx context.Context, hsmPool
 				"absenceTimeout", absenceTimeout,
 				"lastSeen", lastSeenTime)
 
-			if err := r.cleanupAgentForDevice(ctx, &hsmDevice); err != nil {
+			if err := r.cleanupAgentDeployments(ctx, &hsmDevice); err != nil {
 				logger.Error(err, "Failed to cleanup agent for absent device", "device", deviceRef)
 			}
 		} else {
@@ -220,62 +230,12 @@ func (r *HSMPoolAgentReconciler) cleanupStaleAgents(ctx context.Context, hsmPool
 	return nil
 }
 
-// cleanupAgentForDevice removes the agent deployment for a specific device
-func (r *HSMPoolAgentReconciler) cleanupAgentForDevice(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice) error {
+// cleanupAgentDeployments removes all agent deployments for a device, matching by the
+// labelHSMDevice label so cleanup is independent of how agents are named or ordered.
+func (r *HSMPoolAgentReconciler) cleanupAgentDeployments(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice) error {
 	logger := log.FromContext(ctx)
 
-	// Get the HSMPool to find all agent deployments to clean up
-	poolName := hsmDevice.Name + "-pool"
-	var hsmPool hsmv1alpha1.HSMPool
-	if err := r.Get(ctx, types.NamespacedName{
-		Name:      poolName,
-		Namespace: hsmDevice.Namespace,
-	}, &hsmPool); err != nil {
-		// If pool doesn't exist, try to clean up any agent deployments by pattern
-		return r.cleanupAgentDeploymentsByPattern(ctx, hsmDevice)
-	}
-
-	// Clean up all agent deployments using stable index mapping
-	availableDevices := make([]hsmv1alpha1.DiscoveredDevice, 0, len(hsmPool.Status.AggregatedDevices))
-	availableDevices = append(availableDevices, hsmPool.Status.AggregatedDevices...)
-
-	// Sort by serial number for stable index assignment (same as ensureAgentDeployments)
-	sort.Slice(availableDevices, func(i, j int) bool {
-		return availableDevices[i].SerialNumber < availableDevices[j].SerialNumber
-	})
-
-	for i := range availableDevices {
-		agentName := fmt.Sprintf("%s-%s-%d", AgentNamePrefix, hsmDevice.Name, i)
-
-		// Delete deployment
-		deployment := &appsv1.Deployment{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      agentName,
-				Namespace: hsmDevice.Namespace,
-			},
-		}
-		if err := r.Delete(ctx, deployment); err != nil && !errors.IsNotFound(err) {
-			logger.Error(err, "Failed to delete agent deployment", "deployment", agentName)
-		} else {
-			logger.Info("Deleted agent deployment", "deployment", agentName)
-		}
-	}
-
-	// Also clean up tracking in agent manager
-	if r.AgentManager != nil {
-		if err := r.AgentManager.CleanupAgent(ctx, hsmDevice); err != nil {
-			logger.Error(err, "Failed to cleanup agent tracking", "device", hsmDevice.Name)
-		}
-	}
-
-	return nil
-}
-
-// cleanupAgentDeploymentsByPattern removes agent deployments by naming pattern when pool is unavailable
-func (r *HSMPoolAgentReconciler) cleanupAgentDeploymentsByPattern(ctx context.Context, hsmDevice *hsmv1alpha1.HSMDevice) error {
-	logger := log.FromContext(ctx)
-
-	// List all deployments in the namespace that match our agent pattern
+	// List all deployments in the namespace and match by device label
 	var deploymentList appsv1.DeploymentList
 	if err := r.List(ctx, &deploymentList, client.InNamespace(hsmDevice.Namespace)); err != nil {
 		return fmt.Errorf("failed to list deployments: %w", err)
@@ -316,18 +276,18 @@ func (r *HSMPoolAgentReconciler) ensureAgentDeployments(ctx context.Context, hsm
 		devicesBySerial[device.SerialNumber] = append(devicesBySerial[device.SerialNumber], device)
 	}
 
-	// Process each unique serial with stable ordering
-	serialNumbers := make([]string, 0, len(devicesBySerial))
-	for serial := range devicesBySerial {
-		serialNumbers = append(serialNumbers, serial)
-	}
-	sort.Strings(serialNumbers) // Stable ordering
-
+	deviceName := hsmPool.OwnerReferences[0].Name
 	var deploymentErrors []error
 
-	for i, serial := range serialNumbers {
-		devices := devicesBySerial[serial]
-		agentName := fmt.Sprintf("%s-%s-%d", AgentNamePrefix, hsmPool.OwnerReferences[0].Name, i)
+	for serial, devices := range devicesBySerial {
+		agentName, ok := agent.AgentInstanceName(deviceName, serial)
+		if !ok {
+			// Device reported no serial; it has no stable identity to route to,
+			// so skip deploying an agent for it.
+			logger.Info("Skipping device with no serial number; cannot assign a stable agent name",
+				componentPool, hsmPool.Name)
+			continue
+		}
 
 		// Find the active device (if any) and lost device (if any)
 		var activeDevice *hsmv1alpha1.DiscoveredDevice
@@ -518,18 +478,14 @@ func (r *HSMPoolAgentReconciler) deleteAgent(ctx context.Context, name, namespac
 }
 
 // createAgentDeployment creates the HSM agent deployment for a specific device
-func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmPool *hsmv1alpha1.HSMPool, specificDevice *hsmv1alpha1.DiscoveredDevice, customAgentName string) error {
+func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmPool *hsmv1alpha1.HSMPool, specificDevice *hsmv1alpha1.DiscoveredDevice, agentName string) error {
 	logger := log.FromContext(ctx)
 
 	if specificDevice == nil {
 		return fmt.Errorf("specificDevice is required")
 	}
-
-	var agentName string
-	if customAgentName != "" {
-		agentName = customAgentName
-	} else {
-		agentName = r.generateAgentName(hsmPool)
+	if agentName == "" {
+		return fmt.Errorf("agentName is required")
 	}
 
 	targetNode := specificDevice.NodeName
@@ -584,6 +540,16 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
+			// Recreate (not the default RollingUpdate): each agent claims exactly one
+			// device-plugin resource (hsm.j5t.io/... capacity 1). A rolling update would
+			// surge a new pod before terminating the old one, but the single device is
+			// still allocated to the old pod, so the surge pod fails admission with
+			// "no healthy devices" and the ReplicaSet storms UnexpectedAdmissionError
+			// pods. Recreate terminates the old pod (freeing the device) before creating
+			// the new one, at the cost of a brief per-agent gap during upgrades.
+			Strategy: appsv1.DeploymentStrategy{
+				Type: appsv1.RecreateDeploymentStrategyType,
+			},
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
 					labelApp: agentName,
@@ -649,6 +615,14 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 									Protocol:      corev1.ProtocolTCP,
 								},
 							},
+							// /healthz and /readyz actively probe the HSM token (a live
+							// C_GetTokenInfo), so a device that fell off the USB bus fails the
+							// probes instead of leaving a "zombie" agent Ready. TimeoutSeconds is
+							// raised from the 1s default to allow for a synchronous PKCS#11 call.
+							// Liveness is deliberately more tolerant than readiness: the pod goes
+							// NotReady quickly (~20s) to stop receiving work, but only restarts on
+							// a sustained loss (~60s), so a brief blip or write-lock contention
+							// doesn't churn the pod.
 							LivenessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
 									HTTPGet: &corev1.HTTPGetAction{
@@ -658,6 +632,8 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 								},
 								InitialDelaySeconds: 15,
 								PeriodSeconds:       20,
+								TimeoutSeconds:      3,
+								FailureThreshold:    3,
 							},
 							ReadinessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
@@ -668,6 +644,8 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 								},
 								InitialDelaySeconds: 5,
 								PeriodSeconds:       10,
+								TimeoutSeconds:      3,
+								FailureThreshold:    2,
 							},
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
@@ -741,7 +719,38 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 		},
 	}
 
+	// Mount the shared mTLS server cert into the agent when enabled.
+	r.injectAgentTLS(deployment)
+
 	return r.Create(ctx, deployment)
+}
+
+// injectAgentTLS mounts the shared mTLS server-cert Secret read-only into the
+// agent container. No-op when mTLS is disabled. Rotation needs no pod-template
+// change: kubelet refreshes the mounted Secret and certwatcher reloads it.
+func (r *HSMPoolAgentReconciler) injectAgentTLS(deployment *appsv1.Deployment) {
+	if !r.AgentTLSEnabled || r.AgentTLSSecretName == "" {
+		return
+	}
+
+	podSpec := &deployment.Spec.Template.Spec
+	secretMode := int32(0o400)
+	podSpec.Volumes = append(podSpec.Volumes, corev1.Volume{
+		Name: agentTLSVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName:  r.AgentTLSSecretName,
+				DefaultMode: &secretMode,
+			},
+		},
+	})
+	for i := range podSpec.Containers {
+		podSpec.Containers[i].VolumeMounts = append(podSpec.Containers[i].VolumeMounts, corev1.VolumeMount{
+			Name:      agentTLSVolumeName,
+			MountPath: agentTLSMountPath,
+			ReadOnly:  true,
+		})
+	}
 }
 
 // agentNeedsUpdate checks if the agent deployment needs to be updated due to device path or image changes
@@ -768,6 +777,20 @@ func (r *HSMPoolAgentReconciler) agentNeedsUpdate(ctx context.Context, deploymen
 
 	if expectedImage != "" && currentImage != expectedImage {
 		// Image has changed, need to update
+		return true, nil
+	}
+
+	// Detect a mismatch between the desired mTLS state and what the running
+	// deployment mounts, so toggling agent-tls (without an image change) still
+	// triggers a recreate that adds or removes the cert volume.
+	hasTLSVolume := false
+	for _, vol := range deployment.Spec.Template.Spec.Volumes {
+		if vol.Name == agentTLSVolumeName {
+			hasTLSVolume = true
+			break
+		}
+	}
+	if wantTLS := r.AgentTLSEnabled && r.AgentTLSSecretName != ""; wantTLS != hasTLSVolume {
 		return true, nil
 	}
 
@@ -821,11 +844,6 @@ func (r *HSMPoolAgentReconciler) deploymentNeedsUpdateForDevice(deployment *apps
 	return false
 }
 
-// generateAgentName creates a consistent agent name for an HSM device
-func (r *HSMPoolAgentReconciler) generateAgentName(hsmPool *hsmv1alpha1.HSMPool) string {
-	return fmt.Sprintf("%s-%s", AgentNamePrefix, hsmPool.OwnerReferences[0].Name)
-}
-
 // buildAgentArgs builds CLI arguments for the HSM agent
 func (r *HSMPoolAgentReconciler) buildAgentArgs(ctx context.Context, hsmPool *hsmv1alpha1.HSMPool, deviceName string) []string {
 	args := []string{
@@ -833,6 +851,15 @@ func (r *HSMPoolAgentReconciler) buildAgentArgs(ctx context.Context, hsmPool *hs
 		"--device-name=" + deviceName,
 		"--port=" + fmt.Sprintf("%d", AgentPort),
 		"--health-port=" + fmt.Sprintf("%d", AgentHealthPort),
+	}
+
+	// Point the agent gRPC server at its mounted mTLS material when enabled.
+	if r.AgentTLSEnabled && r.AgentTLSSecretName != "" {
+		args = append(args,
+			"--tls-cert-file="+agentTLSMountPath+"/"+corev1.TLSCertKey,
+			"--tls-key-file="+agentTLSMountPath+"/"+corev1.TLSPrivateKeyKey,
+			"--tls-client-ca-file="+agentTLSMountPath+"/"+corev1.ServiceAccountRootCAKey,
+		)
 	}
 
 	// Get HSMDevice from owner reference

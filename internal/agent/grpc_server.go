@@ -18,17 +18,22 @@ package agent
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"maps"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/go-logr/logr"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
+	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
 
 	hsmv1 "tangled.org/evan.jarrett.net/hsm-secrets-operator/api/proto/hsm/v1"
 	"tangled.org/evan.jarrett.net/hsm-secrets-operator/internal/hsm"
@@ -38,34 +43,88 @@ import (
 const (
 	healthyStatus  = "healthy"
 	degradedStatus = "degraded"
+
+	// healthProbeTimeout bounds the live token probe used by the health/readiness
+	// handlers. A healthy C_GetTokenInfo returns in well under this; a wedged device
+	// blocks until libusb times out, which we want to surface as a failed probe.
+	healthProbeTimeout = 3 * time.Second
 )
 
 // GRPCServer represents the HSM agent gRPC server
 type GRPCServer struct {
 	hsmv1.UnimplementedHSMAgentServer
-	hsmClient   hsm.Client
-	logger      logr.Logger
-	port        int
-	healthPort  int
-	startTime   time.Time
-	rateLimiter *security.RateLimiter
-	validator   *security.InputValidator
-	grpcServer  *grpc.Server
+	hsmClient  hsm.Client
+	logger     logr.Logger
+	port       int
+	healthPort int
+	startTime  time.Time
+	validator  *security.InputValidator
+	grpcServer *grpc.Server
+
+	// Mutual-TLS material. When tlsCertFile is set, Start serves mTLS with
+	// RequireAndVerifyClientCert; the leaf is hot-reloaded via certwatcher.
+	tlsCertFile     string
+	tlsKeyFile      string
+	tlsClientCAFile string
 }
 
 // NewGRPCServer creates a new HSM agent gRPC server
 func NewGRPCServer(hsmClient hsm.Client, port, healthPort int, logger logr.Logger) *GRPCServer {
 	server := &GRPCServer{
-		hsmClient:   hsmClient,
-		logger:      logger.WithName("grpc-server"),
-		port:        port,
-		healthPort:  healthPort,
-		startTime:   time.Now(),
-		rateLimiter: security.NewRateLimiter(),
-		validator:   security.NewInputValidator(),
+		hsmClient:  hsmClient,
+		logger:     logger.WithName("grpc-server"),
+		port:       port,
+		healthPort: healthPort,
+		startTime:  time.Now(),
+		validator:  security.NewInputValidator(),
 	}
 
 	return server
+}
+
+// SetTLSFiles enables mutual TLS on the gRPC server. certFile/keyFile are the
+// agent server leaf (hot-reloaded on change); clientCAFile is the bundle used to
+// verify the manager's client certificate. Call before Start.
+func (s *GRPCServer) SetTLSFiles(certFile, keyFile, clientCAFile string) {
+	s.tlsCertFile = certFile
+	s.tlsKeyFile = keyFile
+	s.tlsClientCAFile = clientCAFile
+}
+
+// tlsEnabled reports whether the server is configured for mutual TLS.
+func (s *GRPCServer) tlsEnabled() bool {
+	return s.tlsCertFile != "" && s.tlsKeyFile != "" && s.tlsClientCAFile != ""
+}
+
+// buildServerTLSConfig loads the client-CA trust bundle and wires a certwatcher
+// for hot-reload of the server leaf, returning a RequireAndVerifyClientCert
+// TLS 1.3 config. The certwatcher runs until ctx is cancelled.
+func (s *GRPCServer) buildServerTLSConfig(ctx context.Context) (*tls.Config, error) {
+	caPEM, err := os.ReadFile(s.tlsClientCAFile)
+	if err != nil {
+		return nil, fmt.Errorf("reading client CA file %s: %w", s.tlsClientCAFile, err)
+	}
+	clientCAs := x509.NewCertPool()
+	if !clientCAs.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("no valid certificates in client CA file %s", s.tlsClientCAFile)
+	}
+
+	watcher, err := certwatcher.New(s.tlsCertFile, s.tlsKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("creating certificate watcher: %w", err)
+	}
+	go func() {
+		if watchErr := watcher.Start(ctx); watchErr != nil {
+			s.logger.Error(watchErr, "certificate watcher stopped")
+		}
+	}()
+
+	return &tls.Config{
+		GetCertificate: watcher.GetCertificate,
+		ClientAuth:     tls.RequireAndVerifyClientCert,
+		ClientCAs:      clientCAs,
+		MinVersion:     tls.VersionTLS13,
+	}, nil
 }
 
 // Start starts both the gRPC server and health server
@@ -85,7 +144,7 @@ func (s *GRPCServer) Start(ctx context.Context) error {
 	// Add security interceptors
 	serverOptions = append(serverOptions,
 		grpc.ChainUnaryInterceptor(
-			security.SecurityInterceptor(s.rateLimiter, s.validator),
+			security.ValidationInterceptor(s.validator),
 			s.loggingInterceptor,
 		),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
@@ -97,6 +156,17 @@ func (s *GRPCServer) Start(ctx context.Context) error {
 			Timeout: 10 * time.Second, // Wait 10s for ping response
 		}),
 	)
+
+	// Configure mutual TLS when cert material is provided. Otherwise the server
+	// listens in plaintext (local/dev path).
+	if s.tlsEnabled() {
+		tlsConfig, err := s.buildServerTLSConfig(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to configure mutual TLS: %w", err)
+		}
+		serverOptions = append(serverOptions, grpc.Creds(credentials.NewTLS(tlsConfig)))
+		s.logger.Info("HSM agent gRPC server configured for mutual TLS")
+	}
 
 	s.grpcServer = grpc.NewServer(serverOptions...)
 
@@ -390,11 +460,46 @@ func (s *GRPCServer) Health(ctx context.Context, req *hsmv1.HealthRequest) (*hsm
 	}, nil
 }
 
-// handleHealthz handles liveness probe requests (HTTP)
+// probeToken actively verifies the HSM token is present and responsive by making a live
+// GetInfo (C_GetTokenInfo) call, rather than trusting the cached IsConnected() flag.
+// This is what catches a "zombie" agent: after a device falls off the USB bus the process
+// stays up and IsConnected() can lag, but GetInfo returns CKR_TOKEN_NOT_PRESENT. Returns
+// nil when the token is reachable, an error otherwise.
+//
+// GetInfo takes the PKCS#11 client's read lock, and Go's RWMutex does not honor context
+// cancellation, so a wedged write holding the write lock would otherwise block the probe
+// (and its HTTP handler) indefinitely. We therefore run GetInfo in a goroutine and enforce
+// healthProbeTimeout with a select: the handler returns a failed probe once the deadline
+// passes even if the call is still parked on the lock. The channel is buffered so the
+// parked goroutine can send and exit once the lock is finally released, rather than leaking.
+func (s *GRPCServer) probeToken(ctx context.Context) error {
+	if s.hsmClient == nil {
+		return fmt.Errorf("no HSM client")
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, healthProbeTimeout)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.hsmClient.GetInfo(probeCtx)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		return err
+	case <-probeCtx.Done():
+		return fmt.Errorf("token probe timed out after %s (device may be wedged): %w", healthProbeTimeout, probeCtx.Err())
+	}
+}
+
+// handleHealthz handles liveness probe requests (HTTP). It actively probes the token so a
+// sustained token loss fails liveness and kubelet restarts the pod (re-opening the device).
 func (s *GRPCServer) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	healthStatus := healthyStatus
-	hsmConnected := s.hsmClient != nil && s.hsmClient.IsConnected()
+	hsmConnected := s.probeToken(r.Context()) == nil
 
+	w.Header().Set("Content-Type", "application/json")
 	if !hsmConnected {
 		healthStatus = degradedStatus
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -402,7 +507,6 @@ func (s *GRPCServer) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	uptime := time.Since(s.startTime).String()
 	if _, err := fmt.Fprintf(w, `{"status":"%s","hsmConnected":%t,"uptime":"%s","timestamp":"%s"}`,
 		healthStatus, hsmConnected, uptime, time.Now().Format(time.RFC3339)); err != nil {
@@ -410,19 +514,19 @@ func (s *GRPCServer) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleReadyz handles readiness probe requests (HTTP)
+// handleReadyz handles readiness probe requests (HTTP). It actively probes the token so a
+// zombie agent is marked NotReady (and excluded from work) instead of reporting ready.
 func (s *GRPCServer) handleReadyz(w http.ResponseWriter, r *http.Request) {
-	if s.hsmClient == nil || !s.hsmClient.IsConnected() {
+	w.Header().Set("Content-Type", "application/json")
+	if err := s.probeToken(r.Context()); err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Header().Set("Content-Type", "application/json")
-		if _, err := fmt.Fprintf(w, `{"status":"not_ready","reason":"hsm_not_connected"}`); err != nil {
-			s.logger.Error(err, "Failed to write readiness response")
+		if _, werr := fmt.Fprintf(w, `{"status":"not_ready","reason":"hsm_token_unavailable"}`); werr != nil {
+			s.logger.Error(werr, "Failed to write readiness response")
 		}
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
-	w.Header().Set("Content-Type", "application/json")
 	if _, err := fmt.Fprintf(w, `{"status":"ready"}`); err != nil {
 		s.logger.Error(err, "Failed to write readiness response")
 	}

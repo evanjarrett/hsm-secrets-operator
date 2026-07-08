@@ -24,6 +24,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMockClientTokenLossReturnsSentinel(t *testing.T) {
+	ctx := context.Background()
+	client := NewMockClient()
+	require.NoError(t, client.Initialize(ctx, DefaultConfig()))
+
+	// Healthy: GetInfo succeeds and the client reports connected.
+	_, err := client.GetInfo(ctx)
+	require.NoError(t, err)
+	assert.True(t, client.IsConnected())
+
+	// Simulate the device falling off the bus: still "connected", but GetInfo now
+	// surfaces a token-loss error that must be detectable via errors.Is so the shared
+	// client code and the readiness/liveness probes can react.
+	client.SetTokenPresent(false)
+	_, err = client.GetInfo(ctx)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrTokenNotPresent)
+}
+
 func TestNewMockClient(t *testing.T) {
 	client := NewMockClient()
 
