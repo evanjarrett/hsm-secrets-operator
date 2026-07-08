@@ -526,7 +526,7 @@ func (r *DiscoveryDaemonSetReconciler) getSecurityContext(isTestEnvironment bool
 			AllowPrivilegeEscalation: &[]bool{false}[0],
 			ReadOnlyRootFilesystem:   &[]bool{false}[0],
 			Capabilities: &corev1.Capabilities{
-				Drop: []corev1.Capability{"ALL"},
+				Drop: []corev1.Capability{capabilityAll},
 			},
 			SeccompProfile: &corev1.SeccompProfile{
 				Type: corev1.SeccompProfileTypeRuntimeDefault,
@@ -541,7 +541,7 @@ func (r *DiscoveryDaemonSetReconciler) getSecurityContext(isTestEnvironment bool
 		AllowPrivilegeEscalation: &[]bool{false}[0],
 		ReadOnlyRootFilesystem:   &[]bool{false}[0],
 		Capabilities: &corev1.Capabilities{
-			Drop: []corev1.Capability{"ALL"},
+			Drop: []corev1.Capability{capabilityAll},
 		},
 	}
 }

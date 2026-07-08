@@ -46,3 +46,6 @@ const (
 	// phaseError is the "Error" condition reason/phase value.
 	phaseError = "Error"
 )
+
+// capabilityAll is the "drop everything" entry for container capability lists.
+const capabilityAll = "ALL"

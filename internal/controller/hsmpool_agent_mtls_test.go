@@ -181,7 +181,8 @@ func deploymentWithTLSVolume(image string, withTLS bool) *appsv1.Deployment {
 		Spec: appsv1.DeploymentSpec{
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{{Name: "agent", Image: image}},
+					// hardened securityContext so only the TLS check varies
+					Containers: []corev1.Container{{Name: "agent", Image: image, SecurityContext: hardenedAgentSecurityContext()}},
 				},
 			},
 		},

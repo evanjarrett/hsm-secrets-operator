@@ -659,12 +659,21 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 									extendedResourceName:  resource.MustParse("1"), // Limit to 1 HSM device
 								},
 							},
+							// Non-privileged: the device plugin's Allocate response injects the
+							// pod's single USB device node WITH a device-cgroup allowance, so
+							// pcscd needs no privileges beyond root (host USB nodes are
+							// root-owned 0664, owner rw bits suffice). Verified against real
+							// Pico HSM hardware with this exact profile. pcscd's writable paths
+							// (/run/pcscd, /var/lock/pcsc, /tmp) are all emptyDir mounts.
 							SecurityContext: &corev1.SecurityContext{
-								Privileged:               truePtr,
-								AllowPrivilegeEscalation: truePtr,
-								ReadOnlyRootFilesystem:   falsePtr, // pcscd needs writable /run and /var/lock
-								RunAsNonRoot:             falsePtr, // Root required for USB device access
-								RunAsUser:                &rootUserId,
+								Privileged:               falsePtr,
+								AllowPrivilegeEscalation: falsePtr,
+								Capabilities: &corev1.Capabilities{
+									Drop: []corev1.Capability{capabilityAll},
+								},
+								ReadOnlyRootFilesystem: truePtr,
+								RunAsNonRoot:           falsePtr, // Root required for USB device access
+								RunAsUser:              &rootUserId,
 								SeccompProfile: &corev1.SeccompProfile{
 									Type: corev1.SeccompProfileTypeRuntimeDefault,
 								},
@@ -677,10 +686,11 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 								},
 								// NOTE: no broad /dev/bus/usb hostPath mount. The device plugin
 								// (internal/discovery/deviceplugin.go Allocate) injects ONLY this
-								// pod's assigned device node. Mounting the whole bus would expose
-								// every HSM on the node to every agent's pcscd, causing
-								// LIBUSB_ERROR_BUSY contention and mis-binding (--slot-id=0 could
-								// bind the wrong serial) when multiple devices share a node.
+								// pod's assigned device node, and because the container is
+								// non-privileged that scoping is actually enforced: this agent's
+								// pcscd cannot see any other USB device on the node, so
+								// multi-device LIBUSB_ERROR_BUSY contention and slot-0
+								// mis-binding are structurally impossible.
 								{
 									Name:      "pcscd-run",
 									MountPath: "/run/pcscd",
@@ -794,10 +804,37 @@ func (r *HSMPoolAgentReconciler) agentNeedsUpdate(ctx context.Context, deploymen
 		return true, nil
 	}
 
+	// Detect SecurityContext drift so hardening changes (e.g. dropping
+	// privileged) roll out to existing agents even without an image change.
+	if securityContextNeedsUpdate(container.SecurityContext) {
+		return true, nil
+	}
+
 	// Device-specific path validation is handled by deploymentNeedsUpdateForDevice
 	// This function only checks image changes and other deployment-wide properties
 
 	return false, nil
+}
+
+// securityContextNeedsUpdate reports whether a running agent container's
+// SecurityContext differs from the current non-privileged template on the
+// fields that matter for hardening. Nil pointers are treated as their
+// Kubernetes defaults (privileged=false, allowPrivilegeEscalation=true,
+// readOnlyRootFilesystem=false).
+func securityContextNeedsUpdate(sc *corev1.SecurityContext) bool {
+	if sc == nil {
+		return true
+	}
+	if sc.Privileged != nil && *sc.Privileged {
+		return true
+	}
+	if sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation {
+		return true
+	}
+	if sc.ReadOnlyRootFilesystem == nil || !*sc.ReadOnlyRootFilesystem {
+		return true
+	}
+	return sc.Capabilities == nil || !slices.Contains(sc.Capabilities.Drop, capabilityAll)
 }
 
 // deploymentNeedsUpdateForDevice checks if a deployment needs to be updated for a specific device

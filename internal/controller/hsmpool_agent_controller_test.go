@@ -837,8 +837,9 @@ func TestAgentNeedsUpdate(t *testing.T) {
 						Spec: corev1.PodSpec{
 							Containers: []corev1.Container{
 								{
-									Name:  "agent",
-									Image: "test-image", // Add image to match reconciler's AgentImage
+									Name:            "agent",
+									Image:           "test-image", // Add image to match reconciler's AgentImage
+									SecurityContext: hardenedAgentSecurityContext(),
 									VolumeMounts: []corev1.VolumeMount{
 										{
 											Name:      "hsm-device",
@@ -896,8 +897,9 @@ func TestAgentNeedsUpdate(t *testing.T) {
 						Spec: corev1.PodSpec{
 							Containers: []corev1.Container{
 								{
-									Name:  "agent",
-									Image: "test-image", // Add image to match reconciler's AgentImage
+									Name:            "agent",
+									Image:           "test-image", // Add image to match reconciler's AgentImage
+									SecurityContext: hardenedAgentSecurityContext(),
 									VolumeMounts: []corev1.VolumeMount{
 										{
 											Name:      "hsm-device",
@@ -974,6 +976,81 @@ func TestAgentNeedsUpdate(t *testing.T) {
 			expectedUpdate: false,
 			expectError:    false,
 		},
+		{
+			name: "update needed - legacy privileged securityContext",
+			deployment: &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-agent",
+					Namespace: "default",
+				},
+				Spec: appsv1.DeploymentSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  "agent",
+									Image: "test-image",
+									SecurityContext: &corev1.SecurityContext{
+										Privileged:               boolPtr(true),
+										AllowPrivilegeEscalation: boolPtr(true),
+										ReadOnlyRootFilesystem:   boolPtr(false),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			hsmDevice: &hsmv1alpha1.HSMDevice{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-device",
+					Namespace: "default",
+				},
+			},
+			hsmPool: &hsmv1alpha1.HSMPool{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-device-pool",
+					Namespace: "default",
+				},
+			},
+			expectedUpdate: true,
+			expectError:    false,
+		},
+		{
+			name: "update needed - missing securityContext",
+			deployment: &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-agent",
+					Namespace: "default",
+				},
+				Spec: appsv1.DeploymentSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  "agent",
+									Image: "test-image",
+								},
+							},
+						},
+					},
+				},
+			},
+			hsmDevice: &hsmv1alpha1.HSMDevice{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-device",
+					Namespace: "default",
+				},
+			},
+			hsmPool: &hsmv1alpha1.HSMPool{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-device-pool",
+					Namespace: "default",
+				},
+			},
+			expectedUpdate: true,
+			expectError:    false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1008,4 +1085,53 @@ func TestAgentNeedsUpdate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+// hardenedAgentSecurityContext mirrors the securityContext the controller
+// stamps on agent containers, for "no drift" test cases.
+func hardenedAgentSecurityContext() *corev1.SecurityContext {
+	return &corev1.SecurityContext{
+		Privileged:               boolPtr(false),
+		AllowPrivilegeEscalation: boolPtr(false),
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		ReadOnlyRootFilesystem:   boolPtr(true),
+	}
+}
+
+// TestCreateAgentDeployment_NonPrivileged guards the agent hardening profile:
+// pcscd works without privileges given the device plugin's cgroup-scoped
+// device injection (verified against real Pico HSM hardware), so any
+// regression back to privileged is a bug.
+func TestCreateAgentDeployment_NonPrivileged(t *testing.T) {
+	scheme := mtlsScheme(t)
+	pool, device, discovered := mtlsPoolAndDevice()
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(pool, device).Build()
+
+	r := &HSMPoolAgentReconciler{
+		Client:     fakeClient,
+		Scheme:     scheme,
+		AgentImage: "test-image",
+	}
+	require.NoError(t, r.createAgentDeployment(context.Background(), pool, discovered, mtlsAgentName))
+
+	dep := getAgentDeployment(t, r)
+	require.NotEmpty(t, dep.Spec.Template.Spec.Containers)
+	sc := dep.Spec.Template.Spec.Containers[0].SecurityContext
+	require.NotNil(t, sc)
+
+	require.NotNil(t, sc.Privileged)
+	assert.False(t, *sc.Privileged, "agent container must not be privileged")
+	require.NotNil(t, sc.AllowPrivilegeEscalation)
+	assert.False(t, *sc.AllowPrivilegeEscalation)
+	require.NotNil(t, sc.ReadOnlyRootFilesystem)
+	assert.True(t, *sc.ReadOnlyRootFilesystem)
+	require.NotNil(t, sc.Capabilities)
+	assert.Contains(t, sc.Capabilities.Drop, corev1.Capability("ALL"))
+	require.NotNil(t, sc.RunAsUser)
+	assert.Equal(t, int64(0), *sc.RunAsUser, "agent still runs as root for USB device node access")
+
+	// The freshly created deployment must not immediately report drift.
+	assert.False(t, securityContextNeedsUpdate(sc))
 }
