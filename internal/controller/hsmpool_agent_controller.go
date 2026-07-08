@@ -18,8 +18,10 @@ package controller
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,7 +58,24 @@ const (
 	agentTLSVolumeName = "agent-mtls"
 	// agentTLSMountPath is where the mTLS server cert Secret is mounted in agents.
 	agentTLSMountPath = "/etc/hsm/tls"
+
+	// reasonUnexpectedAdmissionError is the pod status reason kubelet sets when
+	// admission fails, e.g. device-plugin allocation with no healthy devices.
+	reasonUnexpectedAdmissionError = "UnexpectedAdmissionError"
+
+	// discoveryNotReadyRequeue is how long to wait before retrying agent
+	// creation while the node's discovery pod (which hosts the device plugin)
+	// is rolling or not ready.
+	discoveryNotReadyRequeue = 20 * time.Second
 )
+
+// errDiscoveryNotReady defers agent pod (re)creation while the target node's
+// discovery pod — which hosts the kubelet device plugin — is missing, not
+// ready, terminating, or still running an outdated DaemonSet template.
+// Creating agent pods in that window makes kubelet reject them at admission
+// ("no healthy devices"), and the ReplicaSet storms UnexpectedAdmissionError
+// pods because admission rejections have no backoff.
+var errDiscoveryNotReady = stderrors.New("discovery pod not ready on node")
 
 // HSMPoolAgentReconciler watches HSMPools and ensures agents are deployed when pools become ready
 type HSMPoolAgentReconciler struct {
@@ -119,6 +138,11 @@ func (r *HSMPoolAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 		// Ensure agent deployments for all available devices in the pool
 		if err := r.ensureAgentDeployments(ctx, &hsmPool); err != nil {
+			if stderrors.Is(err, errDiscoveryNotReady) {
+				logger.Info("Agent deployment deferred; discovery pod rolling or not ready",
+					"device", deviceRef, "requeueAfter", discoveryNotReadyRequeue)
+				return ctrl.Result{RequeueAfter: discoveryNotReadyRequeue}, nil
+			}
 			logger.Error(err, "Failed to ensure HSM agent deployments for pool", "device", deviceRef)
 			return ctrl.Result{}, err
 		}
@@ -142,7 +166,43 @@ func (r *HSMPoolAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		// Don't return error - continue with normal reconciliation
 	}
 
+	// Remove agent pods kubelet rejected at admission; they otherwise linger
+	// as Failed objects forever (kubelet's terminated-pod GC threshold is far
+	// higher than an admission storm produces).
+	if err := r.cleanupRejectedAgentPods(ctx, hsmPool.Namespace); err != nil {
+		logger.Error(err, "Failed to cleanup admission-rejected agent pods")
+		// Don't return error - continue with normal reconciliation
+	}
+
 	return ctrl.Result{}, nil
+}
+
+// cleanupRejectedAgentPods deletes Failed agent pods with reason
+// UnexpectedAdmissionError, the debris a ReplicaSet leaves when kubelet
+// rejects device-requesting pods while the device plugin is unavailable.
+func (r *HSMPoolAgentReconciler) cleanupRejectedAgentPods(ctx context.Context, namespace string) error {
+	logger := log.FromContext(ctx)
+
+	var pods corev1.PodList
+	if err := r.List(ctx, &pods,
+		client.InNamespace(namespace),
+		client.MatchingLabels{labelAppName: AgentNamePrefix}); err != nil {
+		return fmt.Errorf("failed to list agent pods: %w", err)
+	}
+
+	var errs []error
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.Status.Phase != corev1.PodFailed || pod.Status.Reason != reasonUnexpectedAdmissionError {
+			continue
+		}
+		if err := r.Delete(ctx, pod); err != nil && !errors.IsNotFound(err) {
+			errs = append(errs, err)
+			continue
+		}
+		logger.Info("Deleted admission-rejected agent pod", "pod", pod.Name)
+	}
+	return stderrors.Join(errs...)
 }
 
 // cleanupStaleAgents removes agent deployments for devices that have been unavailable for too long
@@ -278,6 +338,21 @@ func (r *HSMPoolAgentReconciler) ensureAgentDeployments(ctx context.Context, hsm
 
 	deviceName := hsmPool.OwnerReferences[0].Name
 	var deploymentErrors []error
+	deferred := false
+
+	// collect routes an ensureAgentOnNode error: discovery-not-ready deferrals
+	// are expected during discovery rollouts and become a delayed requeue, not
+	// a reconcile failure.
+	collect := func(err error, msg, serial string) {
+		if stderrors.Is(err, errDiscoveryNotReady) {
+			logger.Info("Deferring agent deployment until discovery is ready",
+				"serial", serial, "reason", err.Error())
+			deferred = true
+			return
+		}
+		logger.Error(err, msg, "serial", serial)
+		deploymentErrors = append(deploymentErrors, fmt.Errorf("%s %s: %w", msg, serial, err))
+	}
 
 	for serial, devices := range devicesBySerial {
 		agentName, ok := agent.AgentInstanceName(deviceName, serial)
@@ -320,8 +395,7 @@ func (r *HSMPoolAgentReconciler) ensureAgentDeployments(ctx context.Context, hsm
 
 				// Ensure agent is on the new node (will handle deletion/creation)
 				if err := r.ensureAgentOnNode(ctx, hsmPool, activeDevice, agentName); err != nil {
-					logger.Error(err, "Failed to ensure agent on new node after migration", "serial", serial)
-					deploymentErrors = append(deploymentErrors, fmt.Errorf("migration failed for %s: %w", serial, err))
+					collect(err, "migration failed for", serial)
 					continue
 				}
 			} else if timeSinceLost < gracePeriod {
@@ -332,16 +406,14 @@ func (r *HSMPoolAgentReconciler) ensureAgentDeployments(ctx context.Context, hsm
 					"timeSinceLost", timeSinceLost)
 
 				if err := r.ensureAgentOnNode(ctx, hsmPool, activeDevice, agentName); err != nil {
-					logger.Error(err, "Failed to ensure agent after reconnection", "serial", serial)
-					deploymentErrors = append(deploymentErrors, fmt.Errorf("reconnection failed for %s: %w", serial, err))
+					collect(err, "reconnection failed for", serial)
 					continue
 				}
 			}
 		} else if activeDevice != nil {
 			// Normal case - device is available
 			if err := r.ensureAgentOnNode(ctx, hsmPool, activeDevice, agentName); err != nil {
-				logger.Error(err, "Failed to ensure agent for available device", "serial", serial)
-				deploymentErrors = append(deploymentErrors, fmt.Errorf("agent creation failed for %s: %w", serial, err))
+				collect(err, "agent creation failed for", serial)
 				continue
 			}
 		} else if lostDevice != nil {
@@ -376,6 +448,81 @@ func (r *HSMPoolAgentReconciler) ensureAgentDeployments(ctx context.Context, hsm
 		return fmt.Errorf("deployment errors occurred: %v", deploymentErrors)
 	}
 
+	// Only deferrals: surface the sentinel so Reconcile schedules a delayed
+	// retry instead of treating this as a failure.
+	if deferred {
+		return errDiscoveryNotReady
+	}
+
+	return nil
+}
+
+// discoveryCurrentOnNode reports whether the discovery pod on the given node
+// is running, ready, not terminating, and generated from the discovery
+// DaemonSet's current template. Agent pods must not be (re)created while this
+// is false: the device plugin lives in the discovery pod, and kubelet rejects
+// device-requesting pods at admission whenever the plugin is down or
+// re-registering. Permissive when no discovery DaemonSet exists (mock/test
+// environments manage devices without one).
+func (r *HSMPoolAgentReconciler) discoveryCurrentOnNode(ctx context.Context, hsmPool *hsmv1alpha1.HSMPool, nodeName string) (bool, string, error) {
+	deviceName := hsmPool.OwnerReferences[0].Name
+
+	var ds appsv1.DaemonSet
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      fmt.Sprintf("%s-discovery", deviceName),
+		Namespace: hsmPool.Namespace,
+	}, &ds)
+	if errors.IsNotFound(err) {
+		return true, "", nil
+	}
+	if err != nil {
+		return false, "", fmt.Errorf("failed to get discovery DaemonSet: %w", err)
+	}
+
+	var pods corev1.PodList
+	if err := r.List(ctx, &pods,
+		client.InNamespace(hsmPool.Namespace),
+		client.MatchingLabels{
+			labelAppComponent: componentDiscovery,
+			labelHSMDevice:    deviceName,
+		}); err != nil {
+		return false, "", fmt.Errorf("failed to list discovery pods: %w", err)
+	}
+
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.Spec.NodeName != nodeName || pod.DeletionTimestamp != nil {
+			continue
+		}
+		if pod.Labels["pod-template-generation"] != strconv.FormatInt(ds.Generation, 10) {
+			return false, "discovery pod is running an outdated template", nil
+		}
+		if pod.Status.Phase != corev1.PodRunning {
+			return false, fmt.Sprintf("discovery pod is %s", pod.Status.Phase), nil
+		}
+		for _, cond := range pod.Status.Conditions {
+			if cond.Type == corev1.PodReady {
+				if cond.Status == corev1.ConditionTrue {
+					return true, "", nil
+				}
+				break
+			}
+		}
+		return false, "discovery pod is not ready", nil
+	}
+	return false, "no discovery pod on node", nil
+}
+
+// gateOnDiscovery wraps discoveryCurrentOnNode into a sentinel error the
+// caller chain converts into a delayed requeue instead of a failure.
+func (r *HSMPoolAgentReconciler) gateOnDiscovery(ctx context.Context, hsmPool *hsmv1alpha1.HSMPool, nodeName string) error {
+	current, reason, err := r.discoveryCurrentOnNode(ctx, hsmPool, nodeName)
+	if err != nil {
+		return err
+	}
+	if !current {
+		return fmt.Errorf("%w %q: %s", errDiscoveryNotReady, nodeName, reason)
+	}
 	return nil
 }
 
@@ -393,6 +540,12 @@ func (r *HSMPoolAgentReconciler) ensureAgentOnNode(ctx context.Context, hsmPool 
 	if err == nil {
 		// Deployment exists - check if it's on the right node
 		if !r.isDeploymentOnNode(&deployment, device.NodeName) {
+			// Don't delete the old deployment until the target node can
+			// actually admit the replacement.
+			if err := r.gateOnDiscovery(ctx, hsmPool, device.NodeName); err != nil {
+				return err
+			}
+
 			logger.Info("Agent on wrong node, recreating",
 				componentAgent, agentName,
 				"currentNode", r.getDeploymentNode(&deployment),
@@ -416,6 +569,13 @@ func (r *HSMPoolAgentReconciler) ensureAgentOnNode(ctx context.Context, hsmPool 
 			}
 
 			if needsUpdate {
+				// Defer the recreate while the node's discovery pod (device
+				// plugin) is rolling: the old agent keeps serving, and we
+				// avoid the UnexpectedAdmissionError storm.
+				if err := r.gateOnDiscovery(ctx, hsmPool, device.NodeName); err != nil {
+					return err
+				}
+
 				logger.Info("Agent needs updating, recreating",
 					componentAgent, agentName,
 					"node", device.NodeName,
@@ -436,6 +596,12 @@ func (r *HSMPoolAgentReconciler) ensureAgentOnNode(ctx context.Context, hsmPool 
 		}
 	} else if !errors.IsNotFound(err) {
 		return fmt.Errorf("failed to check agent deployment: %w", err)
+	}
+
+	// Covers the deployment-not-found path (the delete paths above have
+	// already passed the gate).
+	if err := r.gateOnDiscovery(ctx, hsmPool, device.NodeName); err != nil {
+		return err
 	}
 
 	// Create agent deployment

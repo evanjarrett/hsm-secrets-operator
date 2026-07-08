@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -1134,4 +1135,122 @@ func TestCreateAgentDeployment_NonPrivileged(t *testing.T) {
 
 	// The freshly created deployment must not immediately report drift.
 	assert.False(t, securityContextNeedsUpdate(sc))
+}
+
+func agentPod(name string, phase corev1.PodPhase, reason string, labeled bool) *corev1.Pod {
+	labels := map[string]string{}
+	if labeled {
+		labels[labelAppName] = AgentNamePrefix
+	}
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", Labels: labels},
+		Status:     corev1.PodStatus{Phase: phase, Reason: reason},
+	}
+}
+
+func TestCleanupRejectedAgentPods(t *testing.T) {
+	scheme := mtlsScheme(t)
+	rejected := agentPod("agent-rejected", corev1.PodFailed, reasonUnexpectedAdmissionError, true)
+	running := agentPod("agent-running", corev1.PodRunning, "", true)
+	evicted := agentPod("agent-evicted", corev1.PodFailed, "Evicted", true)
+	unrelated := agentPod("other-rejected", corev1.PodFailed, reasonUnexpectedAdmissionError, false)
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithRuntimeObjects(rejected, running, evicted, unrelated).Build()
+	r := &HSMPoolAgentReconciler{Client: fakeClient, Scheme: scheme}
+
+	require.NoError(t, r.cleanupRejectedAgentPods(context.Background(), "default"))
+
+	var pods corev1.PodList
+	require.NoError(t, fakeClient.List(context.Background(), &pods))
+	names := make([]string, 0, len(pods.Items))
+	for _, p := range pods.Items {
+		names = append(names, p.Name)
+	}
+	assert.ElementsMatch(t, []string{"agent-running", "agent-evicted", "other-rejected"}, names,
+		"only the admission-rejected agent pod should be deleted")
+}
+
+func discoveryPod(node, generation string, phase corev1.PodPhase, ready bool) *corev1.Pod {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pico-discovery-" + node,
+			Namespace: "default",
+			Labels: map[string]string{
+				labelAppComponent:         componentDiscovery,
+				labelHSMDevice:            mtlsDeviceName,
+				"pod-template-generation": generation,
+			},
+		},
+		Spec:   corev1.PodSpec{NodeName: node},
+		Status: corev1.PodStatus{Phase: phase},
+	}
+	readyStatus := corev1.ConditionFalse
+	if ready {
+		readyStatus = corev1.ConditionTrue
+	}
+	pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: readyStatus}}
+	return pod
+}
+
+func TestDiscoveryCurrentOnNode(t *testing.T) {
+	scheme := mtlsScheme(t)
+	pool, _, _ := mtlsPoolAndDevice()
+	ds := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       mtlsDeviceName + "-discovery",
+			Namespace:  "default",
+			Generation: 3,
+		},
+	}
+
+	tests := []struct {
+		name    string
+		objects []runtime.Object
+		want    bool
+	}{
+		{"no discovery daemonset is permissive", nil, true},
+		{"current ready pod", []runtime.Object{ds, discoveryPod("worker-1", "3", corev1.PodRunning, true)}, true},
+		{"outdated template", []runtime.Object{ds, discoveryPod("worker-1", "2", corev1.PodRunning, true)}, false},
+		{"pod not ready", []runtime.Object{ds, discoveryPod("worker-1", "3", corev1.PodRunning, false)}, false},
+		{"pod pending", []runtime.Object{ds, discoveryPod("worker-1", "3", corev1.PodPending, false)}, false},
+		{"no pod on node", []runtime.Object{ds, discoveryPod("worker-2", "3", corev1.PodRunning, true)}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(tt.objects...).Build()
+			r := &HSMPoolAgentReconciler{Client: fakeClient, Scheme: scheme}
+
+			current, reason, err := r.discoveryCurrentOnNode(context.Background(), pool, "worker-1")
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, current, "reason: %s", reason)
+		})
+	}
+}
+
+func TestEnsureAgentOnNode_DefersWhileDiscoveryRolling(t *testing.T) {
+	scheme := mtlsScheme(t)
+	pool, device, discovered := mtlsPoolAndDevice()
+	ds := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       mtlsDeviceName + "-discovery",
+			Namespace:  "default",
+			Generation: 3,
+		},
+	}
+	// Discovery pod on the target node still runs the old template.
+	oldPod := discoveryPod(discovered.NodeName, "2", corev1.PodRunning, true)
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithRuntimeObjects(pool, device, ds, oldPod).Build()
+	r := &HSMPoolAgentReconciler{Client: fakeClient, Scheme: scheme, AgentImage: "test-image"}
+
+	err := r.ensureAgentOnNode(context.Background(), pool, discovered, mtlsAgentName)
+	require.ErrorIs(t, err, errDiscoveryNotReady)
+
+	// No deployment must have been created while deferred.
+	var dep appsv1.Deployment
+	getErr := fakeClient.Get(context.Background(), types.NamespacedName{Name: mtlsAgentName, Namespace: "default"}, &dep)
+	assert.True(t, apierrors.IsNotFound(getErr), "agent deployment must not be created while discovery is rolling")
 }
