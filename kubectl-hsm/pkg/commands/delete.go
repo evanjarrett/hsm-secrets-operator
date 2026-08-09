@@ -17,10 +17,8 @@ limitations under the License.
 package commands
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -137,8 +135,7 @@ func (opts *DeleteOptions) confirmDeletion(secretName string) error {
 	fmt.Printf("This action cannot be undone.\n\n")
 	fmt.Printf("Type the secret name '%s' to confirm: ", secretName)
 
-	reader := bufio.NewReader(os.Stdin)
-	input, err := reader.ReadString('\n')
+	input, err := readSecretValue("", false)
 	if err != nil {
 		return fmt.Errorf("failed to read confirmation: %w", err)
 	}

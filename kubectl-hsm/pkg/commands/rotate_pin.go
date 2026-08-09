@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -246,8 +247,10 @@ func encodePINForSecret(pin string) string {
 
 // confirmOperation prompts user for confirmation
 func confirmOperation(prompt string) bool {
-	fmt.Print(prompt)
-	var response string
-	fmt.Scanln(&response)
+	response, err := readSecretValue(prompt, false)
+	if err != nil {
+		return false
+	}
+	response = strings.TrimSpace(response)
 	return response == "y" || response == "Y" || response == "yes" || response == "Yes"
 }

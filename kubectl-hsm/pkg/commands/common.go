@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,7 +96,13 @@ func (cm *ClientManager) GetCurrentNamespace() string {
 	return cm.kubectl.GetCurrentNamespace()
 }
 
-// readSecretValue reads a secret value, optionally hiding input for passwords
+// stdinReader is shared across prompts so buffered-but-unconsumed input is not
+// dropped between successive reads.
+var stdinReader = bufio.NewReader(os.Stdin)
+
+// readSecretValue reads a secret value, optionally hiding input for passwords.
+// A bare newline yields an empty string rather than an error, which is how
+// interactive loops detect that the user is done.
 func readSecretValue(prompt string, hidden bool) (string, error) {
 	fmt.Print(prompt)
 
@@ -109,12 +116,15 @@ func readSecretValue(prompt string, hidden bool) (string, error) {
 		return string(byteValue), nil
 	}
 
-	// Read normal input
-	var value string
-	if _, err := fmt.Scanln(&value); err != nil {
+	// Read a whole line: fmt.Scanln would reject a bare newline with
+	// "unexpected newline" and would also truncate values at the first space.
+	// EOF (Ctrl-D) is end-of-input, not a failure: return what was typed so the
+	// caller's empty-string check ends the loop.
+	line, err := stdinReader.ReadString('\n')
+	if err != nil && err != io.EOF {
 		return "", fmt.Errorf("failed to read input: %w", err)
 	}
-	return value, nil
+	return strings.TrimRight(line, "\r\n"), nil
 }
 
 // parseFromLiteral parses key=value pairs from --from-literal flags
