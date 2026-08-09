@@ -147,6 +147,15 @@ func (r *HSMPoolAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			return ctrl.Result{}, err
 		}
 
+		// Reap agents whose device has vanished from discovery entirely. Safe
+		// only here: this branch runs for a Ready pool with a non-empty device
+		// list, and only after ensureAgentDeployments returned success, so the
+		// aggregation is authoritative.
+		if err := r.reapOrphanedAgents(ctx, &hsmPool); err != nil {
+			logger.Error(err, "Failed to reap orphaned agent deployments", "device", deviceRef)
+			// Don't return error - deployments are correct; reaping retries next reconcile.
+		}
+
 		// Notify agent manager to track the agents
 		if r.AgentManager != nil {
 			if err := r.AgentManager.EnsureAgent(ctx, &hsmPool); err != nil {
@@ -202,6 +211,82 @@ func (r *HSMPoolAgentReconciler) cleanupRejectedAgentPods(ctx context.Context, n
 		}
 		logger.Info("Deleted admission-rejected agent pod", "pod", pod.Name)
 	}
+	return stderrors.Join(errs...)
+}
+
+// reapOrphanedAgents deletes agent deployments whose serial no longer appears
+// anywhere in the pool.
+//
+// ensureAgentDeployments only iterates serials present in
+// Status.AggregatedDevices, and its lost-device branch only fires for a serial
+// that is present but marked unavailable. A device that drops out of discovery
+// entirely leaves no entry for that loop to visit, so nothing ever deletes its
+// deployment. That happens routinely: a re-flashed or swapped HSM comes back
+// under a new serial, which mints a new agent deployment and strands the old
+// one.
+//
+// A stranded agent is not merely untidy. It keeps its node's device-plugin
+// allocation (hsm.j5t.io/<type>, capacity 1 per physical device), so the
+// replacement agent for the new serial stays Pending on "Insufficient
+// hsm.j5t.io/<type>" forever — the scheduler will not preempt a healthy
+// equal-priority pod to free an extended resource. The device stays invisible
+// to the API until the orphan is removed by hand.
+//
+// Deployments are matched by name rather than by the serial-number label:
+// the name is what ensureAgentOnNode Gets and Creates, making it the canonical
+// identity, and it is immune to label sanitization and truncation.
+//
+// The caller must invoke this only for a Ready pool with a non-empty device
+// list, so that a transient empty aggregation cannot reap every agent.
+func (r *HSMPoolAgentReconciler) reapOrphanedAgents(ctx context.Context, hsmPool *hsmv1alpha1.HSMPool) error {
+	logger := log.FromContext(ctx)
+
+	deviceName := hsmPool.OwnerReferences[0].Name
+
+	// Expected names cover every discovered serial, available or not: agents for
+	// temporarily-lost devices are retained by the grace-period logic above and
+	// must not be reaped here.
+	expected := make(map[string]struct{}, len(hsmPool.Status.AggregatedDevices))
+	for _, device := range hsmPool.Status.AggregatedDevices {
+		if agentName, ok := agent.AgentInstanceName(deviceName, device.SerialNumber); ok {
+			expected[agentName] = struct{}{}
+		}
+	}
+
+	// Every device reported without a usable serial: there is no authoritative
+	// expectation to reap against, so leave existing agents alone.
+	if len(expected) == 0 {
+		return nil
+	}
+
+	var deployments appsv1.DeploymentList
+	if err := r.List(ctx, &deployments,
+		client.InNamespace(hsmPool.Namespace),
+		client.MatchingLabels{
+			labelAppName:   AgentNamePrefix,
+			labelHSMDevice: deviceName,
+		}); err != nil {
+		return fmt.Errorf("failed to list agent deployments: %w", err)
+	}
+
+	var errs []error
+	for i := range deployments.Items {
+		deployment := &deployments.Items[i]
+		if _, ok := expected[deployment.Name]; ok {
+			continue
+		}
+
+		logger.Info("Reaping orphaned agent deployment; its serial is no longer discovered",
+			componentAgent, deployment.Name,
+			"serial", deployment.Labels[labelSerialNumber],
+			"node", r.getDeploymentNode(deployment),
+			componentPool, hsmPool.Name)
+
+		if err := r.Delete(ctx, deployment); err != nil && !errors.IsNotFound(err) {
+			errs = append(errs, fmt.Errorf("failed to delete orphaned agent %s: %w", deployment.Name, err))
+		}
+	}
+
 	return stderrors.Join(errs...)
 }
 
@@ -700,7 +785,7 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 				labelAppName:                 AgentNamePrefix,
 				"app.kubernetes.io/part-of":  appNameHSMOperator,
 				labelHSMDevice:               deviceName,
-				"hsm.j5t.io/serial-number":   specificDevice.SerialNumber,
+				labelSerialNumber:            specificDevice.SerialNumber,
 				"hsm.j5t.io/device-path":     sanitizeLabelValue(specificDevice.DevicePath),
 			},
 		},
@@ -730,7 +815,7 @@ func (r *HSMPoolAgentReconciler) createAgentDeployment(ctx context.Context, hsmP
 						labelAppName:                 AgentNamePrefix,
 						"app.kubernetes.io/part-of":  appNameHSMOperator,
 						labelHSMDevice:               deviceName,
-						"hsm.j5t.io/serial-number":   specificDevice.SerialNumber,
+						labelSerialNumber:            specificDevice.SerialNumber,
 						"hsm.j5t.io/device-path":     sanitizeLabelValue(specificDevice.DevicePath),
 					},
 				},

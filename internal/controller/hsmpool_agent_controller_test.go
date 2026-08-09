@@ -1171,6 +1171,118 @@ func TestCleanupRejectedAgentPods(t *testing.T) {
 		"only the admission-rejected agent pod should be deleted")
 }
 
+// orphanAgentDeployment builds an agent Deployment as createAgentDeployment
+// would label it, for the given owning HSMDevice and serial.
+func orphanAgentDeployment(deviceName, serial string) *appsv1.Deployment {
+	name, ok := agent.AgentInstanceName(deviceName, serial)
+	if !ok {
+		panic("test serial must produce a valid agent name")
+	}
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+			Labels: map[string]string{
+				labelAppName:      AgentNamePrefix,
+				labelHSMDevice:    deviceName,
+				labelSerialNumber: serial,
+			},
+		},
+	}
+}
+
+func TestReapOrphanedAgents(t *testing.T) {
+	discovered := func(serial string, available bool) hsmv1alpha1.DiscoveredDevice {
+		return hsmv1alpha1.DiscoveredDevice{
+			NodeName:     "worker-1",
+			SerialNumber: serial,
+			DevicePath:   "/dev/bus/usb/001/004",
+			Available:    available,
+			LastSeen:     metav1.Now(),
+		}
+	}
+
+	tests := []struct {
+		name    string
+		devices []hsmv1alpha1.DiscoveredDevice
+		deploys []runtime.Object
+		want    []string
+	}{
+		{
+			// The production failure: a re-flashed HSM returns under a new
+			// serial, so the old agent is stranded holding the node's single
+			// device-plugin slot and the new agent can never schedule.
+			name:    "reaps agent whose serial left discovery",
+			devices: []hsmv1alpha1.DiscoveredDevice{discovered("NEWSERIAL", true)},
+			deploys: []runtime.Object{
+				orphanAgentDeployment(mtlsDeviceName, "NEWSERIAL"),
+				orphanAgentDeployment(mtlsDeviceName, "OLDSERIAL"),
+			},
+			want: []string{"hsm-agent-test-mtls-device-newserial"},
+		},
+		{
+			// Grace-period logic owns these; reaping them would flap agents
+			// on every transient USB dropout.
+			name: "keeps agent for discovered but unavailable device",
+			devices: []hsmv1alpha1.DiscoveredDevice{
+				discovered("SERIALA", true),
+				discovered("SERIALB", false),
+			},
+			deploys: []runtime.Object{
+				orphanAgentDeployment(mtlsDeviceName, "SERIALA"),
+				orphanAgentDeployment(mtlsDeviceName, "SERIALB"),
+			},
+			want: []string{
+				"hsm-agent-test-mtls-device-seriala",
+				"hsm-agent-test-mtls-device-serialb",
+			},
+		},
+		{
+			name:    "leaves agents owned by a different HSMDevice alone",
+			devices: []hsmv1alpha1.DiscoveredDevice{discovered("SERIALA", true)},
+			deploys: []runtime.Object{
+				orphanAgentDeployment(mtlsDeviceName, "SERIALA"),
+				orphanAgentDeployment("other-device", "SERIALZ"),
+			},
+			want: []string{
+				"hsm-agent-test-mtls-device-seriala",
+				"hsm-agent-other-device-serialz",
+			},
+		},
+		{
+			// No usable serial means no authoritative expectation; reaping
+			// here would delete every agent for the device.
+			name:    "no serials reaps nothing",
+			devices: []hsmv1alpha1.DiscoveredDevice{discovered("", true)},
+			deploys: []runtime.Object{orphanAgentDeployment(mtlsDeviceName, "SERIALA")},
+			want:    []string{"hsm-agent-test-mtls-device-seriala"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := mtlsScheme(t)
+			pool, _, _ := mtlsPoolAndDevice()
+			pool.Status.Phase = hsmv1alpha1.HSMPoolPhaseReady
+			pool.Status.AggregatedDevices = tt.devices
+
+			objects := append([]runtime.Object{pool}, tt.deploys...)
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objects...).Build()
+			r := &HSMPoolAgentReconciler{Client: fakeClient, Scheme: scheme}
+
+			require.NoError(t, r.reapOrphanedAgents(context.Background(), pool))
+
+			var deployments appsv1.DeploymentList
+			require.NoError(t, fakeClient.List(context.Background(), &deployments))
+			names := make([]string, 0, len(deployments.Items))
+			for _, d := range deployments.Items {
+				names = append(names, d.Name)
+			}
+			assert.ElementsMatch(t, tt.want, names)
+		})
+	}
+}
+
 func discoveryPod(node, generation string, phase corev1.PodPhase, ready bool) *corev1.Pod {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{

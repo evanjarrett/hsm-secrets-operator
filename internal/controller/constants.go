@@ -26,7 +26,8 @@ const (
 	labelHostname     = "kubernetes.io/hostname"
 
 	// HSM operator label keys.
-	labelHSMDevice = "hsm.j5t.io/device"
+	labelHSMDevice    = "hsm.j5t.io/device"
+	labelSerialNumber = "hsm.j5t.io/serial-number"
 
 	// Common label/identifier values.
 	appNameHSMOperator = "hsm-secrets-operator"
